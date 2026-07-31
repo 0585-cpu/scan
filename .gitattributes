@@ -1,0 +1,17 @@
+# Keep one line ending in history so moving the source between PCs does not
+# rewrite every file. Working copies still get the platform's native endings.
+* text=auto eol=lf
+
+# Windows-only scripts must stay CRLF to run from cmd.exe.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.webp binary
+*.dll binary
+*.exe binary
+*.pcap binary
+*.pcapng binary
+*.xlsx binary

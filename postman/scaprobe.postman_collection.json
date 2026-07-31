@@ -1,0 +1,348 @@
+{
+  "info": {
+    "name": "Scaprobe Local API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8765"
+    },
+    {
+      "key": "scanId",
+      "value": ""
+    },
+    {
+      "key": "oastSessionId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/health"
+      }
+    },
+    {
+      "name": "List Plugins",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/plugins"
+      }
+    },
+    {
+      "name": "Create OAST Session",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"label\": \"lab callback\",\n  \"base_url\": \"{{baseUrl}}\",\n  \"ttl_seconds\": 3600,\n  \"confirm_authorized\": true\n}"
+        },
+        "url": "{{baseUrl}}/v1/oast/sessions"
+      }
+    },
+    {
+      "name": "List OAST Sessions",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/oast/sessions?limit=50&offset=0"
+      }
+    },
+    {
+      "name": "List OAST Interactions",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/oast/sessions/{{oastSessionId}}/interactions?limit=50&offset=0"
+      }
+    },
+    {
+      "name": "Create Scan",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"targets\": \"127.0.0.1\",\n  \"ports\": \"22,80,443\",\n  \"exclude\": [],\n  \"port_profile\": \"web\",\n  \"top_ports\": 10,\n  \"config_env\": \"lab\",\n  \"scope\": [\"127.0.0.0/8\"],\n  \"confirm_authorized\": true,\n  \"protocol\": \"tcp\",\n  \"timeout_ms\": 800,\n  \"concurrency\": 2000,\n  \"rate_limit_per_sec\": 5000,\n  \"udp_retries\": 1,\n  \"max_attempts\": 1000000,\n  \"confirm_large_scan\": false,\n  \"service_probe\": true\n}"
+        },
+        "url": "{{baseUrl}}/v1/scans"
+      }
+    },
+    {
+      "name": "Create UDP Scan",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"targets\": \"127.0.0.1\",\n  \"ports\": \"53,123,161\",\n  \"scope\": [\"127.0.0.0/8\"],\n  \"confirm_authorized\": true,\n  \"protocol\": \"udp\",\n  \"timeout_ms\": 800,\n  \"concurrency\": 500,\n  \"rate_limit_per_sec\": 1000,\n  \"udp_retries\": 1,\n  \"max_attempts\": 1000000,\n  \"confirm_large_scan\": false,\n  \"service_probe\": true\n}"
+        },
+        "url": "{{baseUrl}}/v1/scans"
+      }
+    },
+    {
+      "name": "Get Scan",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/scans/{{scanId}}"
+      }
+    },
+    {
+      "name": "List Scans",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/scans?limit=50"
+      }
+    },
+    {
+      "name": "Get Scan Results",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/scans/{{scanId}}/results?state=open&protocol=tcp&limit=100&offset=0"
+      }
+    },
+    {
+      "name": "Get Scan Progress",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/scans/{{scanId}}/progress"
+      }
+    },
+    {
+      "name": "Export Scan CSV",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/scans/{{scanId}}/export?format=csv&state=open"
+      }
+    },
+    {
+      "name": "Generate Scan Report HTML",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/scans/{{scanId}}/report?format=html"
+      }
+    },
+    {
+      "name": "Annotate Scan Result",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"tags\": [\"review\", \"prod\"],\n  \"note\": \"confirm service owner\"\n}"
+        },
+        "url": "{{baseUrl}}/v1/scans/{{scanId}}/results/127.0.0.1/tcp/80"
+      }
+    },
+    {
+      "name": "Cancel Scan",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/v1/scans/{{scanId}}/cancel"
+      }
+    },
+    {
+      "name": "Cleanup Old Scans",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"older_than_days\": 30,\n  \"dry_run\": true\n}"
+        },
+        "url": "{{baseUrl}}/v1/scans/cleanup"
+      }
+    },
+    {
+      "name": "Delete Scan",
+      "request": {
+        "method": "DELETE",
+        "url": "{{baseUrl}}/v1/scans/{{scanId}}"
+      }
+    },
+    {
+      "name": "Analyze PCAP",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"file\": \"capture.pcap\",\n  \"top\": 10\n}"
+        },
+        "url": "{{baseUrl}}/v1/pcaps/analyze"
+      }
+    },
+    {
+      "name": "Live Capture",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"output\": \"capture.pcap\",\n  \"duration_s\": 10,\n  \"count\": 100,\n  \"iface\": null,\n  \"bpf_filter\": \"tcp port 80\",\n  \"confirm_authorized\": true,\n  \"analyze\": true\n}"
+        },
+        "url": "{{baseUrl}}/v1/captures/live"
+      }
+    },
+    {
+      "name": "List PCAP Analyses",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/pcaps/analyses?limit=50&offset=0"
+      }
+    },
+    {
+      "name": "Send ICMP Template",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"template\": \"icmp\",\n  \"target\": \"127.0.0.1\",\n  \"scope\": [\"127.0.0.0/8\"],\n  \"confirm_authorized\": true,\n  \"count\": 1,\n  \"interval_ms\": 1000,\n  \"dry_run\": false\n}"
+        },
+        "url": "{{baseUrl}}/v1/packets/send"
+      }
+    },
+    {
+      "name": "Dry Run TCP Template",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"template\": \"tcp\",\n  \"target\": \"127.0.0.1\",\n  \"scope\": [\"127.0.0.0/8\"],\n  \"confirm_authorized\": true,\n  \"dport\": 443,\n  \"flags\": \"S\",\n  \"payload_text\": \"hello\",\n  \"dry_run\": true\n}"
+        },
+        "url": "{{baseUrl}}/v1/packets/send"
+      }
+    },
+    {
+      "name": "List Packet Audits",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/packets/audits?limit=50&offset=0"
+      }
+    },
+    {
+      "name": "Export Database",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/v1/db/export"
+      }
+    },
+    {
+      "name": "Send UDP Template",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"template\": \"udp\",\n  \"target\": \"127.0.0.1\",\n  \"scope\": [\"127.0.0.0/8\"],\n  \"confirm_authorized\": true,\n  \"dport\": 9999,\n  \"payload_text\": \"hello\",\n  \"count\": 1,\n  \"interval_ms\": 1000,\n  \"dry_run\": false\n}"
+        },
+        "url": "{{baseUrl}}/v1/packets/send"
+      }
+    },
+    {
+      "name": "Send TCP Template",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"template\": \"tcp\",\n  \"target\": \"127.0.0.1\",\n  \"scope\": [\"127.0.0.0/8\"],\n  \"confirm_authorized\": true,\n  \"dport\": 80,\n  \"flags\": \"S\",\n  \"count\": 1,\n  \"interval_ms\": 1000,\n  \"dry_run\": false\n}"
+        },
+        "url": "{{baseUrl}}/v1/packets/send"
+      }
+    },
+    {
+      "name": "Send DNS Template",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"template\": \"dns\",\n  \"target\": \"127.0.0.1\",\n  \"scope\": [\"127.0.0.0/8\"],\n  \"confirm_authorized\": true,\n  \"dns_name\": \"example.com\",\n  \"count\": 1,\n  \"interval_ms\": 1000,\n  \"dry_run\": false\n}"
+        },
+        "url": "{{baseUrl}}/v1/packets/send"
+      }
+    },
+    {
+      "name": "Send HTTP Template",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"template\": \"http\",\n  \"target\": \"127.0.0.1\",\n  \"scope\": [\"127.0.0.0/8\"],\n  \"confirm_authorized\": true,\n  \"dport\": 80,\n  \"http_method\": \"GET\",\n  \"http_path\": \"/\",\n  \"http_host\": \"localhost\",\n  \"count\": 1,\n  \"interval_ms\": 1000,\n  \"dry_run\": false\n}"
+        },
+        "url": "{{baseUrl}}/v1/packets/send"
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "scaprobe-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop wrapper for the Scaprobe local dashboard.",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

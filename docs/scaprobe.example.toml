@@ -1,0 +1,42 @@
+# Example Scaprobe configuration.
+# Copy this to ./scaprobe.toml or your user config directory and adjust for your authorized environment.
+
+[scan]
+timeout_ms = 800
+concurrency = 2000
+rate_limit_per_sec = 5000
+udp_retries = 1
+service_probe = true
+protocol = "tcp"
+max_hosts = 65536
+max_attempts = 1000000
+top_ports = 100
+exclude = []
+
+[plugins]
+# paths = ["docs/scaprobe.plugin.example.json"]
+paths = []
+
+[port_profiles]
+web-plus = [80, 443, 8080, 8081, 8443, 9000]
+infra-udp = [53, 69, 123, 137, 161, 500, 520, 1434, 1900, 3702, 5060, 5353, 5683, 11211]
+
+[environments.local.scan]
+scope = ["127.0.0.0/8", "::1/128"]
+timeout_ms = 300
+concurrency = 200
+rate_limit_per_sec = 500
+top_ports = 20
+
+[environments.lab.scan]
+timeout_ms = 800
+concurrency = 2000
+rate_limit_per_sec = 5000
+top_ports = 100
+
+[environments.corp.scan]
+timeout_ms = 1200
+concurrency = 1000
+rate_limit_per_sec = 1500
+top_ports = 100
+exclude = ["192.168.1.1/32"]

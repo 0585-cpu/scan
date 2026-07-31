@@ -1,0 +1,2692 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scaprobe Dashboard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --surface-alt: #f8fafc;
+      --sidebar: #25282d;
+      --sidebar-active: #343941;
+      --line: #d6dce5;
+      --line-strong: #b9c3d0;
+      --text: #172033;
+      --muted: #637083;
+      --accent: #0f766e;
+      --accent-dark: #0a5f59;
+      --accent-soft: #e8f5f3;
+      --warn: #9a6700;
+      --warn-soft: #fff8e6;
+      --danger: #b42318;
+      --danger-soft: #fff0ee;
+      --ok: #157347;
+      --ok-soft: #edf8f1;
+      --focus: rgba(15, 118, 110, .22);
+    }
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    button, input, select, textarea { font: inherit; }
+    button {
+      min-height: 34px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text);
+      padding: 6px 11px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    button:hover { border-color: var(--accent); color: var(--accent); }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 1px;
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #ffffff;
+    }
+    button.primary:hover { background: var(--accent-dark); color: #ffffff; }
+    button:disabled, a.action.disabled {
+      cursor: not-allowed;
+      opacity: .48;
+      border-color: var(--line);
+      color: var(--muted);
+      pointer-events: none;
+    }
+    button.danger {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: #ffffff;
+    }
+    button.danger:hover { background: #8f1d14; color: #ffffff; }
+    a.action {
+      min-height: 34px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text);
+      padding: 6px 11px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
+    }
+    a.action:hover { border-color: var(--accent); color: var(--accent); }
+    a.action.disabled { background: var(--surface-alt); }
+    /* In-app preview: the desktop shell is a webview that blocks new windows,
+       so reports and evidence must open inside this page, never in a new tab. */
+    .viewer {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: rgba(23, 32, 51, .55);
+    }
+    .viewer[hidden] { display: none; }
+    .viewer-panel {
+      display: flex;
+      flex-direction: column;
+      width: min(1180px, 100%);
+      height: min(880px, 100%);
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .viewer-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-alt);
+    }
+    .viewer-head strong { margin-right: auto; }
+    .viewer-body { flex: 1; overflow: auto; background: #ffffff; }
+    .viewer-body iframe { width: 100%; height: 100%; border: 0; display: block; }
+    .viewer-body img { display: block; margin: 0 auto; max-width: 100%; }
+    .viewer-note { padding: 10px 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+    .viewer-text {
+      margin: 0;
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      white-space: pre;
+      overflow: auto;
+    }
+    .evidence-list { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 140px; }
+    .evidence-card { display: inline-grid; gap: 3px; justify-items: stretch; }
+    .evidence-thumb { width: 80px; height: 60px; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; display: block; }
+    .evidence-add { cursor: pointer; color: var(--accent); font-weight: 600; white-space: nowrap; }
+    .evidence-add input { display: none; }
+    button.evidence-delete { min-height: 24px; padding: 2px 6px; color: var(--danger); font-size: 12px; }
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 232px minmax(0, 1fr);
+    }
+    .sidebar {
+      background: var(--sidebar);
+      color: #f8fafc;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      border-right: 1px solid #1d2025;
+      min-height: 100vh;
+    }
+    .brand {
+      padding: 18px 16px 14px;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+    .brand strong {
+      display: block;
+      font-size: 18px;
+    }
+    .brand span {
+      display: block;
+      color: #b8c0cc;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .nav {
+      padding: 10px;
+      display: grid;
+      gap: 4px;
+      align-content: start;
+    }
+    .nav button {
+      width: 100%;
+      justify-content: flex-start;
+      border-color: transparent;
+      background: transparent;
+      color: #d8dee8;
+      padding: 9px 10px;
+      min-height: 38px;
+    }
+    .nav button:hover {
+      color: #ffffff;
+      background: #2d3239;
+      border-color: transparent;
+    }
+    .nav button.active {
+      background: var(--sidebar-active);
+      color: #ffffff;
+      border-color: rgba(255,255,255,.1);
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+    .sidebar-foot {
+      padding: 12px 14px;
+      border-top: 1px solid rgba(255,255,255,.08);
+      color: #b8c0cc;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .shell {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: 58px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 0 16px;
+      min-width: 0;
+    }
+    .topbar h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+      min-width: 128px;
+    }
+    .status-strip {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .workspace {
+      min-width: 0;
+      overflow: auto;
+      padding: 16px;
+    }
+    .view { display: none; }
+    .view.active { display: block; }
+    .view-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .view-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .view-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .layout-two {
+      display: grid;
+      grid-template-columns: minmax(340px, 420px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .scan-layout {
+      grid-template-columns: minmax(380px, 470px) minmax(0, 1fr);
+    }
+    .layout-wide {
+      display: grid;
+      gap: 16px;
+      align-items: start;
+    }
+    .band {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-width: 0;
+    }
+    .band-head {
+      min-height: 46px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .band-head h3 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .band-body { padding: 12px; }
+    .toolbar {
+      min-height: 46px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .toolbar-group + .toolbar-group {
+      border-left: 1px solid var(--line);
+      padding-left: 8px;
+    }
+    .toolbar-label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    form { display: grid; gap: 10px; }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .field { display: grid; gap: 4px; min-width: 0; }
+    .field.full { grid-column: 1 / -1; }
+    label, .field-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    input, select, textarea {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid #c6cfda;
+      border-radius: 6px;
+      padding: 7px 9px;
+      background: #ffffff;
+      color: var(--text);
+    }
+    textarea {
+      resize: vertical;
+      min-height: 74px;
+    }
+    .helper {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .form-intro {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .preset-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 2px;
+    }
+    .preset-row button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
+    .preset-row button.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent-dark);
+      font-weight: 700;
+    }
+    .preset-select {
+      width: auto;
+      min-width: 150px;
+      min-height: 28px;
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+    .port-file-action {
+      min-height: 28px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #ffffff;
+      color: var(--text);
+      padding: 4px 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .port-file-action:hover { border-color: var(--accent); color: var(--accent); }
+    .port-file-action input { display: none; }
+    .custom-profile-list:empty { display: none; }
+    .custom-profile-chip {
+      display: inline-flex;
+      align-items: stretch;
+    }
+    .custom-profile-chip .custom-profile-use {
+      border-radius: 6px 0 0 6px;
+    }
+    .custom-profile-chip .custom-profile-remove {
+      min-width: 28px;
+      border-left: 0;
+      border-radius: 0 6px 6px 0;
+      color: var(--danger);
+      padding-left: 6px;
+      padding-right: 6px;
+    }
+    details.advanced-panel {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-alt);
+    }
+    details.advanced-panel summary {
+      cursor: pointer;
+      padding: 9px 10px;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+      user-select: none;
+    }
+    details.advanced-panel[open] summary { border-bottom: 1px solid var(--line); }
+    .advanced-body { padding: 10px; }
+    .authorization-box {
+      border: 1px solid #edcf82;
+      border-radius: 7px;
+      background: var(--warn-soft);
+      padding: 7px 9px;
+    }
+    .scan-preview {
+      border-left: 3px solid var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent-dark);
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .scan-preview.warn { border-left-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      color: var(--text);
+      font-size: 13px;
+    }
+    .check-row input {
+      width: 16px;
+      height: 16px;
+      min-height: 0;
+    }
+    .status {
+      color: var(--muted);
+      font-size: 12px;
+      min-height: 18px;
+      overflow-wrap: anywhere;
+    }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+    .pill {
+      min-height: 24px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--muted);
+      background: var(--surface-alt);
+      font-size: 12px;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+    .pill.ok, .pill.state-open, .pill.state-completed { color: var(--ok); border-color: #b7dfc8; background: var(--ok-soft); }
+    .pill.warn, .pill.state-running, .pill.state-queued, .pill.state-recovering, .pill.state-open-filtered { color: var(--warn); border-color: #edcf82; background: var(--warn-soft); }
+    .pill.bad, .pill.state-failed, .pill.state-cancelled, .pill.state-cancel-requested, .pill.state-error { color: var(--danger); border-color: #edbbb5; background: var(--danger-soft); }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 10px;
+      min-width: 0;
+      min-height: 72px;
+    }
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .metric strong {
+      display: block;
+      font-size: 22px;
+      margin-top: 4px;
+      overflow-wrap: anywhere;
+    }
+    .table-wrap {
+      width: 100%;
+      overflow: auto;
+    }
+    .scan-jobs-wrap { max-height: 430px; }
+    .scan-results-wrap { max-height: 650px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      padding: 8px;
+      vertical-align: top;
+    }
+    th {
+      background: var(--surface-alt);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .table-wrap thead th { position: sticky; top: 0; z-index: 1; }
+    td.cell-clip {
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .band-head-tools {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .compact-input, .compact-select {
+      width: auto;
+      min-width: 150px;
+      max-width: 240px;
+      min-height: 32px;
+      padding: 5px 8px;
+    }
+    #scanResultSearch { min-width: 260px; }
+    .result-navigator {
+      display: grid;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-alt);
+      padding: 10px 12px;
+    }
+    .result-host-tabs, .result-state-tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .result-host-tabs {
+      overflow-x: auto;
+      padding-bottom: 2px;
+      scrollbar-width: thin;
+    }
+    .result-host-tabs:empty, .result-state-tabs:empty { display: none; }
+    .result-tab {
+      min-height: 30px;
+      padding: 4px 10px;
+      font-size: 12px;
+      flex: 0 0 auto;
+    }
+    .result-tab.active {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 700;
+    }
+    .result-tab.active:hover { color: #ffffff; }
+    .result-tab .tab-count {
+      opacity: .75;
+      font-size: 11px;
+    }
+    .result-single-host {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .result-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-top: 1px solid var(--line);
+      padding: 9px 12px;
+      background: var(--surface-alt);
+      flex-wrap: wrap;
+    }
+    .page-buttons { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .page-buttons button { min-width: 32px; min-height: 30px; padding: 4px 8px; font-size: 12px; }
+    .page-buttons button.active { border-color: var(--accent); background: var(--accent); color: #ffffff; }
+    .selected-summary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 12px;
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+    .selected-summary div { min-width: 0; overflow-wrap: anywhere; }
+    .selected-summary span { color: var(--muted); display: block; font-size: 11px; font-weight: 600; }
+    .port-summary { white-space: nowrap; }
+    details.ports-details summary {
+      cursor: pointer;
+      color: var(--text);
+      font-weight: 600;
+    }
+    details.ports-details div {
+      max-height: 110px;
+      margin-top: 5px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface-alt);
+      padding: 6px;
+      overflow-wrap: anywhere;
+    }
+    tr.selected td { background: var(--accent-soft); }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover td { background: #f1f7f6; }
+    .kv {
+      display: grid;
+      grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+      border-top: 1px solid var(--line);
+    }
+    .kv div {
+      padding: 8px;
+      border-bottom: 1px solid var(--line);
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .kv div:nth-child(odd) {
+      color: var(--muted);
+      background: var(--surface-alt);
+      font-weight: 600;
+    }
+    .json-block {
+      margin: 0;
+      max-height: 360px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #101418;
+      color: #e7edf4;
+      padding: 10px;
+      font-size: 12px;
+    }
+    .tabs {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .template-fields { display: none; }
+    .template-fields.active { display: contents; }
+    .empty {
+      color: var(--muted);
+      padding: 12px;
+    }
+    @media (max-width: 1120px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { min-height: auto; }
+      .nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .sidebar-foot { display: none; }
+      .shell { min-height: auto; }
+      .layout-two { grid-template-columns: 1fr; }
+      .scan-layout { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+    }
+    @media (max-width: 680px) {
+      .workspace { padding: 10px; }
+      .topbar { align-items: flex-start; flex-direction: column; height: auto; padding: 10px; }
+      .form-grid { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: 1fr; }
+      .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      table { min-width: 640px; }
+      .toolbar-group + .toolbar-group { border-left: 0; padding-left: 0; }
+      .compact-input, .compact-select { width: 100%; max-width: none; }
+      #scanResultSearch { min-width: 0; }
+      .band-head-tools { width: 100%; justify-content: stretch; }
+      .selected-summary { grid-template-columns: 1fr; }
+      .result-pagination { align-items: stretch; flex-direction: column; }
+      .page-buttons { justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <strong>Scaprobe</strong>
+        <span>Local Operations Console</span>
+      </div>
+      <nav class="nav" aria-label="Dashboard sections">
+        <button type="button" data-view-target="overview" class="active">Overview</button>
+        <button type="button" data-view-target="scans">Scans</button>
+        <button type="button" data-view-target="pcap">PCAP</button>
+        <button type="button" data-view-target="capture">Live Capture</button>
+        <button type="button" data-view-target="packets">Packet Send</button>
+        <button type="button" data-view-target="oast">OAST</button>
+        <button type="button" data-view-target="plugins">Plugins</button>
+        <button type="button" data-view-target="diagnostics">Diagnostics</button>
+      </nav>
+      <div class="sidebar-foot" id="dbPath">db checking</div>
+    </aside>
+    <div class="shell">
+      <header class="topbar">
+        <h1 id="viewTitle">Overview</h1>
+        <div class="status-strip" id="topStatus">
+          <span class="pill warn">checking</span>
+        </div>
+      </header>
+      <main class="workspace">
+        <section class="view active" id="view-overview">
+          <div class="view-head">
+            <h2>Overview</h2>
+            <div class="view-actions">
+              <button type="button" id="refreshAll">Refresh</button>
+            </div>
+          </div>
+          <div class="layout-wide">
+            <div class="metrics" id="overviewMetrics"></div>
+            <div class="layout-two">
+              <section class="band">
+                <div class="band-head">
+                  <h3>Recent Scans</h3>
+                  <button type="button" data-view-target="scans">Open Scans</button>
+                </div>
+                <div class="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>ID</th><th>Status</th><th>Targets</th><th>Ports</th><th>Open</th></tr>
+                    </thead>
+                    <tbody id="overviewScans"></tbody>
+                  </table>
+                </div>
+              </section>
+              <section class="band">
+                <div class="band-head">
+                  <h3>Runtime</h3>
+                  <button type="button" data-view-target="diagnostics">Details</button>
+                </div>
+                <div class="kv" id="overviewRuntime"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-scans">
+          <div class="view-head">
+            <h2>Scans</h2>
+            <div class="view-actions">
+              <button type="button" id="scanRefresh">Refresh</button>
+            </div>
+          </div>
+          <div class="layout-two scan-layout">
+            <section class="band">
+              <div class="band-head"><h3>New Scan</h3></div>
+              <div class="band-body">
+                <p class="form-intro">Enter authorized targets, choose a port set, and review the scope summary before starting.</p>
+                <form id="scanForm">
+                  <div class="form-grid">
+                    <div class="field full">
+                      <label for="scanTargets">Targets</label>
+                      <textarea id="scanTargets" name="targets" required placeholder="192.168.1.10&#10;192.168.1.20"></textarea>
+                      <span class="helper">Comma or line separated IP addresses and CIDRs.</span>
+                    </div>
+                    <div class="field full">
+                      <label for="scanPorts">Ports</label>
+                      <input id="scanPorts" name="ports" placeholder="22,80,443">
+                      <div class="preset-row" aria-label="Port presets">
+                        <span class="helper">Presets:</span>
+                        <button type="button" data-port-preset="22,53,80,443,445,3389">Common</button>
+                        <button type="button" data-port-preset="80,443,8000,8080,8443">Web</button>
+                        <button type="button" data-port-preset="22,23,3389,5900">Remote</button>
+                        <button type="button" data-port-preset="25,110,143,465,587,993,995">Mail</button>
+                        <select class="preset-select" id="scanProfile" name="port_profile" aria-label="Configured port profile">
+                          <option value="">Configured profile...</option>
+                        </select>
+                        <label class="port-file-action" for="scanPortProfileFile">
+                          Import TXT
+                          <input id="scanPortProfileFile" type="file" accept=".txt,text/plain">
+                        </label>
+                      </div>
+                      <div class="preset-row custom-profile-list" id="scanCustomProfiles" aria-label="Imported port profiles"></div>
+                      <span class="helper" id="scanProfileStatus">TXT supports comma-separated ports, ranges, and # comments.</span>
+                    </div>
+                    <div class="field">
+                      <label for="scanProtocol">Protocol</label>
+                      <select id="scanProtocol" name="protocol">
+                        <option value="tcp">tcp</option>
+                        <option value="udp">udp</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">Scope Mode</span>
+                      <label class="check-row"><input id="scanScopeFromTargets" name="scope_from_targets" type="checkbox" checked>Use exact targets as scope</label>
+                    </div>
+                    <div class="field full">
+                      <label for="scanScope">Authorized Scope</label>
+                      <input id="scanScope" name="scope" placeholder="192.168.1.0/24" readonly>
+                      <div class="preset-row"><button type="button" id="scanFillScope">Refresh From Targets</button></div>
+                    </div>
+                    <div class="field full">
+                      <span class="field-label">Options</span>
+                      <label class="check-row"><input name="service_probe" type="checkbox" checked>Service probe</label>
+                      <label class="check-row"><input name="capture_screenshots" type="checkbox">Capture service evidence</label>
+                    </div>
+                    <div class="field full authorization-box">
+                      <label class="check-row"><input name="confirm_authorized" type="checkbox" required>Confirm authorized</label>
+                      <span class="helper">Only scan systems you own or are explicitly permitted to test.</span>
+                    </div>
+                  </div>
+                  <details class="advanced-panel" id="scanAdvanced">
+                    <summary>Advanced options</summary>
+                    <div class="advanced-body form-grid">
+                      <div class="field">
+                        <label for="scanTopPorts">Top Ports</label>
+                        <input id="scanTopPorts" name="top_ports" type="number" min="1" placeholder="20">
+                      </div>
+                      <div class="field full">
+                        <label for="scanExclude">Exclude</label>
+                        <input id="scanExclude" name="exclude" placeholder="192.168.1.20/32">
+                      </div>
+                      <div class="field">
+                        <label for="scanTimeout">Timeout ms</label>
+                        <input id="scanTimeout" name="timeout_ms" type="number" min="1" value="800">
+                      </div>
+                      <div class="field">
+                        <label for="scanConcurrency">Concurrency</label>
+                        <input id="scanConcurrency" name="concurrency" type="number" min="1" value="2000">
+                      </div>
+                      <div class="field">
+                        <label for="scanRate">Rate/sec</label>
+                        <input id="scanRate" name="rate_limit_per_sec" type="number" min="1" value="5000">
+                      </div>
+                      <div class="field">
+                        <label for="scanUdpRetries">UDP Retries</label>
+                        <input id="scanUdpRetries" name="udp_retries" type="number" min="0" max="3" value="1">
+                      </div>
+                      <div class="field">
+                        <label for="scanMaxAttempts">Max Attempts</label>
+                        <input id="scanMaxAttempts" name="max_attempts" type="number" min="1" value="1000000">
+                      </div>
+                      <div class="field full">
+                        <label class="check-row"><input name="confirm_large_scan" type="checkbox">Confirm scan above Max Attempts</label>
+                        <span class="helper">Required only when the estimated Host × Port workload exceeds the configured limit.</span>
+                      </div>
+                    </div>
+                  </details>
+                  <div class="scan-preview" id="scanPreview">Add at least one target to preview this scan.</div>
+                  <div class="view-actions">
+                    <button class="primary" id="scanSubmit" type="submit">Start Scan</button>
+                    <button id="scanReset" type="button">Reset</button>
+                    <span class="status" id="scanStatus"></span>
+                  </div>
+                </form>
+              </div>
+            </section>
+            <section class="band">
+              <div class="band-head">
+                <h3>Jobs</h3>
+                <span class="status" id="selectedScanLabel">Select a job to view results</span>
+              </div>
+              <div class="toolbar">
+                <input class="compact-input" id="scanJobSearch" aria-label="Search jobs" placeholder="Search ID or target">
+                <select class="compact-select" id="scanJobStatus" aria-label="Filter jobs by status">
+                  <option value="">All statuses</option>
+                  <option value="queued">Queued</option>
+                  <option value="running">Running</option>
+                  <option value="recovering">Recovering</option>
+                  <option value="cancel_requested">Cancel requested</option>
+                  <option value="completed">Completed</option>
+                  <option value="failed">Failed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <span class="status" id="scanJobCount"></span>
+              </div>
+              <div class="toolbar">
+                <div class="toolbar-group">
+                  <span class="toolbar-label">Export</span>
+                  <a class="action disabled" id="scanReportLink" rel="noreferrer" aria-disabled="true">Report</a>
+                  <a class="action disabled" id="scanExportJson" rel="noreferrer" aria-disabled="true">JSON</a>
+                  <a class="action disabled" id="scanExportCsv" rel="noreferrer" aria-disabled="true" title="CSV bundle with attached images">CSV</a>
+                  <a class="action disabled" id="scanExportXlsx" rel="noreferrer" aria-disabled="true" title="Excel workbook with embedded images">Excel</a>
+                  <span class="status" id="scanExportStatus" role="status"></span>
+                </div>
+                <div class="toolbar-group">
+                  <span class="toolbar-label">Job</span>
+                  <button type="button" id="scanCancel" disabled>Cancel</button>
+                  <button class="danger" type="button" id="scanDelete" disabled>Delete</button>
+                </div>
+              </div>
+              <div class="band-body">
+                <div class="selected-summary" id="selectedScanSummary"><div>Select a scan job from the table.</div></div>
+                <div class="metrics" id="scanMetrics"></div>
+              </div>
+              <div class="table-wrap scan-jobs-wrap">
+                <table>
+                  <thead>
+                    <tr><th>ID</th><th>Status</th><th>Targets</th><th>Ports</th><th>Total</th><th>Open</th><th>Created</th></tr>
+                  </thead>
+                  <tbody id="scanJobs"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+          <section class="band" style="margin-top:16px">
+            <div class="band-head">
+              <h3>Results</h3>
+              <div class="band-head-tools">
+                <input class="compact-input" id="scanResultSearch" aria-label="Search results" placeholder="Search host, service, banner">
+                <select class="compact-select" id="scanResultPageSize" aria-label="Rows per page" disabled>
+                  <option value="25">25 rows</option>
+                  <option value="50" selected>50 rows</option>
+                  <option value="100">100 rows</option>
+                  <option value="250">250 rows</option>
+                  <option value="500">500 rows</option>
+                </select>
+                <span class="status" id="resultCount"></span>
+              </div>
+            </div>
+            <div class="result-navigator">
+              <div class="result-host-tabs" id="scanHostTabs" role="tablist" aria-label="Result hosts"></div>
+              <div class="result-state-tabs" id="scanStateTabs" role="tablist" aria-label="Result states"></div>
+            </div>
+            <div class="table-wrap scan-results-wrap">
+              <table>
+                <thead>
+                  <tr><th>Host</th><th>Port</th><th>Proto</th><th>State</th><th>Service</th><th>Banner</th><th>Evidence</th><th>Tags</th><th>Note</th></tr>
+                </thead>
+                <tbody id="scanResults"></tbody>
+              </table>
+            </div>
+            <div class="result-pagination" id="scanResultPagination"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-pcap">
+          <div class="view-head">
+            <h2>PCAP</h2>
+            <div class="view-actions"><button type="button" id="pcapRefresh">Refresh</button></div>
+          </div>
+          <div class="layout-two">
+            <section class="band">
+              <div class="band-head"><h3>Analyze File</h3></div>
+              <div class="band-body">
+                <form id="pcapForm">
+                  <div class="form-grid">
+                    <div class="field full">
+                      <label for="pcapFile">File</label>
+                      <input id="pcapFile" name="file" required placeholder="capture.pcapng">
+                    </div>
+                    <div class="field">
+                      <label for="pcapTop">Top</label>
+                      <input id="pcapTop" name="top" type="number" min="1" value="10">
+                    </div>
+                  </div>
+                  <div class="view-actions">
+                    <button class="primary" type="submit">Analyze PCAP</button>
+                    <span class="status" id="pcapStatus"></span>
+                  </div>
+                </form>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>ID</th><th>File</th><th>Packets</th><th>Created</th></tr></thead>
+                  <tbody id="pcapHistory"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="band">
+              <div class="band-head"><h3>Analysis</h3><span class="status" id="pcapSelected"></span></div>
+              <div class="band-body" id="pcapSummary"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="view-capture">
+          <div class="view-head"><h2>Live Capture</h2></div>
+          <section class="band">
+            <div class="band-head"><h3>Capture</h3></div>
+            <div class="band-body">
+              <form id="captureForm">
+                <div class="form-grid">
+                  <div class="field full">
+                    <label for="captureOutput">Output</label>
+                    <input id="captureOutput" name="output" required placeholder="capture.pcap">
+                  </div>
+                  <div class="field">
+                    <label for="captureDuration">Duration s</label>
+                    <input id="captureDuration" name="duration_s" type="number" min="0.001" step="0.001" placeholder="10">
+                  </div>
+                  <div class="field">
+                    <label for="captureCount">Packet Count</label>
+                    <input id="captureCount" name="count" type="number" min="1" placeholder="100">
+                  </div>
+                  <div class="field">
+                    <label for="captureIface">Interface</label>
+                    <input id="captureIface" name="iface" placeholder="Ethernet">
+                  </div>
+                  <div class="field">
+                    <label for="captureFilter">BPF Filter</label>
+                    <input id="captureFilter" name="bpf_filter" placeholder="tcp port 80">
+                  </div>
+                  <div class="field">
+                    <span class="field-label">Options</span>
+                    <label class="check-row"><input name="analyze" type="checkbox" checked>Analyze after capture</label>
+                  </div>
+                  <div class="field">
+                    <span class="field-label">Authorization</span>
+                    <label class="check-row"><input name="confirm_authorized" type="checkbox" required>Confirm authorized</label>
+                  </div>
+                </div>
+                <div class="view-actions">
+                  <button class="primary" type="submit">Start Capture</button>
+                  <span class="status" id="captureStatus"></span>
+                </div>
+              </form>
+            </div>
+          </section>
+          <section class="band" style="margin-top:16px">
+            <div class="band-head"><h3>Capture Result</h3></div>
+            <div class="band-body" id="captureResult"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-packets">
+          <div class="view-head">
+            <h2>Packet Send</h2>
+            <div class="view-actions"><button type="button" id="auditRefresh">Refresh</button></div>
+          </div>
+          <div class="layout-two">
+            <section class="band">
+              <div class="band-head"><h3>Template</h3></div>
+              <div class="band-body">
+                <form id="packetForm">
+                  <div class="form-grid">
+                    <div class="field">
+                      <label for="packetTemplate">Template</label>
+                      <select id="packetTemplate" name="template">
+                        <option value="icmp">icmp</option>
+                        <option value="tcp">tcp</option>
+                        <option value="udp">udp</option>
+                        <option value="dns">dns</option>
+                        <option value="http">http</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label for="packetTarget">Target</label>
+                      <input id="packetTarget" name="target" required placeholder="127.0.0.1">
+                    </div>
+                    <div class="field full">
+                      <label for="packetScope">Scope</label>
+                      <input id="packetScope" name="scope" required placeholder="127.0.0.0/8">
+                    </div>
+                    <div class="field">
+                      <label for="packetCount">Count</label>
+                      <input id="packetCount" name="count" type="number" min="1" max="1000" value="1">
+                    </div>
+                    <div class="field">
+                      <label for="packetInterval">Interval ms</label>
+                      <input id="packetInterval" name="interval_ms" type="number" min="10" value="1000">
+                    </div>
+                    <div class="field packet-port-fields">
+                      <label for="packetDport">Dport</label>
+                      <input id="packetDport" name="dport" type="number" min="1" max="65535" placeholder="53">
+                    </div>
+                    <div class="field packet-sport-fields">
+                      <label for="packetSport">Sport</label>
+                      <input id="packetSport" name="sport" type="number" min="1" max="65535">
+                    </div>
+                    <div class="field template-fields" data-template-fields="tcp">
+                      <label for="packetFlags">Flags</label>
+                      <input id="packetFlags" name="flags" value="S">
+                    </div>
+                    <div class="field template-fields" data-template-fields="dns">
+                      <label for="packetDnsName">DNS Name</label>
+                      <input id="packetDnsName" name="dns_name" placeholder="example.com">
+                    </div>
+                    <div class="field template-fields" data-template-fields="http">
+                      <label for="packetHttpMethod">HTTP Method</label>
+                      <input id="packetHttpMethod" name="http_method" value="GET">
+                    </div>
+                    <div class="field template-fields" data-template-fields="http">
+                      <label for="packetHttpPath">HTTP Path</label>
+                      <input id="packetHttpPath" name="http_path" value="/">
+                    </div>
+                    <div class="field template-fields" data-template-fields="http">
+                      <label for="packetHttpHost">HTTP Host</label>
+                      <input id="packetHttpHost" name="http_host">
+                    </div>
+                    <div class="field full">
+                      <label for="packetPayload">Payload Text</label>
+                      <textarea id="packetPayload" name="payload_text"></textarea>
+                    </div>
+                    <div class="field full">
+                      <label for="packetPayload64">Payload Base64</label>
+                      <input id="packetPayload64" name="payload_base64">
+                    </div>
+                    <div class="field">
+                      <span class="field-label">Validation</span>
+                      <label class="check-row"><input name="dry_run" type="checkbox" checked>Dry run</label>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">Authorization</span>
+                      <label class="check-row"><input name="confirm_authorized" type="checkbox" required>Confirm authorized</label>
+                    </div>
+                  </div>
+                  <div class="view-actions">
+                    <button class="primary" type="submit">Send Packet</button>
+                    <span class="status" id="packetStatus"></span>
+                  </div>
+                </form>
+              </div>
+            </section>
+            <section class="band">
+              <div class="band-head"><h3>Result</h3></div>
+              <div class="band-body" id="packetResult"></div>
+            </section>
+          </div>
+          <section class="band" style="margin-top:16px">
+            <div class="band-head"><h3>Audit History</h3></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>ID</th><th>Template</th><th>Target</th><th>Sent</th><th>Created</th></tr></thead>
+                <tbody id="auditHistory"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="view-oast">
+          <div class="view-head">
+            <h2>OAST</h2>
+            <div class="view-actions"><button type="button" id="oastRefresh">Refresh</button></div>
+          </div>
+          <div class="layout-two">
+            <section class="band">
+              <div class="band-head"><h3>HTTP Callback Token</h3></div>
+              <div class="band-body">
+                <form id="oastForm">
+                  <div class="form-grid">
+                    <div class="field">
+                      <label for="oastLabel">Label</label>
+                      <input id="oastLabel" name="label" placeholder="lab">
+                    </div>
+                    <div class="field">
+                      <label for="oastTtl">TTL seconds</label>
+                      <input id="oastTtl" name="ttl_seconds" type="number" min="60" value="3600">
+                    </div>
+                    <div class="field full">
+                      <label for="oastBaseUrl">Base URL</label>
+                      <input id="oastBaseUrl" name="base_url">
+                    </div>
+                    <div class="field full">
+                      <label class="check-row"><input name="confirm_authorized" type="checkbox" required>Confirm authorized</label>
+                    </div>
+                  </div>
+                  <div class="view-actions">
+                    <button class="primary" type="submit">Create Token</button>
+                    <span class="status" id="oastStatus"></span>
+                  </div>
+                </form>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>ID</th><th>Label</th><th>URL</th><th>Expires</th></tr></thead>
+                  <tbody id="oastSessions"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="band">
+              <div class="band-head"><h3>Interactions</h3><span class="status" id="oastSelected"></span></div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Time</th><th>Method</th><th>Path</th><th>Remote</th></tr></thead>
+                  <tbody id="oastInteractions"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="view-plugins">
+          <div class="view-head">
+            <h2>Plugins</h2>
+            <div class="view-actions"><button type="button" id="pluginsRefresh">Refresh</button></div>
+          </div>
+          <section class="band">
+            <div class="band-head"><h3>Catalog</h3></div>
+            <div class="band-body" id="pluginsSummary"></div>
+          </section>
+        </section>
+
+        <section class="view" id="view-diagnostics">
+          <div class="view-head">
+            <h2>Diagnostics</h2>
+            <div class="view-actions"><button type="button" id="diagnosticsRefresh">Refresh</button></div>
+          </div>
+          <section class="band">
+            <div class="band-head"><h3>Runtime Diagnostics</h3></div>
+            <div class="kv" id="diagnosticsTable"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="viewer" id="viewer" hidden role="dialog" aria-modal="true" aria-labelledby="viewerTitle">
+    <div class="viewer-panel">
+      <div class="viewer-head">
+        <strong id="viewerTitle">Preview</strong>
+        <span class="status" id="viewerStatus"></span>
+        <button type="button" id="viewerSave" hidden>Save</button>
+        <button type="button" id="viewerClose" aria-label="Close preview">Close</button>
+      </div>
+      <div class="viewer-body" id="viewerBody"></div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      view: 'overview',
+      health: null,
+      scans: [],
+      scanId: null,
+      scanJobQuery: '',
+      scanJobStatus: '',
+      scanResultQuery: '',
+      scanResultHost: '',
+      scanResultState: '',
+      scanResultPage: 1,
+      scanResultPageSize: 50,
+      scanResultSearchTimer: null,
+      scanResultPayload: {results: [], total: 0, hosts: []},
+      customPortProfiles: [],
+      activeCustomPortProfile: null,
+      pcaps: [],
+      pcapId: null,
+      audits: [],
+      oastSessions: [],
+      oastId: null
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const text = (value) => value === null || value === undefined ? '' : String(value);
+    const escapeHtml = (value) => text(value).replace(/[&<>"']/g, (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const asList = (value) => text(value).split(/[,\r\n]+/).map((item) => item.trim()).filter(Boolean);
+    const scopeListFromTargets = (value) => asList(value).map((item) => item.includes('/') ? item : `${item}/${item.includes(':') ? '128' : '32'}`);
+    const numberOrNull = (value) => text(value).trim() ? Number(value) : null;
+    const stateClass = (value) => `state-${text(value).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+    const shortId = (value) => text(value).slice(0, 8);
+    const prettyJson = (value) => escapeHtml(JSON.stringify(value ?? {}, null, 2));
+    const formatDateTime = (value) => {
+      if (!value) return '';
+      const source = text(value);
+      const parsed = new Date(source.includes('T') ? source : `${source.replace(' ', 'T')}Z`);
+      return Number.isNaN(parsed.getTime()) ? source : parsed.toLocaleString();
+    };
+
+    const CUSTOM_PORT_PROFILE_STORAGE_KEY = 'scaprobe.customPortProfiles.v1';
+    const CUSTOM_PORT_PROFILE_MAX_BYTES = 256 * 1024;
+    const CUSTOM_PORT_PROFILE_MAX_COUNT = 10;
+
+    function parsePortExpression(value) {
+      const parts = text(value).split(',').map((item) => item.trim()).filter(Boolean);
+      if (!parts.length) throw new Error('the profile does not contain any ports');
+      const ports = new Set();
+      const expression = [];
+      parts.forEach((part) => {
+        const match = part.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+        if (!match) throw new Error(`invalid port or range: ${part}`);
+        const start = Number(match[1]);
+        const end = Number(match[2] || match[1]);
+        if (start < 1 || end > 65535) throw new Error(`port must be between 1 and 65535: ${part}`);
+        if (start > end) throw new Error(`range start must not exceed range end: ${part}`);
+        expression.push(start === end ? `${start}` : `${start}-${end}`);
+        for (let port = start; port <= end; port += 1) ports.add(port);
+      });
+      return {
+        expression: expression.join(','),
+        ports: Array.from(ports).sort((left, right) => left - right)
+      };
+    }
+
+    function parsePortProfileText(value) {
+      const expression = text(value)
+        .split(/\r?\n/)
+        .map((line) => line.split('#', 1)[0].trim())
+        .filter(Boolean)
+        .join(',');
+      return parsePortExpression(expression);
+    }
+
+    function compactPortText(value, maxRanges = 4) {
+      try {
+        const {ports} = parsePortExpression(value);
+        const ranges = [];
+        let start = null;
+        let previous = null;
+        ports.forEach((port) => {
+          if (start === null) {
+            start = port;
+            previous = port;
+            return;
+          }
+          if (port === previous + 1) {
+            previous = port;
+            return;
+          }
+          ranges.push(start === previous ? `${start}` : `${start}-${previous}`);
+          start = port;
+          previous = port;
+        });
+        if (start !== null) ranges.push(start === previous ? `${start}` : `${start}-${previous}`);
+        const hidden = Math.max(0, ranges.length - maxRanges);
+        const head = ranges.slice(0, maxRanges).join(', ');
+        return `${head}${hidden ? ` +${hidden} range${hidden === 1 ? '' : 's'}` : ''} (${ports.length} port${ports.length === 1 ? '' : 's'})`;
+      } catch (_) {
+        const source = text(value);
+        return source.length > 48 ? `${source.slice(0, 45)}...` : source;
+      }
+    }
+
+    function compactPortsHtml(value, maxRanges = 4) {
+      return `<span class="port-summary" title="${escapeHtml(value)}">${escapeHtml(compactPortText(value, maxRanges))}</span>`;
+    }
+
+    function estimateTargetCount(value) {
+      const items = asList(value);
+      if (!items.length) return null;
+      let total = 0n;
+      for (const item of items) {
+        const slash = item.lastIndexOf('/');
+        if (slash < 0) {
+          total += 1n;
+          continue;
+        }
+        const address = item.slice(0, slash);
+        const prefix = Number(item.slice(slash + 1));
+        const bits = address.includes(':') ? 128 : 32;
+        if (!Number.isInteger(prefix) || prefix < 0 || prefix > bits) return null;
+        const addresses = 1n << BigInt(bits - prefix);
+        total += addresses <= 2n ? addresses : addresses - 2n;
+      }
+      return total;
+    }
+
+    function selectedPortCount(ports, topPorts, profile) {
+      if (ports) {
+        try { return parsePortExpression(ports).ports.length; } catch (_) { return 0; }
+      }
+      if (topPorts) return Math.max(0, Number(topPorts) || 0);
+      if (profile) {
+        const values = state.health?.plugins?.port_profiles?.[profile];
+        return Array.isArray(values) ? values.length : 0;
+      }
+      return 0;
+    }
+
+    function formatBigInt(value) {
+      try { return new Intl.NumberFormat().format(value); } catch (_) { return value.toString(); }
+    }
+
+    function formatDuration(seconds) {
+      if (!Number.isFinite(seconds)) return 'unknown';
+      if (seconds < 60) return `${Math.max(1, Math.ceil(seconds))} sec`;
+      if (seconds < 3600) return `${Math.ceil(seconds / 60)} min`;
+      if (seconds < 86400) return `${Math.ceil(seconds / 3600)} hr`;
+      return `${Math.ceil(seconds / 86400)} days`;
+    }
+
+    function expandablePortsHtml(value) {
+      const source = text(value);
+      let count = 0;
+      try { count = parsePortExpression(source).ports.length; } catch (_) {}
+      if (count <= 8) return compactPortsHtml(source, 8);
+      return `
+        <details class="ports-details">
+          <summary>${escapeHtml(compactPortText(source, 5))}</summary>
+          <div class="mono">${escapeHtml(source)}</div>
+        </details>
+      `;
+    }
+
+    function loadCustomPortProfiles() {
+      try {
+        const stored = JSON.parse(localStorage.getItem(CUSTOM_PORT_PROFILE_STORAGE_KEY) || '[]');
+        if (!Array.isArray(stored)) return [];
+        return stored.slice(0, CUSTOM_PORT_PROFILE_MAX_COUNT).flatMap((profile) => {
+          try {
+            const parsed = parsePortExpression(profile.expression);
+            const name = text(profile.name).trim();
+            return name ? [{name, expression: parsed.expression, count: parsed.ports.length}] : [];
+          } catch (_) {
+            return [];
+          }
+        });
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function saveCustomPortProfiles() {
+      try {
+        localStorage.setItem(CUSTOM_PORT_PROFILE_STORAGE_KEY, JSON.stringify(state.customPortProfiles));
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function renderAvailablePortProfiles() {
+      const select = $('scanProfile');
+      const selected = select.value;
+      const profiles = state.health?.plugins?.port_profiles || {};
+      const options = Object.entries(profiles)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([name, ports]) => `<option value="${escapeHtml(name)}">${escapeHtml(name)} (${Array.isArray(ports) ? ports.length : 0})</option>`)
+        .join('');
+      select.innerHTML = `<option value="">Configured profile...</option>${options}`;
+      if (Object.prototype.hasOwnProperty.call(profiles, selected)) select.value = selected;
+    }
+
+    function renderCustomPortProfiles() {
+      $('scanCustomProfiles').innerHTML = state.customPortProfiles.map((profile, index) => `
+        <span class="custom-profile-chip">
+          <button type="button" class="custom-profile-use ${profile.name === state.activeCustomPortProfile ? 'active' : ''}"
+            data-custom-profile-use="${index}" title="${escapeHtml(profile.expression)}">${escapeHtml(profile.name)} (${profile.count})</button>
+          <button type="button" class="custom-profile-remove" data-custom-profile-remove="${index}"
+            aria-label="Remove ${escapeHtml(profile.name)} profile" title="Remove profile">&times;</button>
+        </span>
+      `).join('');
+      document.querySelectorAll('[data-custom-profile-use]').forEach((button) => {
+        button.addEventListener('click', () => applyCustomPortProfile(Number(button.dataset.customProfileUse)));
+      });
+      document.querySelectorAll('[data-custom-profile-remove]').forEach((button) => {
+        button.addEventListener('click', () => removeCustomPortProfile(Number(button.dataset.customProfileRemove)));
+      });
+      updatePortPresetState();
+    }
+
+    function updatePortPresetState() {
+      const directPorts = $('scanPorts').value.trim();
+      document.querySelectorAll('[data-port-preset]').forEach((button) => {
+        button.classList.toggle('active', !state.activeCustomPortProfile && !$('scanProfile').value && directPorts === text(button.dataset.portPreset));
+      });
+    }
+
+    function applyCustomPortProfile(index) {
+      const profile = state.customPortProfiles[index];
+      if (!profile) return;
+      state.activeCustomPortProfile = profile.name;
+      $('scanPorts').value = profile.expression;
+      $('scanTopPorts').value = '';
+      $('scanProfile').value = '';
+      $('scanProtocol').value = 'tcp';
+      setStatus('scanProfileStatus', `${profile.name}: ${profile.count} ports loaded`);
+      renderCustomPortProfiles();
+      updateScanPreview();
+    }
+
+    function removeCustomPortProfile(index) {
+      const profile = state.customPortProfiles[index];
+      if (!profile) return;
+      state.customPortProfiles.splice(index, 1);
+      if (state.activeCustomPortProfile === profile.name) {
+        state.activeCustomPortProfile = null;
+        $('scanPorts').value = '';
+      }
+      const saved = saveCustomPortProfiles();
+      setStatus('scanProfileStatus', saved ? `${profile.name} removed` : `${profile.name} removed for this session only`, !saved);
+      renderCustomPortProfiles();
+      updateScanPreview();
+    }
+
+    async function api(path, options = {}) {
+      const init = {...options};
+      if (init.body) init.headers = {'Content-Type': 'application/json', ...(init.headers || {})};
+      const response = await fetch(path, init);
+      if (!response.ok) {
+        let detail = await response.text();
+        try {
+          const parsed = JSON.parse(detail);
+          detail = parsed.detail?.error || parsed.detail || detail;
+        } catch (_) {}
+        throw new Error(text(detail));
+      }
+      const contentType = response.headers.get('content-type') || '';
+      return contentType.includes('application/json') ? response.json() : response.text();
+    }
+
+    // The desktop build runs this page inside a webview that silently drops
+    // new-window navigation, so every "open" action renders in this page
+    // and every download is fetched and saved from a blob.
+    let viewerObjectUrl = null;
+    let viewerSaveTarget = null;
+
+    function closeViewer() {
+      $('viewer').hidden = true;
+      $('viewerBody').innerHTML = '';
+      $('viewerSave').hidden = true;
+      viewerSaveTarget = null;
+      if (viewerObjectUrl) {
+        URL.revokeObjectURL(viewerObjectUrl);
+        viewerObjectUrl = null;
+      }
+    }
+
+    function openViewer(title, save = null) {
+      closeViewer();
+      $('viewerTitle').textContent = title;
+      $('viewerStatus').textContent = 'loading...';
+      const saveButton = $('viewerSave');
+      saveButton.hidden = !save;
+      saveButton.textContent = save ? `Save ${save.name}` : 'Save';
+      viewerSaveTarget = save;
+      $('viewer').hidden = false;
+    }
+
+    async function fetchBlob(path) {
+      const response = await fetch(path);
+      if (!response.ok) {
+        let detail = await response.text();
+        try {
+          const parsed = JSON.parse(detail);
+          detail = parsed.detail?.error || parsed.detail || detail;
+        } catch (_) {}
+        throw new Error(text(detail) || `request failed with status ${response.status}`);
+      }
+      return response.blob();
+    }
+
+    async function viewDocument(path, title) {
+      openViewer(title);
+      try {
+        const blob = await fetchBlob(path);
+        viewerObjectUrl = URL.createObjectURL(blob);
+        const frame = document.createElement('iframe');
+        frame.src = viewerObjectUrl;
+        frame.title = title;
+        $('viewerBody').replaceChildren(frame);
+        $('viewerStatus').textContent = '';
+      } catch (err) {
+        $('viewerStatus').textContent = err.message;
+      }
+    }
+
+    function viewImage(path, title) {
+      openViewer(title);
+      const image = document.createElement('img');
+      image.alt = title;
+      image.onload = () => { $('viewerStatus').textContent = ''; };
+      image.onerror = () => { $('viewerStatus').textContent = 'could not load the evidence image'; };
+      image.src = path;
+      $('viewerBody').replaceChildren(image);
+    }
+
+    function formatBytes(value) {
+      const size = Number(value) || 0;
+      if (size < 1024) return `${size} B`;
+      if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+      return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    // Preview what can be read as text; binary workbooks and evidence bundles
+    // only report what they are, and every preview offers the real file.
+    async function previewExport(previewPath, {title, save, kind}) {
+      openViewer(title, save);
+      try {
+        const blob = await fetchBlob(previewPath);
+        const note = document.createElement('div');
+        note.className = 'viewer-note';
+        if (kind === 'text') {
+          const body = await blob.text();
+          const block = document.createElement('pre');
+          block.className = 'viewer-text';
+          block.textContent = body;
+          note.textContent = `${formatBytes(blob.size)} preview`;
+          $('viewerBody').replaceChildren(note, block);
+        } else {
+          note.textContent = `${title} ready: ${formatBytes(blob.size)}. This format cannot be previewed here - use Save.`;
+          $('viewerBody').replaceChildren(note);
+        }
+        $('viewerStatus').textContent = '';
+      } catch (err) {
+        $('viewerStatus').textContent = err.message;
+      }
+    }
+
+    async function downloadFile(path, fallbackName, statusId) {
+      if (statusId) setStatus(statusId, 'preparing download...');
+      try {
+        const blob = await fetchBlob(path);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fallbackName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        // Revoke late: the webview reads the blob after the click returns.
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        if (statusId) setStatus(statusId, `saved ${fallbackName}`);
+      } catch (err) {
+        if (statusId) setStatus(statusId, err.message, true);
+      }
+    }
+
+    function exportFileName(scanId, extension) {
+      return `scaprobe-${shortId(scanId) || 'scan'}.${extension}`;
+    }
+
+    function setStatus(id, value, bad = false) {
+      const node = $(id);
+      if (!node) return;
+      node.textContent = text(value);
+      node.style.color = bad ? 'var(--danger)' : '';
+    }
+
+    function showView(view) {
+      state.view = view;
+      document.querySelectorAll('.view').forEach((node) => node.classList.toggle('active', node.id === `view-${view}`));
+      document.querySelectorAll('[data-view-target]').forEach((node) => node.classList.toggle('active', node.dataset.viewTarget === view));
+      const title = document.querySelector(`[data-view-target="${view}"]`)?.textContent || 'Overview';
+      $('viewTitle').textContent = title;
+      if (view === 'overview') refreshOverview();
+      if (view === 'scans') refreshScans();
+      if (view === 'pcap') refreshPcaps();
+      if (view === 'packets') refreshAudits();
+      if (view === 'oast') refreshOast();
+      if (view === 'plugins') refreshPlugins();
+      if (view === 'diagnostics') refreshHealth();
+    }
+
+    function renderTopStatus() {
+      const health = state.health || {};
+      const diagnostics = health.diagnostics || {};
+      const engineOk = Boolean(diagnostics.rust_engine_available);
+      const driverOk = Boolean(diagnostics.packet_driver_available);
+      const rawOk = Boolean(diagnostics.raw_socket_privileged);
+      $('topStatus').innerHTML = [
+        pill('API', health.status === 'ok' ? 'ok' : 'warn'),
+        pill(engineOk ? 'Engine ready' : 'Engine missing', engineOk ? 'ok' : 'warn'),
+        pill(driverOk ? text(diagnostics.packet_driver || 'Driver ready') : 'Driver missing', driverOk ? 'ok' : 'warn'),
+        pill(rawOk ? 'Raw privileged' : 'Raw limited', rawOk ? 'ok' : 'warn')
+      ].join('');
+      $('dbPath').textContent = health.db ? `db ${health.db}` : 'db unavailable';
+    }
+
+    function pill(label, tone = '') {
+      return `<span class="pill ${escapeHtml(tone)}">${escapeHtml(label)}</span>`;
+    }
+
+    async function refreshHealth() {
+      try {
+        state.health = await api('/v1/health');
+        renderTopStatus();
+        updateScanActionState();
+        renderAvailablePortProfiles();
+        renderDiagnostics();
+        renderPlugins(state.health.plugins || {});
+        renderOverviewRuntime();
+      } catch (err) {
+        $('topStatus').innerHTML = pill(err.message, 'bad');
+      }
+    }
+
+    async function refreshOverview() {
+      await Promise.allSettled([refreshHealth(), refreshScans(false), refreshPcaps(false), refreshAudits(false), refreshOast(false)]);
+      renderOverviewMetrics();
+      renderOverviewScans();
+      renderOverviewRuntime();
+    }
+
+    function renderOverviewMetrics() {
+      const totalScans = state.scans.length;
+      const running = state.scans.filter((job) => ['queued', 'running', 'recovering', 'cancel_requested'].includes(job.status)).length;
+      const openPorts = state.scans.reduce((sum, job) => sum + Number(job.summary?.open || 0), 0);
+      const pcapCount = state.pcaps.length;
+      $('overviewMetrics').innerHTML = [
+        metric('Scan Jobs', totalScans),
+        metric('Active Jobs', running),
+        metric('Open Results', openPorts),
+        metric('PCAP Analyses', pcapCount)
+      ].join('');
+    }
+
+    function metric(label, value) {
+      return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+    }
+
+    function renderOverviewScans() {
+      $('overviewScans').innerHTML = state.scans.slice(0, 8).map((job) => `
+        <tr class="clickable ${job.id === state.scanId ? 'selected' : ''}" data-scan-row="${escapeHtml(job.id)}">
+          <td class="mono">${escapeHtml(shortId(job.id))}</td>
+          <td>${pill(job.status, stateClass(job.status))}</td>
+          <td>${escapeHtml(job.targets)}</td>
+          <td>${compactPortsHtml(job.ports, 3)}</td>
+          <td>${escapeHtml(job.summary?.open || 0)}</td>
+        </tr>
+      `).join('') || `<tr><td colspan="5" class="empty">No scan jobs</td></tr>`;
+      document.querySelectorAll('[data-scan-row]').forEach((node) => {
+        node.addEventListener('click', async () => {
+          await selectScan(node.dataset.scanRow);
+          showView('scans');
+        });
+      });
+    }
+
+    function renderOverviewRuntime() {
+      const diagnostics = state.health?.diagnostics || {};
+      $('overviewRuntime').innerHTML = kvRows({
+        version: diagnostics.app_version || state.health?.app_version || '',
+        platform: diagnostics.platform || '',
+        engine: diagnostics.rust_engine_version || 'unavailable',
+        scapy: diagnostics.scapy_available ? 'available' : 'unavailable',
+        packet_driver: diagnostics.packet_driver || '',
+        raw_socket: diagnostics.raw_socket_privileged ? 'privileged' : 'limited'
+      });
+    }
+
+    async function refreshScans(render = true) {
+      try {
+        const payload = await api('/v1/scans?limit=50');
+        state.scans = payload.scans || [];
+        if (state.scanId && !state.scans.some((job) => job.id === state.scanId)) {
+          state.scanId = null;
+          state.scanResultHost = '';
+          state.scanResultState = '';
+          state.scanResultPage = 1;
+          state.scanResultPayload = {results: [], total: 0, hosts: []};
+          $('selectedScanLabel').textContent = 'Select a job to view results';
+        }
+        if (render) {
+          renderScanJobs();
+          renderSelectedScan();
+          updateScanActionState();
+          renderOverviewMetrics();
+          renderOverviewScans();
+          if (state.scanId) await Promise.allSettled([refreshScanProgress(), refreshScanResults()]);
+          else renderScanResults();
+        }
+      } catch (err) {
+        $('scanJobs').innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    function renderScanJobs() {
+      const query = state.scanJobQuery.trim().toLowerCase();
+      const jobs = state.scans.filter((job) => {
+        if (state.scanJobStatus && job.status !== state.scanJobStatus) return false;
+        if (!query) return true;
+        return [job.id, job.targets, job.ports, job.status]
+          .some((value) => text(value).toLowerCase().includes(query));
+      });
+      $('scanJobCount').textContent = `${jobs.length} of ${state.scans.length}`;
+      const emptyMessage = state.scans.length ? 'No matching scan jobs' : 'No scan jobs yet. Start a scan from the form.';
+      $('scanJobs').innerHTML = jobs.map((job) => `
+        <tr class="clickable ${job.id === state.scanId ? 'selected' : ''}" data-scan-row="${escapeHtml(job.id)}">
+          <td class="mono" title="${escapeHtml(job.id)}">${escapeHtml(shortId(job.id))}</td>
+          <td>${pill(job.status, stateClass(job.status))}</td>
+          <td class="cell-clip" title="${escapeHtml(job.targets)}">${escapeHtml(job.targets)}</td>
+          <td>${compactPortsHtml(job.ports, 3)}</td>
+          <td>${escapeHtml(job.summary?.total || 0)}</td>
+          <td>${escapeHtml(job.summary?.open || 0)}</td>
+          <td>${escapeHtml(formatDateTime(job.created_at))}</td>
+        </tr>
+      `).join('') || `<tr><td colspan="7" class="empty">${escapeHtml(emptyMessage)}</td></tr>`;
+      document.querySelectorAll('[data-scan-row]').forEach((node) => {
+        node.addEventListener('click', () => selectScan(node.dataset.scanRow));
+      });
+    }
+
+    function selectedScanJob() {
+      return state.scans.find((job) => job.id === state.scanId) || null;
+    }
+
+    function renderSelectedScan() {
+      const job = selectedScanJob();
+      if (!job) {
+        $('selectedScanLabel').style.color = '';
+        $('selectedScanLabel').textContent = 'Select a job to view results';
+        $('selectedScanSummary').innerHTML = '<div>Select a scan job from the table.</div>';
+        $('scanMetrics').innerHTML = '';
+        return;
+      }
+      $('selectedScanLabel').style.color = '';
+      $('selectedScanLabel').textContent = `${shortId(job.id)} - ${job.status}`;
+      $('selectedScanSummary').innerHTML = `
+        <div><span>Scan ID</span><strong class="mono">${escapeHtml(job.id)}</strong></div>
+        <div><span>Status</span>${pill(job.status, stateClass(job.status))}</div>
+        <div><span>Targets</span>${escapeHtml(job.targets)}</div>
+        <div><span>Ports</span>${expandablePortsHtml(job.ports)}</div>
+        <div><span>Created</span>${escapeHtml(formatDateTime(job.created_at))}</div>
+        <div><span>Completed</span>${escapeHtml(formatDateTime(job.completed_at) || 'n/a')}</div>
+      `;
+    }
+
+    async function selectScan(scanId) {
+      state.scanId = scanId;
+      const job = selectedScanJob();
+      $('selectedScanLabel').textContent = job ? `${shortId(job.id)} - ${job.status}` : 'Select a job to view results';
+      state.scanResultQuery = '';
+      state.scanResultHost = '';
+      state.scanResultState = '';
+      state.scanResultPage = 1;
+      $('scanResultSearch').value = '';
+      updateScanLinks();
+      renderSelectedScan();
+      updateScanActionState();
+      renderScanJobs();
+      renderOverviewScans();
+      await Promise.allSettled([refreshScanProgress(), refreshScanResults()]);
+    }
+
+    function setScanLinkState(id, enabled, href = '', previewHref = '') {
+      const link = $(id);
+      link.classList.toggle('disabled', !enabled);
+      link.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+      if (enabled) link.href = href;
+      else link.removeAttribute('href');
+      if (enabled && previewHref) link.dataset.previewHref = previewHref;
+      else delete link.dataset.previewHref;
+    }
+
+    function updateScanLinks() {
+      if (!state.scanId) {
+        ['scanReportLink', 'scanExportJson', 'scanExportCsv', 'scanExportXlsx']
+          .forEach((id) => setScanLinkState(id, false));
+        return;
+      }
+      const scan = encodeURIComponent(state.scanId);
+      const filters = new URLSearchParams();
+      if (state.scanResultHost) filters.set('host', state.scanResultHost);
+      if (state.scanResultState) filters.set('state', state.scanResultState);
+      if (state.scanResultQuery.trim()) filters.set('search', state.scanResultQuery.trim());
+      const suffix = filters.toString() ? `&${filters}` : '';
+      setScanLinkState('scanReportLink', true, `/v1/scans/${scan}/report?format=html&embed_evidence=true`);
+      setScanLinkState('scanExportJson', true, `/v1/scans/${scan}/export?format=json${suffix}`);
+      setScanLinkState(
+        'scanExportCsv',
+        true,
+        `/v1/scans/${scan}/export?format=csv&bundle_evidence=true${suffix}`,
+        // The saved file is a zip bundle; preview the plain CSV inside it.
+        `/v1/scans/${scan}/export?format=csv${suffix}`,
+      );
+      setScanLinkState('scanExportXlsx', true, `/v1/scans/${scan}/export?format=xlsx${suffix}`);
+    }
+
+    function bindScanLinkActions() {
+      const exportPreview = (extension, kind) => (link) => previewExport(
+        link.dataset.previewHref || link.getAttribute('href'),
+        {
+          title: `Export ${extension.toUpperCase()}`,
+          kind,
+          save: {url: link.getAttribute('href'), name: exportFileName(state.scanId, extension)},
+        },
+      );
+      const actions = {
+        scanReportLink: (link) => viewDocument(link.getAttribute('href'), 'Scan report'),
+        scanExportJson: exportPreview('json', 'text'),
+        scanExportCsv: exportPreview('zip', 'text'),
+        scanExportXlsx: exportPreview('xlsx', 'binary'),
+      };
+      Object.entries(actions).forEach(([id, run]) => {
+        const link = $(id);
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          if (link.classList.contains('disabled') || !link.getAttribute('href')) return;
+          run(link);
+        });
+      });
+    }
+
+    function updateScanActionState() {
+      const job = selectedScanJob();
+      const active = Boolean(job && ['queued', 'running', 'recovering', 'cancel_requested'].includes(job.status));
+      const engineAvailable = Boolean(state.health?.rust_engine_available ?? state.health?.diagnostics?.rust_engine_available);
+      $('scanSubmit').disabled = !engineAvailable;
+      $('scanSubmit').textContent = engineAvailable ? 'Start Scan' : 'Rust Engine Unavailable';
+      $('scanCancel').disabled = !job || !active || job.status === 'cancel_requested';
+      $('scanDelete').disabled = !job || active;
+      $('scanResultSearch').disabled = !job;
+      $('scanResultPageSize').disabled = !job;
+      updateScanLinks();
+    }
+
+    async function refreshScanProgress() {
+      if (!state.scanId) {
+        $('scanMetrics').innerHTML = '';
+        return;
+      }
+      const progress = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/progress`);
+      const states = progress.states || {};
+      $('scanMetrics').innerHTML = [
+        metric('Progress', `${progress.percent || 0}%`),
+        metric('Completed', progress.completed_results || 0),
+        metric('Planned', progress.planned_total || 0),
+        metric('Open', states.open || 0)
+      ].join('');
+    }
+
+    async function refreshScanResults() {
+      if (!state.scanId) {
+        state.scanResultPayload = {results: [], total: 0, hosts: []};
+        renderScanResults();
+        return;
+      }
+      const offset = (state.scanResultPage - 1) * state.scanResultPageSize;
+      const params = new URLSearchParams({
+        limit: String(state.scanResultPageSize),
+        offset: String(offset)
+      });
+      if (state.scanResultHost) params.set('host', state.scanResultHost);
+      if (state.scanResultState) params.set('state', state.scanResultState);
+      if (state.scanResultQuery.trim()) params.set('search', state.scanResultQuery.trim());
+      try {
+        const payload = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/results?${params}`);
+        const hosts = Array.isArray(payload.hosts) ? payload.hosts : [];
+        if (state.scanResultHost && !hosts.some((item) => item.host === state.scanResultHost)) {
+          state.scanResultHost = '';
+          state.scanResultPage = 1;
+          await refreshScanResults();
+          return;
+        }
+        const totalPages = Math.max(1, Math.ceil(Number(payload.total || 0) / state.scanResultPageSize));
+        if (state.scanResultPage > totalPages) {
+          state.scanResultPage = totalPages;
+          await refreshScanResults();
+          return;
+        }
+        state.scanResultPayload = payload;
+        renderScanResults();
+        updateScanLinks();
+      } catch (err) {
+        $('scanResults').innerHTML = `<tr><td colspan="9" class="empty">${escapeHtml(err.message)}</td></tr>`;
+        $('resultCount').textContent = 'Unable to load results';
+        $('scanResultPagination').innerHTML = '';
+      }
+    }
+
+    function resultStateCounts(hosts) {
+      if (state.scanResultHost) {
+        return hosts.find((item) => item.host === state.scanResultHost)?.states || {};
+      }
+      return hosts.reduce((counts, item) => {
+        Object.entries(item.states || {}).forEach(([name, count]) => {
+          counts[name] = Number(counts[name] || 0) + Number(count || 0);
+        });
+        return counts;
+      }, {});
+    }
+
+    function resultStateLabel(value) {
+      return value ? value.replace('open|filtered', 'Open | Filtered').replace(/^./, (letter) => letter.toUpperCase()) : 'All states';
+    }
+
+    function renderResultTabs(payload) {
+      const hosts = (Array.isArray(payload.hosts) ? [...payload.hosts] : [])
+        .sort((left, right) => text(left.host).localeCompare(text(right.host), undefined, {numeric: true}));
+      const hostTabs = $('scanHostTabs');
+      if (hosts.length <= 1) {
+        const only = hosts[0];
+        hostTabs.innerHTML = only
+          ? `<span class="result-single-host">Host: <span class="mono">${escapeHtml(only.host)}</span> · ${escapeHtml(only.total)} results</span>`
+          : '';
+      } else {
+        const allTotal = hosts.reduce((sum, item) => sum + Number(item.total || 0), 0);
+        hostTabs.innerHTML = `
+          <button type="button" class="result-tab ${state.scanResultHost ? '' : 'active'}" data-result-host-index="-1" role="tab" aria-selected="${state.scanResultHost ? 'false' : 'true'}">
+            All hosts <span class="tab-count">${allTotal}</span>
+          </button>
+          ${hosts.map((item, index) => {
+            const stateSummary = Object.entries(item.states || {}).map(([name, count]) => `${name}: ${count}`).join(', ');
+            const active = state.scanResultHost === item.host;
+            return `<button type="button" class="result-tab ${active ? 'active' : ''}" data-result-host-index="${index}" role="tab" aria-selected="${active ? 'true' : 'false'}" title="${escapeHtml(stateSummary)}">
+              <span class="mono">${escapeHtml(item.host)}</span> <span class="tab-count">${escapeHtml(item.total)}</span>
+            </button>`;
+          }).join('')}
+        `;
+        hostTabs.querySelectorAll('[data-result-host-index]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            const index = Number(button.dataset.resultHostIndex);
+            state.scanResultHost = index < 0 ? '' : hosts[index]?.host || '';
+            state.scanResultPage = 1;
+            await refreshScanResults();
+          });
+        });
+      }
+
+      const counts = resultStateCounts(hosts);
+      const total = Object.values(counts).reduce((sum, count) => sum + Number(count || 0), 0);
+      const states = ['open', 'closed', 'open|filtered', 'filtered', 'error'];
+      const options = [{value: '', label: 'All states', count: total}].concat(
+        states
+          .filter((value) => Number(counts[value] || 0) > 0 || state.scanResultState === value)
+          .map((value) => ({value, label: resultStateLabel(value), count: Number(counts[value] || 0)}))
+      );
+      $('scanStateTabs').innerHTML = options.map((item, index) => {
+        const active = state.scanResultState === item.value;
+        return `<button type="button" class="result-tab ${active ? 'active' : ''} ${item.value ? stateClass(item.value) : ''}" data-result-state-index="${index}" role="tab" aria-selected="${active ? 'true' : 'false'}">
+          ${escapeHtml(item.label)} <span class="tab-count">${item.count}</span>
+        </button>`;
+      }).join('');
+      $('scanStateTabs').querySelectorAll('[data-result-state-index]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const option = options[Number(button.dataset.resultStateIndex)];
+          state.scanResultState = option?.value || '';
+          state.scanResultPage = 1;
+          await refreshScanResults();
+        });
+      });
+    }
+
+    function resultPageWindow(current, total) {
+      const pages = new Set([1, total]);
+      for (let page = Math.max(1, current - 2); page <= Math.min(total, current + 2); page += 1) pages.add(page);
+      const sorted = Array.from(pages).sort((left, right) => left - right);
+      const output = [];
+      sorted.forEach((page, index) => {
+        if (index && page - sorted[index - 1] > 1) output.push(null);
+        output.push(page);
+      });
+      return output;
+    }
+
+    function renderResultPagination(payload) {
+      const total = Number(payload.total || 0);
+      const totalPages = Math.max(1, Math.ceil(total / state.scanResultPageSize));
+      const start = total ? ((state.scanResultPage - 1) * state.scanResultPageSize) + 1 : 0;
+      const end = total ? Math.min(total, start + (payload.results || []).length - 1) : 0;
+      const pages = resultPageWindow(state.scanResultPage, totalPages);
+      $('scanResultPagination').innerHTML = `
+        <span class="status">Rows ${start}-${end} of ${total} · Page ${state.scanResultPage} of ${totalPages}</span>
+        <div class="page-buttons">
+          <button type="button" data-result-page="${state.scanResultPage - 1}" ${state.scanResultPage <= 1 ? 'disabled' : ''}>Previous</button>
+          ${pages.map((page) => page === null
+            ? '<span class="status">…</span>'
+            : `<button type="button" class="${page === state.scanResultPage ? 'active' : ''}" data-result-page="${page}" aria-label="Page ${page}" ${page === state.scanResultPage ? 'aria-current="page"' : ''}>${page}</button>`
+          ).join('')}
+          <button type="button" data-result-page="${state.scanResultPage + 1}" ${state.scanResultPage >= totalPages ? 'disabled' : ''}>Next</button>
+        </div>
+      `;
+      $('scanResultPagination').querySelectorAll('[data-result-page]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const page = Number(button.dataset.resultPage);
+          if (page < 1 || page > totalPages || page === state.scanResultPage) return;
+          state.scanResultPage = page;
+          await refreshScanResults();
+          document.querySelector('.scan-results-wrap')?.scrollTo({top: 0});
+        });
+      });
+    }
+
+    function renderScanResults() {
+      if (!state.scanId) {
+        $('scanResults').innerHTML = `<tr><td colspan="9" class="empty">Select a scan job to view results</td></tr>`;
+        $('scanHostTabs').innerHTML = '';
+        $('scanStateTabs').innerHTML = '';
+        $('scanResultPagination').innerHTML = '';
+        $('resultCount').textContent = '';
+        return;
+      }
+      const payload = state.scanResultPayload || {results: [], total: 0, hosts: []};
+      const results = payload.results || [];
+      $('resultCount').textContent = `${payload.total || 0} matching results`;
+      renderResultTabs(payload);
+      renderResultPagination(payload);
+      $('scanResults').innerHTML = results.map((result) => {
+        const tags = Array.isArray(result.tags) ? result.tags.join(', ') : '';
+        const serviceName = text(result.service_name || '');
+        const inferredService = text(result.banner || '').includes('inferred from port mapping');
+        const evidenceFiles = Array.isArray(result.evidence_files) ? result.evidence_files : [];
+        const evidence = evidenceFiles.map((item) => `
+          <span class="evidence-card">
+            <a href="${escapeHtml(item.download_url || '')}" data-evidence-view="${escapeHtml(item.file_name || 'evidence')}" title="${escapeHtml(item.file_name || 'evidence')}">
+              <img class="evidence-thumb" src="${escapeHtml(item.download_url || '')}" alt="${escapeHtml(item.file_name || 'evidence')}" loading="lazy">
+            </a>
+            <button class="evidence-delete" type="button" data-evidence-delete="${escapeHtml(item.id || '')}" data-evidence-name="${escapeHtml(item.file_name || 'evidence')}">Delete</button>
+          </span>
+        `).join('');
+        const evidenceTarget = `${encodeURIComponent(text(state.scanId))}/results/${encodeURIComponent(text(result.host))}/${encodeURIComponent(text(result.protocol))}/${encodeURIComponent(text(result.port))}`;
+        return `<tr>
+          <td class="mono">${escapeHtml(result.host)}</td>
+          <td>${escapeHtml(result.port)}</td>
+          <td>${escapeHtml(result.protocol)}</td>
+          <td>${pill(result.state, stateClass(result.state))}</td>
+          <td>${inferredService && serviceName ? pill(`${serviceName} · inferred`, 'warn') : escapeHtml(serviceName)}</td>
+          <td>${escapeHtml(result.banner || '')}</td>
+          <td><div class="evidence-list">${evidence}<label class="evidence-add">Attach<input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-evidence-target="${evidenceTarget}"></label></div></td>
+          <td>${escapeHtml(tags)}</td>
+          <td>${escapeHtml(result.note || '')}</td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="9" class="empty">No results</td></tr>`;
+      document.querySelectorAll('[data-evidence-target]').forEach((input) => {
+        input.addEventListener('change', async () => {
+          const file = input.files?.[0];
+          if (!file) return;
+          try {
+            $('resultCount').textContent = `uploading ${file.name}`;
+            await api(`/v1/scans/${input.dataset.evidenceTarget}/evidence?filename=${encodeURIComponent(file.name)}`, {
+              method: 'POST',
+              headers: {'Content-Type': file.type || 'application/octet-stream'},
+              body: file
+            });
+            await refreshScanResults();
+          } catch (err) {
+            $('resultCount').textContent = err.message;
+          }
+        });
+      });
+      document.querySelectorAll('[data-evidence-delete]').forEach((button) => {
+        button.addEventListener('click', async () => {
+          const evidenceId = button.dataset.evidenceDelete;
+          const evidenceName = button.dataset.evidenceName || 'evidence';
+          if (!evidenceId || !window.confirm(`Delete ${evidenceName}?`)) return;
+          try {
+            $('resultCount').textContent = `deleting ${evidenceName}`;
+            await api(`/v1/evidence/${encodeURIComponent(evidenceId)}`, {method: 'DELETE'});
+            await refreshScanResults();
+          } catch (err) {
+            $('resultCount').textContent = err.message;
+          }
+        });
+      });
+      document.querySelectorAll('[data-evidence-view]').forEach((link) => {
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          viewImage(link.getAttribute('href'), link.dataset.evidenceView || 'evidence');
+        });
+      });
+    }
+
+    async function refreshPcaps(render = true) {
+      try {
+        const payload = await api('/v1/pcaps/analyses?limit=50');
+        state.pcaps = payload.analyses || [];
+        if (render) renderPcapHistory();
+      } catch (err) {
+        $('pcapHistory').innerHTML = `<tr><td colspan="4" class="empty">${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    function renderPcapHistory() {
+      $('pcapHistory').innerHTML = state.pcaps.map((analysis) => {
+        const summary = analysis.summary || {};
+        return `<tr class="clickable ${analysis.id === state.pcapId ? 'selected' : ''}" data-pcap-id="${escapeHtml(analysis.id)}">
+          <td class="mono">${escapeHtml(shortId(analysis.id))}</td>
+          <td>${escapeHtml(analysis.file)}</td>
+          <td>${escapeHtml(summary.packet_count || 0)}</td>
+          <td>${escapeHtml(analysis.created_at || '')}</td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="4" class="empty">No analyses</td></tr>`;
+      document.querySelectorAll('[data-pcap-id]').forEach((node) => node.addEventListener('click', () => selectPcap(node.dataset.pcapId)));
+    }
+
+    async function selectPcap(analysisId) {
+      state.pcapId = analysisId;
+      const analysis = await api(`/v1/pcaps/analyses/${encodeURIComponent(analysisId)}`);
+      $('pcapSelected').textContent = analysisId;
+      renderPcapHistory();
+      renderPcapSummary(analysis.summary || analysis.analysis || {});
+    }
+
+    function renderPcapSummary(summary) {
+      $('pcapSummary').innerHTML = `
+        <div class="metrics">
+          ${metric('Packets', summary.packet_count || 0)}
+          ${metric('Protocols', Object.keys(summary.protocols || {}).length)}
+          ${metric('DNS Queries', (summary.dns_queries || []).length)}
+          ${metric('TLS Entries', (summary.tls_metadata || []).length)}
+        </div>
+        <div style="height:12px"></div>
+        <pre class="json-block">${prettyJson({
+          protocols: summary.protocols || {},
+          top_talkers: summary.top_talkers || [],
+          conversations: summary.conversations || [],
+          dns_queries: summary.dns_queries || [],
+          dns_responses: summary.dns_responses || {},
+          http_hosts: summary.http_hosts || [],
+          http_user_agents: summary.http_user_agents || [],
+          http_status_lines: summary.http_status_lines || [],
+          tls_metadata: summary.tls_metadata || [],
+          arp: summary.arp_summary || {},
+          icmp: summary.icmp_summary || {},
+          dhcp: summary.dhcp_messages || {}
+        })}</pre>`;
+    }
+
+    async function refreshAudits(render = true) {
+      try {
+        const payload = await api('/v1/packets/audits?limit=50');
+        state.audits = payload.audits || [];
+        if (render) renderAudits();
+      } catch (err) {
+        $('auditHistory').innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    function renderAudits() {
+      $('auditHistory').innerHTML = state.audits.map((audit) => {
+        const result = audit.result || {};
+        return `<tr>
+          <td class="mono">${escapeHtml(shortId(audit.id))}</td>
+          <td>${escapeHtml(audit.template || audit.request?.template || '')}</td>
+          <td>${escapeHtml(audit.target || audit.request?.target || '')}</td>
+          <td>${escapeHtml(result.sent ?? '')}</td>
+          <td>${escapeHtml(audit.created_at || '')}</td>
+        </tr>`;
+      }).join('') || `<tr><td colspan="5" class="empty">No audits</td></tr>`;
+    }
+
+    async function refreshOast(render = true) {
+      try {
+        const payload = await api('/v1/oast/sessions?limit=50');
+        state.oastSessions = payload.sessions || [];
+        if (render) renderOastSessions();
+      } catch (err) {
+        $('oastSessions').innerHTML = `<tr><td colspan="4" class="empty">${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    function renderOastSessions() {
+      $('oastSessions').innerHTML = state.oastSessions.map((session) => `
+        <tr class="clickable ${session.id === state.oastId ? 'selected' : ''}" data-oast-id="${escapeHtml(session.id)}">
+          <td class="mono">${escapeHtml(shortId(session.id))}</td>
+          <td>${escapeHtml(session.label || '')}</td>
+          <td class="mono">${escapeHtml(session.callback_url || '')}</td>
+          <td>${escapeHtml(session.expires_at || '')}</td>
+        </tr>
+      `).join('') || `<tr><td colspan="4" class="empty">No sessions</td></tr>`;
+      document.querySelectorAll('[data-oast-id]').forEach((node) => node.addEventListener('click', () => selectOast(node.dataset.oastId)));
+    }
+
+    async function selectOast(sessionId) {
+      state.oastId = sessionId;
+      $('oastSelected').textContent = sessionId;
+      renderOastSessions();
+      const payload = await api(`/v1/oast/sessions/${encodeURIComponent(sessionId)}/interactions?limit=50`);
+      $('oastInteractions').innerHTML = (payload.interactions || []).map((item) => `
+        <tr>
+          <td>${escapeHtml(item.created_at || '')}</td>
+          <td>${escapeHtml(item.method || '')}</td>
+          <td class="mono">${escapeHtml(item.path || '')}</td>
+          <td>${escapeHtml(item.remote_addr || '')}</td>
+        </tr>
+      `).join('') || `<tr><td colspan="4" class="empty">No interactions</td></tr>`;
+    }
+
+    async function refreshPlugins() {
+      await refreshHealth();
+      renderPlugins(state.health?.plugins || {});
+    }
+
+    function renderPlugins(plugins) {
+      $('pluginsSummary').innerHTML = `
+        <div class="metrics">
+          ${metric('Plugins', plugins.count || 0)}
+          ${metric('Port Profiles', Object.keys(plugins.port_profiles || {}).length)}
+          ${metric('TCP Services', Object.keys(plugins.tcp_services || {}).length)}
+          ${metric('UDP Services', Object.keys(plugins.udp_services || {}).length)}
+        </div>
+        <div style="height:12px"></div>
+        <pre class="json-block">${prettyJson(plugins)}</pre>`;
+    }
+
+    function renderDiagnostics() {
+      const diagnostics = state.health?.diagnostics || {};
+      $('diagnosticsTable').innerHTML = kvRows(diagnostics);
+    }
+
+    function kvRows(values) {
+      return Object.entries(values || {}).map(([key, value]) => {
+        const rendered = typeof value === 'object' && value !== null ? JSON.stringify(value) : value;
+        return `<div>${escapeHtml(key)}</div><div>${escapeHtml(rendered)}</div>`;
+      }).join('') || `<div>status</div><div>unavailable</div>`;
+    }
+
+    function updatePacketFields() {
+      const template = $('packetTemplate').value;
+      document.querySelectorAll('.template-fields').forEach((node) => node.classList.toggle('active', node.dataset.templateFields === template));
+      document.querySelectorAll('.packet-port-fields').forEach((node) => node.style.display = ['tcp', 'udp', 'dns', 'http'].includes(template) ? '' : 'none');
+      document.querySelectorAll('.packet-sport-fields').forEach((node) => node.style.display = ['tcp', 'udp'].includes(template) ? '' : 'none');
+    }
+
+    function updateScanScopeMode() {
+      const automatic = $('scanScopeFromTargets').checked;
+      $('scanScope').readOnly = automatic;
+      if (automatic) $('scanScope').value = scopeListFromTargets($('scanTargets').value).join(', ');
+      updateScanPreview();
+    }
+
+    function updateScanPreview() {
+      const targets = asList($('scanTargets').value);
+      const scopes = $('scanScopeFromTargets').checked
+        ? scopeListFromTargets($('scanTargets').value)
+        : asList($('scanScope').value);
+      const ports = text($('scanPorts').value).trim();
+      const topPorts = text($('scanTopPorts').value).trim();
+      const profile = text($('scanProfile').value).trim();
+      const targetEstimate = estimateTargetCount($('scanTargets').value);
+      const portCount = selectedPortCount(ports, topPorts, profile);
+      const portChoice = ports
+        ? state.activeCustomPortProfile
+          ? `TXT profile ${state.activeCustomPortProfile} | ${compactPortText(ports)}`
+          : `ports ${compactPortText(ports)}`
+        : topPorts
+          ? `top ${topPorts} ports`
+          : profile
+            ? `profile ${profile}`
+            : 'default port configuration';
+      if (!targets.length) {
+        $('scanPreview').classList.remove('warn');
+        $('scanPreview').textContent = 'Add at least one target to preview this scan.';
+        return;
+      }
+      let workload = '';
+      let overLimit = false;
+      if (targetEstimate !== null && portCount > 0) {
+        const attempts = targetEstimate * BigInt(portCount);
+        const maxAttempts = BigInt(Math.max(1, Number($('scanMaxAttempts').value || 1000000)));
+        overLimit = attempts > maxAttempts;
+        const rate = Math.max(1, Number($('scanRate').value || 5000));
+        const concurrency = Math.max(1, Number($('scanConcurrency').value || 2000));
+        const timeoutSeconds = Math.max(0.001, Number($('scanTimeout').value || 800) / 1000);
+        const numericAttempts = Number(attempts > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(Number.MAX_SAFE_INTEGER) : attempts);
+        const minimumSeconds = Math.max(numericAttempts / rate, Math.ceil(numericAttempts / concurrency) * timeoutSeconds);
+        workload = ` | ${formatBigInt(attempts)} attempts | estimated minimum ${formatDuration(minimumSeconds)}`;
+      }
+      $('scanPreview').classList.toggle('warn', overLimit);
+      $('scanPreview').textContent = `${targets.length} target item(s) | ${scopes.length} scope item(s) | ${$('scanProtocol').value.toUpperCase()} | ${portChoice}${workload}${overLimit ? ' | large-scan confirmation required' : ''}`;
+    }
+
+    $('scanForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const formElement = event.currentTarget;
+      const submit = $('scanSubmit');
+      if (!state.health?.rust_engine_available) {
+        setStatus('scanStatus', 'Rust scan engine is unavailable', true);
+        return;
+      }
+      const form = new FormData(formElement);
+      const scopeFromTargets = form.get('scope_from_targets') === 'on';
+      const scopeValues = scopeFromTargets ? scopeListFromTargets(form.get('targets')) : asList(form.get('scope'));
+      if (!scopeValues.length) {
+        setStatus('scanStatus', 'authorized scope is required', true);
+        return;
+      }
+      if (scopeFromTargets) $('scanScope').value = scopeValues.join(', ');
+      const body = {
+        targets: form.get('targets'),
+        ports: form.get('ports') || null,
+        top_ports: numberOrNull(form.get('top_ports')),
+        port_profile: form.get('port_profile') || null,
+        protocol: form.get('protocol'),
+        scope: scopeValues,
+        scope_from_targets: scopeFromTargets,
+        exclude: asList(form.get('exclude')),
+        confirm_authorized: form.get('confirm_authorized') === 'on',
+        timeout_ms: Number(form.get('timeout_ms') || 800),
+        concurrency: Number(form.get('concurrency') || 2000),
+        rate_limit_per_sec: Number(form.get('rate_limit_per_sec') || 5000),
+        udp_retries: Number(form.get('udp_retries') || 0),
+        service_probe: form.get('service_probe') === 'on',
+        capture_screenshots: form.get('capture_screenshots') === 'on',
+        max_attempts: Number(form.get('max_attempts') || 1000000),
+        confirm_large_scan: form.get('confirm_large_scan') === 'on'
+      };
+      try {
+        submit.disabled = true;
+        submit.textContent = 'Starting...';
+        setStatus('scanStatus', 'starting');
+        const created = await api('/v1/scans', {method: 'POST', body: JSON.stringify(body)});
+        setStatus('scanStatus', `started ${shortId(created.scan_id)}`);
+        formElement.elements.confirm_authorized.checked = false;
+        await refreshScans();
+        await selectScan(created.scan_id);
+      } catch (err) {
+        setStatus('scanStatus', err.message, true);
+      } finally {
+        updateScanActionState();
+      }
+    });
+
+    $('pcapForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      try {
+        setStatus('pcapStatus', 'analyzing');
+        const payload = await api('/v1/pcaps/analyze', {method: 'POST', body: JSON.stringify({file: form.get('file'), top: Number(form.get('top') || 10)})});
+        setStatus('pcapStatus', payload.analysis_id);
+        await refreshPcaps();
+        await selectPcap(payload.analysis_id);
+      } catch (err) {
+        setStatus('pcapStatus', err.message, true);
+      }
+    });
+
+    $('captureForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const body = {
+        output: form.get('output'),
+        duration_s: numberOrNull(form.get('duration_s')),
+        count: numberOrNull(form.get('count')),
+        iface: form.get('iface') || null,
+        bpf_filter: form.get('bpf_filter') || null,
+        confirm_authorized: form.get('confirm_authorized') === 'on',
+        analyze: form.get('analyze') === 'on'
+      };
+      try {
+        setStatus('captureStatus', 'capturing');
+        const payload = await api('/v1/captures/live', {method: 'POST', body: JSON.stringify(body)});
+        setStatus('captureStatus', 'complete');
+        $('captureResult').innerHTML = `<pre class="json-block">${prettyJson(payload)}</pre>`;
+        await refreshPcaps(false);
+      } catch (err) {
+        setStatus('captureStatus', err.message, true);
+      }
+    });
+
+    $('packetForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const body = {
+        template: form.get('template'),
+        target: form.get('target'),
+        scope: asList(form.get('scope')),
+        confirm_authorized: form.get('confirm_authorized') === 'on',
+        count: Number(form.get('count') || 1),
+        interval_ms: Number(form.get('interval_ms') || 1000),
+        dport: numberOrNull(form.get('dport')),
+        sport: numberOrNull(form.get('sport')),
+        flags: form.get('flags') || 'S',
+        payload_text: form.get('payload_text') || null,
+        payload_base64: form.get('payload_base64') || null,
+        dns_name: form.get('dns_name') || null,
+        http_method: form.get('http_method') || 'GET',
+        http_path: form.get('http_path') || '/',
+        http_host: form.get('http_host') || null,
+        dry_run: form.get('dry_run') === 'on'
+      };
+      try {
+        setStatus('packetStatus', 'sending');
+        const payload = await api('/v1/packets/send', {method: 'POST', body: JSON.stringify(body)});
+        setStatus('packetStatus', payload.audit_id);
+        $('packetResult').innerHTML = `<pre class="json-block">${prettyJson(payload)}</pre>`;
+        await refreshAudits();
+      } catch (err) {
+        setStatus('packetStatus', err.message, true);
+      }
+    });
+
+    $('oastForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const body = {
+        label: form.get('label') || null,
+        base_url: form.get('base_url') || window.location.origin,
+        ttl_seconds: Number(form.get('ttl_seconds') || 3600),
+        confirm_authorized: form.get('confirm_authorized') === 'on'
+      };
+      try {
+        setStatus('oastStatus', 'creating');
+        const payload = await api('/v1/oast/sessions', {method: 'POST', body: JSON.stringify(body)});
+        setStatus('oastStatus', payload.callback_url);
+        await refreshOast();
+      } catch (err) {
+        setStatus('oastStatus', err.message, true);
+      }
+    });
+
+    document.querySelectorAll('[data-view-target]').forEach((node) => {
+      node.addEventListener('click', () => showView(node.dataset.viewTarget));
+    });
+    $('refreshAll').addEventListener('click', refreshOverview);
+    $('scanRefresh').addEventListener('click', () => refreshScans());
+    $('scanJobSearch').addEventListener('input', (event) => {
+      state.scanJobQuery = event.currentTarget.value;
+      renderScanJobs();
+    });
+    $('scanJobStatus').addEventListener('change', (event) => {
+      state.scanJobStatus = event.currentTarget.value;
+      renderScanJobs();
+    });
+    $('scanResultSearch').addEventListener('input', (event) => {
+      state.scanResultQuery = event.currentTarget.value;
+      state.scanResultPage = 1;
+      if (state.scanResultSearchTimer) clearTimeout(state.scanResultSearchTimer);
+      state.scanResultSearchTimer = setTimeout(() => {
+        refreshScanResults().catch(() => {});
+      }, 300);
+    });
+    $('scanResultSearch').addEventListener('keydown', async (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      if (state.scanResultSearchTimer) clearTimeout(state.scanResultSearchTimer);
+      await refreshScanResults();
+    });
+    $('scanResultPageSize').addEventListener('change', async (event) => {
+      state.scanResultPageSize = Number(event.currentTarget.value || 50);
+      state.scanResultPage = 1;
+      await refreshScanResults();
+    });
+    $('scanCancel').addEventListener('click', async () => {
+      const job = selectedScanJob();
+      if (!job || !['queued', 'running', 'recovering'].includes(job.status)) return;
+      if (!window.confirm(`Cancel scan ${shortId(job.id)}?`)) return;
+      try {
+        setStatus('selectedScanLabel', `cancelling ${shortId(job.id)}`);
+        await api(`/v1/scans/${encodeURIComponent(job.id)}/cancel`, {method: 'POST'});
+        await refreshScans();
+        await refreshScanProgress();
+      } catch (err) {
+        setStatus('selectedScanLabel', err.message, true);
+      }
+    });
+    $('scanDelete').addEventListener('click', async () => {
+      const job = selectedScanJob();
+      if (!job) return;
+      if (['queued', 'running', 'recovering', 'cancel_requested'].includes(job.status)) {
+        window.alert('Cancel the running scan before deleting it.');
+        return;
+      }
+      const warning = `Delete scan ${shortId(job.id)} and all of its results and evidence images? This cannot be undone.`;
+      if (!window.confirm(warning)) return;
+      try {
+        await api(`/v1/scans/${encodeURIComponent(job.id)}`, {method: 'DELETE'});
+        state.scanId = null;
+        state.scanResultQuery = '';
+        state.scanResultHost = '';
+        state.scanResultState = '';
+        state.scanResultPage = 1;
+        state.scanResultPayload = {results: [], total: 0, hosts: []};
+        $('scanResultSearch').value = '';
+        $('selectedScanLabel').textContent = 'Select a job to view results';
+        await refreshScans();
+        renderScanResults();
+        updateScanActionState();
+      } catch (err) {
+        setStatus('selectedScanLabel', err.message, true);
+      }
+    });
+    $('pcapRefresh').addEventListener('click', () => refreshPcaps());
+    $('auditRefresh').addEventListener('click', () => refreshAudits());
+    $('oastRefresh').addEventListener('click', () => refreshOast());
+    $('pluginsRefresh').addEventListener('click', refreshPlugins);
+    $('diagnosticsRefresh').addEventListener('click', refreshHealth);
+    $('packetTemplate').addEventListener('change', updatePacketFields);
+    document.querySelectorAll('[data-port-preset]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.activeCustomPortProfile = null;
+        $('scanPorts').value = button.dataset.portPreset || '';
+        $('scanTopPorts').value = '';
+        $('scanProfile').value = '';
+        $('scanProtocol').value = 'tcp';
+        setStatus('scanProfileStatus', `${button.textContent.trim()} preset selected`);
+        renderCustomPortProfiles();
+        updateScanPreview();
+      });
+    });
+    $('scanPorts').addEventListener('input', () => {
+      state.activeCustomPortProfile = null;
+      if ($('scanPorts').value.trim()) {
+        $('scanTopPorts').value = '';
+        $('scanProfile').value = '';
+      }
+      renderCustomPortProfiles();
+    });
+    $('scanTopPorts').addEventListener('input', () => {
+      state.activeCustomPortProfile = null;
+      if ($('scanTopPorts').value.trim()) {
+        $('scanPorts').value = '';
+        $('scanProfile').value = '';
+      }
+      renderCustomPortProfiles();
+    });
+    $('scanProfile').addEventListener('change', () => {
+      state.activeCustomPortProfile = null;
+      if ($('scanProfile').value.trim()) {
+        $('scanPorts').value = '';
+        $('scanTopPorts').value = '';
+        setStatus('scanProfileStatus', `${$('scanProfile').value} configured profile selected`);
+      }
+      renderCustomPortProfiles();
+    });
+    $('scanPortProfileFile').addEventListener('change', async (event) => {
+      const input = event.currentTarget;
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        if (!file.name.toLowerCase().endsWith('.txt')) throw new Error('select a .txt port profile');
+        if (file.size > CUSTOM_PORT_PROFILE_MAX_BYTES) throw new Error('port profile TXT must be 256 KB or smaller');
+        const parsed = parsePortProfileText(await file.text());
+        const name = file.name.slice(0, -4).trim().slice(0, 64) || 'Custom';
+        let index = state.customPortProfiles.findIndex((profile) => profile.name.toLowerCase() === name.toLowerCase());
+        const imported = {name, expression: parsed.expression, count: parsed.ports.length};
+        if (index >= 0) {
+          state.customPortProfiles[index] = imported;
+        } else {
+          if (state.customPortProfiles.length >= CUSTOM_PORT_PROFILE_MAX_COUNT) {
+            throw new Error(`up to ${CUSTOM_PORT_PROFILE_MAX_COUNT} custom profiles can be saved`);
+          }
+          state.customPortProfiles.push(imported);
+          index = state.customPortProfiles.length - 1;
+        }
+        const saved = saveCustomPortProfiles();
+        applyCustomPortProfile(index);
+        setStatus(
+          'scanProfileStatus',
+          saved ? `${name}: ${parsed.ports.length} ports imported and saved` : `${name}: imported for this session only`,
+          !saved
+        );
+      } catch (err) {
+        setStatus('scanProfileStatus', err.message, true);
+      } finally {
+        input.value = '';
+      }
+    });
+    $('scanTargets').addEventListener('input', () => {
+      if ($('scanScopeFromTargets').checked) {
+        $('scanScope').value = scopeListFromTargets($('scanTargets').value).join(', ');
+      }
+      updateScanPreview();
+    });
+    ['scanPorts', 'scanTopPorts', 'scanProfile', 'scanProtocol', 'scanScope', 'scanTimeout', 'scanConcurrency', 'scanRate', 'scanMaxAttempts'].forEach((id) => {
+      $(id).addEventListener('input', updateScanPreview);
+      $(id).addEventListener('change', updateScanPreview);
+    });
+    $('scanFillScope').addEventListener('click', () => {
+      $('scanScope').value = scopeListFromTargets($('scanTargets').value).join(', ');
+      updateScanPreview();
+    });
+    $('scanScopeFromTargets').addEventListener('change', updateScanScopeMode);
+    $('scanReset').addEventListener('click', () => {
+      $('scanForm').reset();
+      state.activeCustomPortProfile = null;
+      $('scanAdvanced').open = false;
+      setStatus('scanStatus', '');
+      setStatus('scanProfileStatus', 'TXT supports comma-separated ports, ranges, and # comments.');
+      renderCustomPortProfiles();
+      updateScanScopeMode();
+    });
+
+    bindScanLinkActions();
+    $('viewerClose').addEventListener('click', closeViewer);
+    $('viewerSave').addEventListener('click', () => {
+      if (viewerSaveTarget) downloadFile(viewerSaveTarget.url, viewerSaveTarget.name, 'viewerStatus');
+    });
+    $('viewer').addEventListener('click', (event) => {
+      if (event.target === $('viewer')) closeViewer();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !$('viewer').hidden) closeViewer();
+    });
+
+    $('oastBaseUrl').value = window.location.origin;
+    state.customPortProfiles = loadCustomPortProfiles();
+    renderCustomPortProfiles();
+    updatePacketFields();
+    updateScanScopeMode();
+    updateScanActionState();
+    renderScanResults();
+    refreshOverview();
+    // Poll only while the window is actually being looked at: a hidden window
+    // otherwise keeps a weak machine busy for nothing. Becoming visible again
+    // refreshes immediately, so the view is never stale on return.
+    function pollOnce() {
+      refreshHealth().catch(() => {});
+      refreshScans().catch(() => {});
+    }
+
+    setInterval(() => {
+      if (!document.hidden) pollOnce();
+    }, 5000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) pollOnce();
+    });
+  </script>
+</body>
+</html>

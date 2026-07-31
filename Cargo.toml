@@ -1,0 +1,11 @@
+[workspace]
+members = ["crates/scaprobe-engine"]
+exclude = ["desktop/src-tauri"]
+resolver = "2"
+
+[profile.portable]
+inherits = "dev"
+opt-level = 3
+debug = false
+strip = "symbols"
+lto = "thin"

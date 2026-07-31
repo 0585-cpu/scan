@@ -1,0 +1,30 @@
+{
+  "name": "lab-services",
+  "version": "1.0.0",
+  "description": "Example data plugin for lab-owned service names, port profiles, and fingerprint rules.",
+  "port_profiles": {
+    "lab-app": [18080, 18443]
+  },
+  "tcp_services": {
+    "18080": "custom-http"
+  },
+  "udp_services": {
+    "1812": "radius"
+  },
+  "tcp_banner_rules": [
+    {
+      "service": "custom-app",
+      "ports": [18080],
+      "contains": "X-Custom-App",
+      "confidence": 0.93
+    }
+  ],
+  "udp_response_rules": [
+    {
+      "service": "radius",
+      "ports": [1812],
+      "starts_with_hex": "02",
+      "confidence": 0.88
+    }
+  ]
+}

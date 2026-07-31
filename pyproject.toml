@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scaprobe"
+dynamic = ["version"]
+description = "Authorized network scanner, pcap analyzer, and packet crafting toolkit."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110.0",
+    "openpyxl>=3.1.0",
+    "Pillow>=10.0.0",
+    "scapy>=2.5.0",
+    "tomli>=2.0.0; python_version < '3.11'",
+    "uvicorn>=0.27.0",
+]
+
+[project.scripts]
+scaprobe = "netprobe.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "httpx2>=2.5.0",
+]
+screenshots = [
+    "playwright>=1.52.0",
+]
+desktop-build = [
+    "pyinstaller>=6.0",
+    "playwright>=1.52.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["netprobe*"]
+
+[tool.setuptools.package-data]
+netprobe = ["static/*.html"]
+
+[tool.setuptools.dynamic]
+version = {attr = "netprobe.version.__version__"}
