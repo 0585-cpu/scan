@@ -170,6 +170,8 @@ A loopback bind (`127.0.0.1`, `localhost`, `::1`) needs no token. Any other bind
 scaprobe serve --host 0.0.0.0 --port 8765 --api-token <token>
 ```
 
+Some endpoints name files on the machine running the API - `/v1/pcaps/analyze` takes a pcap path, scans accept `ports_file` and `targets_file`, and live capture writes its output file. Those paths are read and written by the server, not by the caller, so anyone holding the token can read any file the server account can read. That is the intended trust level for a local operator tool: treat the token as full access to that machine, and do not hand it to anyone you would not give a shell to.
+
 With a token active, every endpoint requires `Authorization: Bearer <token>`. Open `/dashboard?token=<token>` once and the browser keeps an `HttpOnly` session cookie, so later URLs no longer carry the token. Only the `/oast/<token>` callback receiver stays open, because the scanned systems that deliver those callbacks cannot present operator credentials. The token authenticates the API; it is not transport security, so put TLS in front of anything beyond a trusted network.
 
 Import `postman/scaprobe.postman_collection.json` into Postman for API examples.

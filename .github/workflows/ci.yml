@@ -17,6 +17,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e .[dev]
+      - run: python -m ruff check .
       - run: python -m unittest discover -s tests
       - run: scaprobe --help
       - run: scaprobe serve --check
@@ -40,3 +41,12 @@ jobs:
       - run: cargo build --profile portable -p scaprobe-engine
       - run: python tools/package.py --cargo-target-dir target --engine-profile portable --require-engine --output-dir dist-smoke
       - run: python tools/smoke_package.py dist-smoke --require-engine
+
+  # The engine declares rust-version = "1.88"; without this job a newer-only
+  # API could land and only break for users on the documented minimum.
+  rust-msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - run: cargo build -p scaprobe-engine

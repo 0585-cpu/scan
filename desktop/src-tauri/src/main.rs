@@ -145,6 +145,11 @@ fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, Box<dyn std::erro
         .open(&log_path)?;
     let stderr = stdout.try_clone()?;
 
+    // The window has no console, so backend.log is the only diagnostic channel.
+    // SCAPROBE_LOG_LEVEL=debug turns on the request log when something in the
+    // installed app has to be traced.
+    let log_level = std::env::var("SCAPROBE_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+
     let mut command = Command::new(backend);
     command
         .args([
@@ -156,6 +161,8 @@ fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, Box<dyn std::erro
             engine.to_string_lossy().as_ref(),
             "--playwright-browsers-path",
             playwright_browsers.to_string_lossy().as_ref(),
+            "--log-level",
+            log_level.as_str(),
         ])
         .env("PYTHONUTF8", "1")
         .stdin(Stdio::null())

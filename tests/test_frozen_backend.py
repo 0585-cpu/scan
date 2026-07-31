@@ -64,6 +64,18 @@ class FrozenBackendTests(unittest.TestCase):
             access_log=False,
         )
 
+    def test_debug_log_level_enables_the_request_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = Path(tmp) / "scaprobe-engine.exe"
+            engine.write_bytes(b"engine")
+            with (
+                patch("netprobe.api.create_app", return_value=object()),
+                patch("uvicorn.run") as uvicorn_run,
+            ):
+                main(["--engine-path", str(engine), "--log-level", "debug"])
+
+        self.assertTrue(uvicorn_run.call_args.kwargs["access_log"])
+
     def test_main_rejects_missing_engine(self):
         with self.assertRaisesRegex(SystemExit, "bundled Rust engine was not found"):
             main(["--engine-path", "missing-scaprobe-engine.exe"])

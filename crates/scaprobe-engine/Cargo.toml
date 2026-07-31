@@ -2,8 +2,9 @@
 name = "scaprobe-engine"
 version = "0.1.0"
 edition = "2021"
-# io::ErrorKind::HostUnreachable / NetworkUnreachable were stabilized in 1.83.
-rust-version = "1.83"
+# The engine source needs 1.83 (io::ErrorKind::HostUnreachable), but the
+# locked dependency tree needs 1.88 - verified by the rust-msrv CI job.
+rust-version = "1.88"
 
 [dependencies]
 anyhow = "1.0"

@@ -4,8 +4,7 @@
 
 ## 1. 가장 먼저 알아둘 내용
 
-- 현재 작업 폴더에는 `.gitignore`가 있지만 `.git` 디렉터리는 없다. 즉, 아직 Git 저장소로 초기화되지 않은 로컬 소스 폴더다.
-- 다른 PC로 옮길 때는 Git 저장소를 새로 만들고 비공개 원격 저장소에 푸시하는 방식을 권장한다.
+- 이 폴더는 Git 저장소다(`main` 브랜치). 아직 원격이 없으므로 다른 PC로 옮기려면 비공개 원격 저장소를 만들어 푸시한다.
 - `target`, `dist`, `.venv`, `node_modules`, `__pycache__`는 빌드 산출물 또는 PC 종속 파일이므로 소스 저장소에 넣지 않는다.
 - 스캔 이력과 증거 이미지는 소스 폴더가 아니라 Windows의 `%APPDATA%\Scaprobe\scaprobe.db`에 저장된다. 기존 데이터를 이어서 사용하려면 소스와 별도로 옮겨야 한다.
 - 활성 스캔과 패킷 송신은 소유하거나 명시적으로 허가받은 대상에서만 사용한다. 프로그램도 `scope`와 명시적 승인 값을 요구한다.
@@ -81,14 +80,9 @@ Tauri 데스크톱 창
 
 ### 권장: Git과 비공개 원격 저장소 사용
 
-먼저 현재 PC에 Git을 설치한 뒤 프로젝트 루트에서 다음을 실행한다. 아래 원격 주소는 본인의 저장소 주소로 바꾼다.
+저장소는 이미 초기화돼 있으므로 원격만 연결하면 된다. 아래 주소는 본인 저장소로 바꾼다.
 
 ```powershell
-git init
-git add .
-git status
-git commit -m "Scaprobe 0.1.0 development handoff"
-git branch -M main
 git remote add origin https://github.com/<account>/<repository>.git
 git push -u origin main
 ```
@@ -151,7 +145,7 @@ C:\Users\<기존사용자>\AppData\Roaming\Scaprobe\scaprobe.db
 - 선택 사항: VS Code와 Python/Rust Analyzer 확장
 - 선택 사항: Npcap. 라이브 캡처와 raw packet 송신을 개발할 때 필요
 
-엔진은 `crates/scaprobe-engine/Cargo.toml`에 `rust-version = "1.83"`을 명시한다. `io::ErrorKind::HostUnreachable`/`NetworkUnreachable`이 1.83에서 안정화됐기 때문이며, 그보다 낮은 툴체인에서는 컴파일되지 않는다.
+엔진은 `crates/scaprobe-engine/Cargo.toml`에 `rust-version = "1.88"`을 명시한다. 엔진 소스 자체는 1.83이면 되지만(`io::ErrorKind::HostUnreachable` 안정화 버전), 잠긴 의존성 트리가 1.88을 요구한다. CI의 `rust-msrv` job이 이 하한을 실제로 검증한다.
 
 Windows Tauri 빌드는 MSVC Rust 도구 체인을 권장한다.
 

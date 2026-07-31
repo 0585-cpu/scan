@@ -65,7 +65,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         host=args.host,
         port=args.port,
         log_level=args.log_level,
-        access_log=False,
+        # The desktop app has no console, so the request log is the only way to
+        # tell "the click never reached the backend" from "the backend failed".
+        # Off by default to keep backend.log small; --log-level debug turns it on.
+        access_log=args.log_level == "debug",
     )
     return 0
 
