@@ -55,8 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_db_arg(scan)
     add_config_args(scan)
     add_scope_args(scan)
-    scan.add_argument("--targets", help="comma-separated IP/CIDR targets")
-    scan.add_argument("--targets-file", help="file with IP/CIDR targets, one per line or comma-separated")
+    scan.add_argument("--targets", help="comma-separated IP/CIDR/hostname targets")
+    scan.add_argument(
+        "--targets-file",
+        help="file with IP/CIDR/hostname targets, one per line or comma-separated",
+    )
     scan.add_argument("--exclude", action="append", default=[], help="IP/CIDR to exclude from expanded targets; repeatable")
     scan.add_argument("--ports", help="ports such as 22,80,443 or 1-1024")
     scan.add_argument("--ports-file", help="file with ports/ranges, one per line or comma-separated")

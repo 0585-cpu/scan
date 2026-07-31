@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import ipaddress
+import socket
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Iterable
 
 from .ports import parse_ports
-from .scope import ScopeError, parse_target_expr
+from .scope import ScopeError, iter_target_tokens, parse_target_expr
 
 ABSOLUTE_MAX_SCAN_ATTEMPTS = 100_000_000
+MAX_ADDRESSES_PER_NAME = 16
 
 PORT_PROFILES: dict[str, tuple[int, ...]] = {
     "web": (80, 443, 8000, 8080, 8443, 3000, 5000, 9000),
@@ -139,6 +141,50 @@ TOP_PORTS: tuple[int, ...] = (
 )
 
 
+def resolve_host_names(expr: str) -> str:
+    """Replace hostname tokens with the addresses they resolve to.
+
+    Resolution happens here, before any parsing or scope checking, so the rest
+    of the pipeline only ever sees literal addresses: a name can never smuggle
+    a target past the scope guard, because the guard checks what was resolved.
+    """
+    parts: list[str] = []
+    for token in iter_target_tokens(expr):
+        if _is_address_or_network(token):
+            parts.append(token)
+            continue
+        parts.extend(resolve_host_name(token))
+    if not parts:
+        raise ScopeError("no targets were provided")
+    return ",".join(parts)
+
+
+def resolve_host_name(name: str) -> list[str]:
+    try:
+        infos = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise ScopeError(f"could not resolve target name: {name}") from exc
+    addresses: list[str] = []
+    for info in infos:
+        address = str(info[4][0]).split("%", 1)[0]
+        if address not in addresses:
+            addresses.append(address)
+    if not addresses:
+        raise ScopeError(f"could not resolve target name: {name}")
+    return addresses[:MAX_ADDRESSES_PER_NAME]
+
+
+def _is_address_or_network(token: str) -> bool:
+    try:
+        if "/" in token:
+            ipaddress.ip_network(token, strict=False)
+        else:
+            ipaddress.ip_address(token)
+    except ValueError:
+        return False
+    return True
+
+
 def resolve_targets(
     *,
     targets: str | None,
@@ -146,11 +192,13 @@ def resolve_targets(
     exclude: Iterable[str] | None = None,
     max_hosts: int = 65536,
 ) -> tuple[list[ipaddress._BaseAddress], str]:
-    target_expr = combine_expressions(
-        direct=targets,
-        file_path=targets_file,
-        direct_label="--targets",
-        file_label="--targets-file",
+    target_expr = resolve_host_names(
+        combine_expressions(
+            direct=targets,
+            file_path=targets_file,
+            direct_label="--targets",
+            file_label="--targets-file",
+        )
     )
     resolved = parse_target_expr(target_expr, max_hosts=max_hosts)
     excluded = parse_exclude_networks(exclude)

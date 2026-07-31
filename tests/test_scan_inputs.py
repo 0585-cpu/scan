@@ -1,8 +1,62 @@
+import socket
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from netprobe.scan_inputs import TOP_PORTS, resolve_ports, resolve_targets, validate_scan_workload
+from netprobe.scan_inputs import (
+    TOP_PORTS,
+    resolve_host_names,
+    resolve_ports,
+    resolve_targets,
+    validate_scan_workload,
+)
+from netprobe.scope import ScopeError
+
+
+def _addrinfo(*addresses: str) -> list[tuple]:
+    return [
+        (
+            socket.AF_INET6 if ":" in address else socket.AF_INET,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            (address, 0),
+        )
+        for address in addresses
+    ]
+
+
+class HostNameTargetTests(unittest.TestCase):
+    def test_literal_targets_are_untouched(self):
+        with patch("socket.getaddrinfo", side_effect=AssertionError("must not resolve")):
+            self.assertEqual(
+                resolve_host_names("127.0.0.1, 10.0.0.0/30 # comment"),
+                "127.0.0.1,10.0.0.0/30",
+            )
+
+    def test_names_are_replaced_by_their_addresses(self):
+        with patch("socket.getaddrinfo", return_value=_addrinfo("10.1.1.5", "10.1.1.6", "10.1.1.5")):
+            self.assertEqual(resolve_host_names("lab.example"), "10.1.1.5,10.1.1.6")
+
+    def test_names_and_literals_mix(self):
+        with patch("socket.getaddrinfo", return_value=_addrinfo("10.1.1.5")):
+            self.assertEqual(resolve_host_names("10.0.0.1,lab.example"), "10.0.0.1,10.1.1.5")
+
+    def test_unresolvable_name_is_rejected(self):
+        with patch("socket.getaddrinfo", side_effect=socket.gaierror("nope")):
+            with self.assertRaisesRegex(ScopeError, "could not resolve target name: nowhere.invalid"):
+                resolve_host_names("nowhere.invalid")
+
+    def test_resolved_targets_still_face_the_scope_guard(self):
+        from netprobe.scope import ScopeGuard
+
+        with patch("socket.getaddrinfo", return_value=_addrinfo("203.0.113.9")):
+            targets, expr = resolve_targets(targets="lab.example", max_hosts=16)
+        self.assertEqual(expr, "203.0.113.9")
+        guard = ScopeGuard.from_strings(["10.0.0.0/8"])
+        with self.assertRaises(ScopeError):
+            guard.require_targets(targets)
 
 
 class ScanInputTests(unittest.TestCase):

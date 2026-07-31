@@ -25,6 +25,12 @@ scaprobe scan --targets 192.168.1.10 --ports 22,80,443 --scope 192.168.1.0/24 --
 scaprobe scan --protocol udp --udp-retries 1 --targets 192.168.1.10 --ports 53,123,161 --scope 192.168.1.0/24 --confirm-authorized
 ```
 
+Targets accept IP addresses, CIDR ranges, and hostnames. A hostname is resolved before anything else runs, so the scope guard always checks the addresses that will actually be probed - a name can never carry a target past it. Every address a name resolves to is scanned, up to 16 per name, and the stored job records the resolved addresses.
+
+```powershell
+scaprobe scan --targets lab.example.internal --ports 22,80,443 --scope 10.0.0.0/8 --confirm-authorized
+```
+
 The scanner retries silent UDP probes once by default and accepts correlated replies for protocols that expose transaction IDs, cookies, request IDs, or message IDs. Use `--udp-retries 0` for one attempt or a value up to 3 for lossy networks.
 
 With service probing enabled, Scaprobe normalizes SSH product/version/platform fields and common FTP, SMTP, POP3, and IMAP greetings. HTTP results include a bounded status line plus selected `Server`, `Location`, `Content-Type`, and HTML title metadata. TLS-like services use a real bounded handshake to collect the certificate common name, up to five SAN entries, and expiry time; HTTPS-like services also collect HTTP metadata through the encrypted connection. A service name derived only from its well-known port is marked `inferred` in the dashboard instead of being presented as a confirmed fingerprint.

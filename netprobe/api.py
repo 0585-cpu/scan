@@ -48,6 +48,7 @@ from .scan_inputs import (
     PORT_PROFILES,
     normalize_ports_expr,
     normalize_targets_expr,
+    resolve_host_names,
     resolve_ports,
     resolve_targets,
     validate_scan_workload,
@@ -296,7 +297,10 @@ def create_app(
             # Convenience, not a control: a scope derived from the targets can
             # never reject them. `confirm_authorized` remains the real gate.
             if request.scope_from_targets:
-                request_values["scope"] = _merge_scope_values(request.scope, scope_values_from_targets(request.targets))
+                request_values["scope"] = _merge_scope_values(
+                    request.scope,
+                    scope_values_from_targets(resolve_host_names(request.targets)),
+                )
                 explicit_fields.add("scope")
             options = resolve_scan_options(
                 config=app_config,
