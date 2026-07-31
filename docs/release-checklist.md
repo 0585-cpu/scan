@@ -5,6 +5,7 @@ Use this checklist before publishing a Scaprobe artifact.
 ## Version
 
 - Confirm `netprobe/version.py` contains the intended dynamic package version.
+- Regenerate `requirements.lock.txt` if the runtime dependencies changed, and record the versions the release was built and tested with.
 - Confirm `crates/scaprobe-engine/Cargo.toml` uses the same release version.
 - Confirm `docs/user-guide.md` matches the current CLI/API surface.
 - Run `scaprobe --version`.
@@ -14,6 +15,7 @@ Use this checklist before publishing a Scaprobe artifact.
 ## Validation
 
 ```powershell
+py -3 -m ruff check .
 py -3 -m json.tool postman\scaprobe.postman_collection.json > $null
 py -3 -c "from netprobe.config import load_config; load_config('docs/scaprobe.example.toml')"
 py -3 -m compileall netprobe tests tools

@@ -51,7 +51,7 @@ class PcapSummary:
 
 def analyze_pcap(path: str | Path, *, top: int = 10) -> PcapSummary:
     try:
-        from scapy.all import ARP, BOOTP, DHCP, DNS, DNSQR, ICMP, IP, IPv6, PcapNgReader, PcapReader, Raw, TCP, UDP
+        from scapy.all import ARP, BOOTP, DHCP, DNS, DNSQR, ICMP, IP, TCP, UDP, IPv6, PcapNgReader, PcapReader, Raw
     except ImportError as exc:
         raise RuntimeError("pcap analysis requires scapy. Install with: pip install scapy") from exc
 

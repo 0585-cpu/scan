@@ -142,8 +142,7 @@ def windows_service_exists(name: str) -> bool:
         result = subprocess.run(
             ["sc.exe", "query", name],
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=1,
             check=False,
         )
@@ -185,8 +184,7 @@ def read_engine_version(engine_path: str | None) -> str | None:
         result = subprocess.run(
             [engine_path, "--version"],
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=2,
             check=False,
         )

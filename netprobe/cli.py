@@ -19,7 +19,6 @@ from .evidence import (
     capture_automatic_evidence,
 )
 from .exporters import (
-    RESULT_EXPORT_FIELDS,
     format_results_csv,
     format_results_csv_bundle,
     format_results_json,
@@ -35,6 +34,7 @@ from .reports import REPORT_FORMATS, build_scan_report, embed_report_evidence, f
 from .scan_inputs import PORT_PROFILES, resolve_ports, resolve_targets, validate_scan_workload
 from .storage import SQLiteRepository
 from .version import APP_NAME, __version__
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()

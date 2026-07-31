@@ -23,6 +23,8 @@ scaprobe = "netprobe.cli:main"
 [project.optional-dependencies]
 dev = [
     "httpx2>=2.5.0",
+    "mypy>=1.11",
+    "ruff>=0.6",
 ]
 screenshots = [
     "playwright>=1.52.0",
@@ -37,6 +39,40 @@ include = ["netprobe*"]
 
 [tool.setuptools.package-data]
 netprobe = ["static/*.html"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py310"
+
+[tool.ruff.lint]
+# Correctness and readability rules only: no formatter-style churn, and
+# nothing that would rewrite working code for taste.
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RET", "PTH", "A"]
+ignore = [
+    "B008",   # FastAPI dependencies are function calls in defaults by design.
+    "SIM105", # contextlib.suppress hides which exception was tolerated.
+    "SIM112", # Windows environment names are case-insensitive; SystemRoot is correct.
+    "SIM117", # Nested with-blocks keep the resource that failed obvious.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers on purpose.
+"tests/*" = ["E501"]
+# The tools/ scripts bootstrap sys.path before importing the package.
+"tools/*" = ["E402"]
+# Report templates are single-line HTML; wrapping them would change output.
+"netprobe/reports.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+# tools/ has no package marker, so mypy would see each script twice.
+files = ["netprobe"]
+ignore_missing_imports = true
+# The code is already fully annotated; these keep it that way without
+# demanding a strict-mode cleanup first.
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
 
 [tool.setuptools.dynamic]
 version = {attr = "netprobe.version.__version__"}

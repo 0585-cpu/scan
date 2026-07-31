@@ -4,8 +4,8 @@ import socket
 import threading
 import time
 import webbrowser
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Sequence
 
 
 @dataclass(frozen=True)

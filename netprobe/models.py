@@ -4,7 +4,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-
 PUBLIC_RESULT_EXCLUDED_FIELDS = frozenset({"latency_ms", "service_confidence"})
 
 

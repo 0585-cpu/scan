@@ -8,9 +8,9 @@ import subprocess
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-
 
 MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
 DEFAULT_SCREENSHOT_TIMEOUT_MS = 8_000
@@ -214,10 +214,13 @@ def capture_web_screenshots(
                         viewport={"width": SCREENSHOT_WIDTH, "height": SCREENSHOT_HEIGHT},
                     )
                     try:
-                        def route_request(route: Any) -> None:
+                        # allowed_host is bound at definition time on purpose:
+                        # this handler is the confinement to the scanned host,
+                        # and it must not follow a later loop iteration.
+                        def route_request(route: Any, allowed_host: str = host) -> None:
                             request_url = urlparse(route.request.url)
                             request_host = (request_url.hostname or "").lower()
-                            if request_url.scheme in {"about", "blob", "data"} or request_host == host:
+                            if request_url.scheme in {"about", "blob", "data"} or request_host == allowed_host:
                                 route.continue_()
                             else:
                                 route.abort()
@@ -563,7 +566,7 @@ def _powershell_display_command(
 
 
 def _powershell_name(executable: str) -> str:
-    return "Windows PowerShell" if "powershell" in os.path.basename(executable).lower() else "PowerShell"
+    return "Windows PowerShell" if "powershell" in Path(executable).name.lower() else "PowerShell"
 
 
 def _scan_record_text(result: Mapping[str, Any]) -> str:

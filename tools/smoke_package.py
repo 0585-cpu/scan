@@ -93,8 +93,8 @@ def safe_extract_tar(tf: tarfile.TarFile, extract_dir: Path) -> None:
         target = (extract_dir / member.name).resolve()
         try:
             target.relative_to(root)
-        except ValueError:
-            raise SystemExit(f"refusing unsafe archive member: {member.name}")
+        except ValueError as exc:
+            raise SystemExit(f"refusing unsafe archive member: {member.name}") from exc
     tf.extractall(extract_dir)
 
 
@@ -154,8 +154,7 @@ def run_scaprobe(root: Path, args: list[str]) -> subprocess.CompletedProcess[str
         cwd=root,
         env=env,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         timeout=30,
     )
     if result.returncode != 0:

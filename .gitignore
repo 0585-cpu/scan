@@ -14,3 +14,4 @@ soak*.json
 desktop/src-tauri/resources/bin/*.exe
 desktop/src-tauri/resources/playwright/*
 !desktop/src-tauri/resources/playwright/.gitkeep
+.lockenv/

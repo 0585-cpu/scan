@@ -1,5 +1,5 @@
-import io
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
@@ -7,8 +7,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from netprobe.cli import RESULT_EXPORT_FIELDS, main
+from netprobe.cli import main
 from netprobe.evidence import ScreenshotCaptureSummary
+from netprobe.exporters import RESULT_EXPORT_FIELDS
 from netprobe.models import PortResult, ScanSummary, SendResult
 from netprobe.storage import SQLiteRepository
 from netprobe.version import __version__

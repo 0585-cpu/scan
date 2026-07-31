@@ -15,7 +15,7 @@ def has_scapy() -> bool:
 @unittest.skipUnless(has_scapy(), "scapy is not installed")
 class PcapAnalysisTests(unittest.TestCase):
     def test_pcap_golden_dns_http_tls_conversations(self):
-        from scapy.all import DNS, DNSQR, IP, Raw, TCP, UDP, wrpcap
+        from scapy.all import DNS, DNSQR, IP, TCP, UDP, Raw, wrpcap
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "fixture.pcap"
@@ -34,7 +34,7 @@ class PcapAnalysisTests(unittest.TestCase):
         self.assertIn({"sni": "tls.example.test", "alpn": ["h2", "http/1.1"]}, summary["tls_metadata"])
 
     def test_pcapng_golden_dns_http_tls_conversations(self):
-        from scapy.all import DNS, DNSQR, IP, PcapNgWriter, Raw, TCP, UDP
+        from scapy.all import DNS, DNSQR, IP, TCP, UDP, PcapNgWriter, Raw
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "fixture.pcapng"
@@ -53,7 +53,7 @@ class PcapAnalysisTests(unittest.TestCase):
         self.assertIn({"sni": "tls.example.test", "alpn": ["h2", "http/1.1"]}, summary["tls_metadata"])
 
     def test_pcap_v11_extracts_l2_l3_http_dns_and_conversation_metrics(self):
-        from scapy.all import ARP, BOOTP, DHCP, DNS, DNSQR, Ether, ICMP, IP, Raw, TCP, UDP, wrpcap
+        from scapy.all import ARP, BOOTP, DHCP, DNS, DNSQR, ICMP, IP, TCP, UDP, Ether, Raw, wrpcap
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "v11.pcap"

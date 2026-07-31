@@ -6,11 +6,9 @@ import socket
 import time
 from typing import Any
 
-from .constants import dns_rcode_name
-
 from .auth import require_active_authorization
+from .constants import dns_rcode_name
 from .models import PacketRequest, SendResult
-
 
 MAX_PACKET_COUNT = 1000
 MIN_INTERVAL_MS = 10

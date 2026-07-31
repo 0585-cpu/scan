@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Iterable, Iterator
-
 
 PRIVATE_DEFAULTS = (
     ipaddress.ip_network("10.0.0.0/8"),
@@ -27,7 +26,7 @@ class ScopeGuard:
     allow_private_default: bool = True
 
     @classmethod
-    def from_strings(cls, scopes: Iterable[str] | None) -> "ScopeGuard":
+    def from_strings(cls, scopes: Iterable[str] | None) -> ScopeGuard:
         parsed = tuple(ipaddress.ip_network(scope, strict=False) for scope in scopes or ())
         if parsed:
             return cls(networks=parsed, allow_private_default=False)

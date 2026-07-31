@@ -6,6 +6,7 @@ import statistics
 import time
 import tracemalloc
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -147,12 +148,12 @@ def distribution(values: list[float], *, digits: int = 3) -> dict[str, float | i
 def process_memory_bytes() -> tuple[int | None, int | None]:
     if os.name == "nt":
         return _windows_process_memory_bytes()
-    status_path = "/proc/self/status"
-    if os.path.isfile(status_path):
+    status_path = Path("/proc/self/status")
+    if status_path.is_file():
         current = None
         peak = None
         try:
-            with open(status_path, encoding="ascii") as status:
+            with status_path.open(encoding="ascii") as status:
                 for line in status:
                     if line.startswith("VmRSS:"):
                         current = int(line.split()[1]) * 1024

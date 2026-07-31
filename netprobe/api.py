@@ -37,7 +37,8 @@ from .exporters import (
     format_results_ndjson,
     format_results_xlsx,
 )
-from .live_capture import LiveCaptureRequest as LiveCaptureTask, execute_live_capture
+from .live_capture import LiveCaptureRequest as LiveCaptureTask
+from .live_capture import execute_live_capture
 from .models import EngineSettings, PacketRequest, public_result_dict, public_result_dicts
 from .oast import OastSessionRequest, build_callback_url, build_interaction_payload, validate_oast_session_request
 from .packet_sender import execute_packet_request
@@ -56,6 +57,7 @@ from .scan_inputs import (
 from .scope import scope_values_from_targets
 from .storage import SQLiteRepository
 from .version import __version__
+
 
 class ScanCreateRequest(BaseModel):
     targets: str
@@ -786,7 +788,9 @@ def _supplied_token(request: Request) -> str | None:
 
 
 def _token_matches(supplied: str | None, api_token: str) -> bool:
-    return bool(supplied) and hmac.compare_digest(supplied, api_token)
+    if not supplied:
+        return False
+    return hmac.compare_digest(supplied, api_token)
 
 
 def _run_scan_job(

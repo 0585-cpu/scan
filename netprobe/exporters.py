@@ -11,7 +11,6 @@ from typing import Any
 
 from .models import public_result_dicts
 
-
 RESULT_EXPORT_FIELDS = [
     "scan_id",
     "host",

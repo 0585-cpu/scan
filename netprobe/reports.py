@@ -11,7 +11,6 @@ from typing import Any
 
 from .models import public_result_dicts
 
-
 REPORT_FORMATS = {"html", "markdown", "json"}
 MAX_EMBEDDED_EVIDENCE_BYTES = 50 * 1024 * 1024
 COLLAPSIBLE_SECTION_OPEN_LIMIT = 5
@@ -787,8 +786,7 @@ def scan_configuration(job: dict[str, Any]) -> list[tuple[str, Any]]:
 
 
 def markdown_cell(value: Any) -> str:
-    text = str(value).replace("|", "\\|").replace("\n", " ")
-    return text
+    return str(value).replace("|", "\\|").replace("\n", " ")
 
 
 def top_counter(values: Any, *, limit: int = 10) -> dict[str, int]:

@@ -20,7 +20,6 @@ from .oast import new_oast_token
 from .ports import parse_ports
 from .scope import parse_target_expr
 
-
 SCHEMA_VERSION = 8
 PORT_RESULT_INSERT_SQL = """
     INSERT INTO port_results(

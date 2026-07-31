@@ -3,8 +3,8 @@ import json
 import socket
 import unittest
 from contextlib import redirect_stdout
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 from netprobe.cli import main
 from netprobe.desktop import build_desktop_url, find_free_port

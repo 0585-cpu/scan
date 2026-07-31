@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Iterable
 
 from .ports import parse_ports
 from .scope import ScopeError, iter_target_tokens, parse_target_expr

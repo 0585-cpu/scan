@@ -1,6 +1,4 @@
-import re
 import unittest
-from pathlib import Path
 
 from netprobe.dashboard import DASHBOARD_FILE, dashboard_html
 

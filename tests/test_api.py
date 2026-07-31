@@ -1,6 +1,6 @@
-import json
 import importlib.util
 import io
+import json
 import tempfile
 import time
 import unittest
@@ -923,7 +923,7 @@ rate_limit_per_sec = 13
         if importlib.util.find_spec("scapy") is None:
             self.skipTest("scapy is not installed")
         from fastapi.testclient import TestClient
-        from scapy.all import IP, Raw, TCP, wrpcap
+        from scapy.all import IP, TCP, Raw, wrpcap
 
         from netprobe.api import create_app
 

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 import platform
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 try:
     import tomllib
@@ -12,7 +13,6 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only on Python 3.10.
     import tomli as tomllib  # type: ignore[no-redef]
 
 from .ports import parse_ports
-
 
 DEFAULT_TIMEOUT_MS = 800
 DEFAULT_CONCURRENCY = 2000
