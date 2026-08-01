@@ -112,5 +112,50 @@ class DashboardPollingTests(unittest.TestCase):
         self.assertNotIn("setInterval(", html)
 
 
+class DashboardPresetTests(unittest.TestCase):
+    def test_preset_storage_is_versioned_and_bounded(self):
+        html = dashboard_html()
+
+        self.assertIn("const SCAN_PRESET_STORAGE_KEY = 'netroach.scanPresets.v1';", html)
+        self.assertIn("const SCAN_PRESET_MAX_COUNT = 12;", html)
+
+    def test_three_builtin_presets_ship_with_the_dashboard(self):
+        html = dashboard_html()
+
+        self.assertIn("const BUILTIN_SCAN_PRESETS = [", html)
+        for name in ("빠른 점검", "웹 포트", "전체 정밀"):
+            self.assertIn(name, html)
+
+    def test_authorization_is_never_part_of_a_preset(self):
+        """A restored checkbox would silently defeat the authorization gate.
+
+        The field list a preset serialises must not contain it, and applying a
+        preset must actively clear it.
+        """
+        html = dashboard_html()
+
+        fields = html.split("const PRESET_FIELDS = [", 1)[1].split("];", 1)[0]
+        self.assertNotIn("confirm_authorized", fields)
+        self.assertNotIn("authorized", fields)
+        self.assertIn("function applyScanPreset(", html)
+        self.assertIn("scanAuthorized').checked = false", html)
+
+    def test_a_preset_fills_the_form_rather_than_starting_a_scan(self):
+        html = dashboard_html()
+
+        body = html.split("function applyScanPreset(", 1)[1].split("\n    }", 1)[0]
+        self.assertNotIn("submit(", body)
+        self.assertNotIn("startScan(", body)
+        self.assertIn("select()", body)
+
+    def test_preset_chips_and_management_controls_exist(self):
+        html = dashboard_html()
+
+        self.assertIn('id="scanPresetChips"', html)
+        self.assertIn('id="scanPresetSave"', html)
+        self.assertIn('id="scanPresetIncludeTargets"', html)
+        self.assertIn("function renderScanPresets(", html)
+
+
 if __name__ == "__main__":
     unittest.main()
