@@ -152,7 +152,6 @@ def _capture_with_pktmon(request: LiveCaptureRequest, output: Path) -> LiveCaptu
             output=output,
             duration_s=duration,
             filter_expression=request.bpf_filter,
-            packet_limit=request.count,
         )
     except PermissionError as exc:
         raise RuntimeError("pktmon capture requires an elevated terminal") from exc

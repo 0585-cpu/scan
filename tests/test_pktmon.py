@@ -1,4 +1,5 @@
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -86,6 +87,42 @@ class BackendSelectionTests(unittest.TestCase):
             select_capture_backend(self._request(backend="tcpdump"))
 
 
+class DeduplicationTests(unittest.TestCase):
+    def test_component_copies_are_collapsed_but_later_repeats_are_kept(self):
+        from scapy.all import IP, UDP, Ether, PcapNgReader, PcapNgWriter
+
+        from netroach.pktmon import deduplicate_pcapng
+
+        frame = Ether() / IP(src="10.0.0.1", dst="10.0.0.2") / UDP(sport=1, dport=53)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "capture.pcapng"
+            with PcapNgWriter(str(path)) as writer:
+                for offset in (0.0, 0.00002, 0.00004):  # one packet, three components
+                    copy = frame.copy()
+                    copy.time = 1000.0 + offset
+                    writer.write(copy)
+                later = frame.copy()  # the same bytes a second later is real traffic
+                later.time = 1001.0
+                writer.write(later)
+
+            removed = deduplicate_pcapng(path)
+
+            with PcapNgReader(str(path)) as reader:
+                kept = list(reader)
+
+        self.assertEqual(removed, 2)
+        self.assertEqual(len(kept), 2)
+
+    def test_unreadable_capture_is_left_untouched(self):
+        from netroach.pktmon import deduplicate_pcapng
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "broken.pcapng"
+            path.write_bytes(b"not a capture")
+            self.assertEqual(deduplicate_pcapng(path), 0)
+            self.assertEqual(path.read_bytes(), b"not a capture")
+
+
 class PktmonCaptureTests(unittest.TestCase):
     def test_capture_starts_stops_converts_and_clears_filters(self):
         calls: list[list[str]] = []
@@ -95,7 +132,7 @@ class PktmonCaptureTests(unittest.TestCase):
             if arguments[1] == "etl2pcap":
                 Path(arguments[4]).write_bytes(b"pcapng")
             if arguments[1] == "start":
-                Path(arguments[4]).write_bytes(b"etl")
+                Path(arguments[arguments.index("--file-name") + 1]).write_bytes(b"etl")
             stdout = "Packet capture is not running." if arguments[1] == "status" else ""
             return subprocess.CompletedProcess(arguments, 0, stdout, "")
 
@@ -108,6 +145,15 @@ class PktmonCaptureTests(unittest.TestCase):
             )
 
         self.assertEqual(size, 6)
+        start = next(call for call in calls if call[0] == "start")
+        # pktmon keeps only the first 128 bytes by default, which cuts off the
+        # HTTP/TLS/DNS payload this project parses.
+        self.assertIn("--pkt-size", start)
+        self.assertEqual(start[start.index("--pkt-size") + 1], "0")
+        # Components stay at the default: capturing at the NIC only would give
+        # raw 802.11 frames on a Wi-Fi adapter instead of Ethernet ones.
+        self.assertNotIn("--comp", start)
+        self.assertNotIn("--file-size", start)
         verbs = [call[0] for call in calls]
         self.assertEqual(verbs.count("start"), 1)
         self.assertEqual(verbs.count("stop"), 1)

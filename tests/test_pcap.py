@@ -211,3 +211,26 @@ def tls_client_hello(sni: str, alpn: list[str]) -> bytes:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DecodedFrameCountTests(unittest.TestCase):
+    def test_frames_the_analyser_cannot_read_are_counted_separately(self):
+        # pktmon records raw 802.11 copies next to the Ethernet ones on a Wi-Fi
+        # adapter; every statistic counts the decoded frames, so the totals have
+        # to be reported apart rather than letting packet_count look inflated.
+        from scapy.all import IP, UDP, Ether, PcapWriter, Raw
+
+        from netroach.pcap import analyze_pcap
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mixed.pcap"
+            with PcapWriter(str(path), sync=True) as writer:
+                writer.write(Ether() / IP(src="10.0.0.1", dst="10.0.0.2") / UDP(sport=1, dport=53))
+                writer.write(Ether() / Raw(load=b"\x88\x02" + b"\x00" * 40))
+
+            summary = analyze_pcap(path)
+
+        self.assertEqual(summary.packet_count, 2)
+        self.assertEqual(summary.decoded_frames, 1)
+        self.assertEqual(summary.undecoded_frames, 1)
+        self.assertEqual(summary.protocols.get("IPv4"), 1)

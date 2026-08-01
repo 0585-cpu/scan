@@ -30,6 +30,12 @@ PCAP_MAGIC_PREFIXES = {
 class PcapSummary:
     file: str
     packet_count: int = 0
+    # A capture can hold frames this analyser cannot read - notably the raw
+    # 802.11 copies pktmon records alongside the Ethernet-shaped ones on a
+    # Wi-Fi adapter. Every figure below counts only decoded_frames, so the two
+    # are reported separately rather than letting packet_count look inflated.
+    decoded_frames: int = 0
+    undecoded_frames: int = 0
     first_ts: float | None = None
     last_ts: float | None = None
     protocols: dict[str, int] = field(default_factory=dict)
@@ -96,18 +102,22 @@ def analyze_pcap(path: str | Path, *, top: int = 10) -> PcapSummary:
                 summary.first_ts = timestamp if summary.first_ts is None else min(summary.first_ts, timestamp)
                 summary.last_ts = timestamp if summary.last_ts is None else max(summary.last_ts, timestamp)
 
+                decoded = False
                 src = dst = proto = None
                 if packet.haslayer(ARP):
+                    decoded = True
                     protocol_counts["ARP"] += 1
                     _observe_arp(packet[ARP], arp_summary)
                 if packet.haslayer(IP):
                     ip = packet[IP]
                     src, dst = ip.src, ip.dst
                     proto = "IPv4"
+                    decoded = True
                 elif packet.haslayer(IPv6):
                     ip6 = packet[IPv6]
                     src, dst = ip6.src, ip6.dst
                     proto = "IPv6"
+                    decoded = True
 
                 if src and dst:
                     talkers[src] += 1
@@ -165,6 +175,11 @@ def analyze_pcap(path: str | Path, *, top: int = 10) -> PcapSummary:
                                 tuple(str(value) for value in metadata.get("alpn", [])),
                             )
                         ] += 1
+
+                if decoded:
+                    summary.decoded_frames += 1
+                else:
+                    summary.undecoded_frames += 1
     except ValueError:
         raise
     except Exception as exc:
