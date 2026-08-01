@@ -271,6 +271,27 @@ class DashboardResultPaneTests(unittest.TestCase):
         button_index = html.index('id="scanNewResults"')
         self.assertTrue(host_rows_open < button_index < host_rows_close)
 
+    def test_host_rows_show_a_live_in_progress_state(self):
+        """Design spec section 3: a host with fewer rows than the job's
+        port_count while the scan is still running reads '스캔 중... n/total',
+        not just done/error."""
+        html = dashboard_html()
+
+        self.assertIn("function hostRowState(", html)
+        body = html.split("function hostRowState(", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("스캔 중", body)
+        self.assertIn("완료", body)
+        self.assertIn("오류", body)
+
+    def test_host_progress_uses_the_unpaginated_host_summary(self):
+        """A host's total must come from payload.hosts (an unpaginated
+        GROUP BY), not from the possibly-truncated loaded results page -
+        otherwise a host sorted late in a big scan reads a wrong fraction."""
+        html = dashboard_html()
+
+        body = html.split("function groupResultsByHost(", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("hostSummaries", body)
+
     def test_new_results_button_shows_a_count(self):
         html = dashboard_html()
 

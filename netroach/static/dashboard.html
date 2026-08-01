@@ -1361,6 +1361,7 @@
       resultTab: 'hosts',
       autoScroll: true,
       newResultCount: 0,
+      scanProgress: null,
       scanPresets: [],
       activePresetId: null,
       presetDirty: false,
@@ -2029,8 +2030,17 @@ ${health.db}` : '데이터베이스 없음';
           updateScanActionState();
           renderOverviewMetrics();
           renderOverviewScans();
-          if (state.scanId) await Promise.allSettled([refreshScanProgress(), refreshScanResults()]);
-          else renderScanResults();
+          if (state.scanId) {
+            // Both requests run in parallel, so either can settle first; a
+            // host row's live state needs the progress fetched here (port
+            // count) together with the results refreshed here (rows per
+            // host), so re-render once both are in rather than trust
+            // whichever finished last.
+            await Promise.allSettled([refreshScanProgress(), refreshScanResults()]);
+            if (state.resultTab === 'hosts') renderHostRows();
+          } else {
+            renderScanResults();
+          }
         }
         await refreshRunningProgress();
       } catch (err) {
@@ -2104,6 +2114,7 @@ ${health.db}` : '데이터베이스 없음';
       renderScanJobs();
       renderOverviewScans();
       await Promise.allSettled([refreshScanProgress(), refreshScanResults()]);
+      if (state.resultTab === 'hosts') renderHostRows();
     }
 
     function setScanLinkState(id, enabled, href = '', previewHref = '') {
@@ -2184,6 +2195,7 @@ ${health.db}` : '데이터베이스 없음';
     async function refreshScanProgress() {
       if (!state.scanId) {
         $('scanMetrics').innerHTML = '';
+        state.scanProgress = null;
         return;
       }
       const progress = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/progress`);
@@ -2194,6 +2206,11 @@ ${health.db}` : '데이터베이스 없음';
         metric('계획', progress.planned_total || 0),
         metric('open', states.open || 0)
       ].join('');
+      // Kept for renderHostRows(): port_count is the exact per-host port
+      // total the server planned (from the job's own port expression), the
+      // one denominator that lets a host row read "스캔 중... 41/100" instead
+      // of just done/not-done.
+      state.scanProgress = progress;
     }
 
     const RUNNING_STATUSES = new Set(['queued', 'running']);
@@ -2465,20 +2482,55 @@ ${health.db}` : '데이터베이스 없음';
       return hostRowIds.get(host);
     }
 
-    function groupResultsByHost(results) {
+    // `results` is the loaded page of rows (capped at HOST_VIEW_RESULT_LIMIT
+    // for the hosts tab), so a host sorted late can be under-represented
+    // there once a scan has produced more rows than the cap. `hostSummaries`
+    // (payload.hosts, from the backend's GROUP BY host over the *entire*
+    // scan) isn't paginated, so it's the accurate source for how many ports
+    // are actually done for a host - used for the completion fraction rather
+    // than trusting however many of that host's rows made it into the page.
+    function groupResultsByHost(results, hostSummaries) {
       const byHost = new Map();
+      const get = (host) => {
+        let entry = byHost.get(host);
+        if (!entry) {
+          entry = {host, open: [], total: 0, error: 0};
+          byHost.set(host, entry);
+        }
+        return entry;
+      };
       (results || []).forEach((row) => {
-        const entry = byHost.get(row.host) || {host: row.host, open: [], total: 0, error: 0};
-        entry.total += 1;
-        if (row.state === 'open') entry.open.push(row.port);
-        if (row.state === 'error') entry.error += 1;
-        byHost.set(row.host, entry);
+        if (row.state === 'open') get(row.host).open.push(row.port);
+      });
+      (hostSummaries || []).forEach((summary) => {
+        const entry = get(summary.host);
+        entry.total = Number(summary.total || 0);
+        entry.error = Number(summary.states?.error || 0);
       });
       const rows = [...byHost.values()];
       rows.forEach((entry) => entry.open.sort((a, b) => a - b));
       // Open hosts first: in a 254-address sweep the three that matter should
       // never be below the fold.
       return rows.sort((a, b) => (b.open.length ? 1 : 0) - (a.open.length ? 1 : 0));
+    }
+
+    // Per-host live state (design spec section 3): 대기/스캔 중/완료/오류. There
+    // is no backend call added for this - port_count comes from the progress
+    // endpoint the dashboard already polls (state.scanProgress, refreshed in
+    // refreshScanProgress()), and each host's row count comes from
+    // payload.hosts (an unpaginated GROUP BY, so it stays accurate even once
+    // the hosts tab's own result page is capped at HOST_VIEW_RESULT_LIMIT).
+    // 대기 is intentionally not produced here: the client has no reliable
+    // list of hosts that haven't reported a single result yet (that would
+    // mean expanding the target CIDR client-side into actual addresses,
+    // which is exactly the exact-vs-clamped mismatch item 1 removed) - a
+    // host simply has no row at all until its first result arrives.
+    function hostRowState(entry, jobRunning, portCount) {
+      if (entry.error > 0) return '오류';
+      if (jobRunning && portCount > 0 && entry.total < portCount) {
+        return `스캔 중… ${entry.total}/${portCount} ◐`;
+      }
+      return '완료 ●';
     }
 
     // The button lives inside the #scanHostRows scroller (not beside it) so
@@ -2505,14 +2557,17 @@ ${health.db}` : '데이터베이스 없음';
       $('scanResultMetrics').textContent = total > loaded
         ? `${loaded.toLocaleString()} / ${total.toLocaleString()}행 로드됨`
         : `${total.toLocaleString()}행`;
-      const rows = groupResultsByHost(payload.results).slice(0, HOST_ROW_RENDER_LIMIT);
+      const rows = groupResultsByHost(payload.results, payload.hosts).slice(0, HOST_ROW_RENDER_LIMIT);
+      const job = selectedScanJob();
+      const jobRunning = Boolean(job && RUNNING_STATUSES.has(job.status));
+      const portCount = Number(state.scanProgress?.port_count) || 0;
       const seen = new Set();
       let newlyCreated = 0;
       rows.forEach((entry) => {
         const id = hostRowId(entry.host);
         seen.add(id);
         const openText = entry.open.length ? `open ${entry.open.join(',')}` : '';
-        const stateText = entry.error ? '오류' : '완료';
+        const stateText = hostRowState(entry, jobRunning, portCount);
         let node = document.getElementById(id);
         if (!node) {
           node = document.createElement('div');
