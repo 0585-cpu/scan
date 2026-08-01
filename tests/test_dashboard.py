@@ -200,6 +200,33 @@ class DashboardEstimateTests(unittest.TestCase):
         self.assertIn("renderScanEstimate()", body)
 
 
+class DashboardAdvancedBadgeTests(unittest.TestCase):
+    def test_advanced_badge_markup_and_renderer_exist(self):
+        html = dashboard_html()
+
+        self.assertIn('id="scanAdvancedBadge"', html)
+        self.assertIn("function renderAdvancedBadge(", html)
+        self.assertIn("function advancedDiffCount(", html)
+
+    def test_badge_compares_against_the_field_default_not_a_hardcoded_value(self):
+        """Default must be read off the freshly loaded form (defaultValue/
+        defaultChecked), not a second hardcoded copy of the initial values
+        that could drift from the markup."""
+        html = dashboard_html()
+
+        body = html.split("function advancedDiffCount(", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("defaultValue", body)
+        self.assertIn("defaultChecked", body)
+
+    def test_render_scan_estimate_refreshes_the_badge(self):
+        """Applying a preset or resetting the form must update the badge -
+        both routes go through renderScanEstimate()."""
+        html = dashboard_html()
+
+        body = html.split("function renderScanEstimate(", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("renderAdvancedBadge()", body)
+
+
 class DashboardResultPaneTests(unittest.TestCase):
     def test_scan_screen_is_a_command_pane_and_a_result_pane(self):
         html = dashboard_html()

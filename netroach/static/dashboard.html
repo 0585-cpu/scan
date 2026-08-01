@@ -508,6 +508,16 @@
     }
     details.advanced-panel[open] summary { border-bottom: 1px solid var(--line); }
     .advanced-body { padding: 12px; }
+    .advanced-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 700;
+    }
     .authorization-box {
       border: 1px solid var(--warn-line);
       border-left: 3px solid var(--warn);
@@ -865,7 +875,7 @@
                     </div>
                   </div>
                   <details class="advanced-panel" id="scanAdvanced">
-                    <summary>고급 설정</summary>
+                    <summary>고급 설정<span class="advanced-badge" id="scanAdvancedBadge" hidden></span></summary>
                     <div class="advanced-body form-grid">
                       <div class="field">
                         <label for="scanTopPorts">상위 포트 수</label>
@@ -1665,11 +1675,36 @@
       };
     }
 
+    // Fields inside the (collapsed-by-default) advanced <details>. "Default"
+    // is whatever the freshly loaded form carries for that field - each
+    // input's .defaultValue/.defaultChecked already holds that (the DOM sets
+    // it from the markup's value=/checked attribute and it survives later
+    // .value/.checked writes), so there is nothing to snapshot separately.
+    const ADVANCED_FIELDS = ['top_ports', 'exclude', 'timeout_ms', 'concurrency', 'rate_limit_per_sec', 'udp_retries', 'max_attempts', 'confirm_large_scan'];
+
+    function advancedDiffCount() {
+      const form = $('scanForm');
+      return ADVANCED_FIELDS.reduce((count, name) => {
+        const node = form.elements[name];
+        if (!node) return count;
+        const changed = node.type === 'checkbox' ? node.checked !== node.defaultChecked : node.value !== node.defaultValue;
+        return changed ? count + 1 : count;
+      }, 0);
+    }
+
+    function renderAdvancedBadge() {
+      const badge = $('scanAdvancedBadge');
+      const count = advancedDiffCount();
+      badge.hidden = count === 0;
+      badge.textContent = `고급 ${count}`;
+    }
+
     // Renders #scanEstimate and is the sole owner of the start button's
     // disabled state: locked unless the target parses, the ports parse (or
     // are intentionally left to a server default/profile), the Rust engine
     // is available, and authorization is ticked.
     function renderScanEstimate() {
+      renderAdvancedBadge();
       const node = $('scanEstimate');
       const submit = $('scanSubmit');
       const estimate = estimateScanScale();
@@ -3056,7 +3091,7 @@ ${health.db}` : '데이터베이스 없음';
       }
       renderScanEstimate();
     });
-    ['scanPorts', 'scanTopPorts', 'scanProfile', 'scanProtocol', 'scanScope', 'scanTimeout', 'scanConcurrency', 'scanRate', 'scanMaxAttempts', 'scanConfirmLargeScan'].forEach((id) => {
+    ['scanPorts', 'scanTopPorts', 'scanProfile', 'scanProtocol', 'scanScope', 'scanExclude', 'scanTimeout', 'scanConcurrency', 'scanRate', 'scanUdpRetries', 'scanMaxAttempts', 'scanConfirmLargeScan'].forEach((id) => {
       $(id).addEventListener('input', renderScanEstimate);
       $(id).addEventListener('change', renderScanEstimate);
     });
