@@ -198,9 +198,9 @@
       cursor: pointer;
     }
     .progress-strip[hidden] { display: none; }
-    .progress-strip.done { background: #e7f5ec; }
-    .progress-strip.failed { background: #fdeaea; }
-    .strip-bar { flex: 0 0 140px; height: 6px; background: #ffffff; border-radius: 4px; overflow: hidden; }
+    .progress-strip.done { background: var(--ok-soft); }
+    .progress-strip.failed { background: var(--danger-soft); }
+    .strip-bar { flex: 0 0 140px; height: 6px; background: var(--surface); border-radius: 4px; overflow: hidden; }
     .strip-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 200ms ease; }
     .strip-target { flex: 0 1 auto; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .strip-error { color: var(--state-error); }
