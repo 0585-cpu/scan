@@ -212,12 +212,12 @@ class ApiTests(unittest.TestCase):
 
             self.assertEqual(root.status_code, 200)
             self.assertIn("text/html", root.headers["content-type"])
-            self.assertIn("Netroach Dashboard", root.text)
+            self.assertIn("Netroach 콘솔", root.text)
             self.assertIn("/v1/scans", root.text)
             self.assertIn("data-view-target=\"overview\"", root.text)
-            self.assertIn("Packet Send", root.text)
-            self.assertIn("Diagnostics", root.text)
-            self.assertIn("Use exact targets as scope", root.text)
+            self.assertIn("패킷 전송", root.text)
+            self.assertIn("진단", root.text)
+            self.assertIn("대상을 그대로 승인 범위로 사용", root.text)
             self.assertIn("scope_from_targets", root.text)
             self.assertIn("/v1/pcaps/analyze", root.text)
             self.assertIn("/v1/packets/send", root.text)
@@ -245,12 +245,12 @@ class ApiTests(unittest.TestCase):
             self.assertIn("compactPortsHtml(job.ports", root.text)
             self.assertIn("const formElement = event.currentTarget", root.text)
             self.assertIn("formElement.elements.confirm_authorized.checked = false", root.text)
-            self.assertIn("Rust Engine Unavailable", root.text)
+            self.assertIn("Rust 엔진 없음", root.text)
             self.assertNotIn('<label for="scanProfile">Port Profile</label>', root.text)
             self.assertIn("format=xlsx", root.text)
-            self.assertIn("width: 80px; height: 60px", root.text)
+            self.assertIn("width: 80px;", root.text)
             self.assertEqual(dashboard.status_code, 200)
-            self.assertIn("Start Scan", dashboard.text)
+            self.assertIn("스캔 시작", dashboard.text)
 
     def test_scan_requires_scope(self):
         from fastapi.testclient import TestClient

@@ -1,31 +1,43 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Netroach Dashboard</title>
+  <title>Netroach 콘솔</title>
   <style>
+    /* Netroach console - light design system.
+       One accent (blue) that never collides with the green/amber/red the port
+       states own, so "selected" and "open" can never be confused. */
     :root {
       color-scheme: light;
-      --bg: #f4f6f8;
+      --bg: #eef1f6;
       --surface: #ffffff;
-      --surface-alt: #f8fafc;
-      --sidebar: #25282d;
-      --sidebar-active: #343941;
-      --line: #d6dce5;
-      --line-strong: #b9c3d0;
-      --text: #172033;
-      --muted: #637083;
-      --accent: #0f766e;
-      --accent-dark: #0a5f59;
-      --accent-soft: #e8f5f3;
+      --surface-alt: #f6f8fc;
+      --surface-sunken: #eff3f9;
+      --sidebar: #172033;
+      --sidebar-active: #24314c;
+      --line: #e2e8f1;
+      --line-strong: #c8d2e2;
+      --text: #101828;
+      --text-soft: #344256;
+      --muted: #5d6b81;
+      --accent: #1b6ec2;
+      --accent-dark: #14589e;
+      --accent-soft: #e9f1fb;
       --warn: #9a6700;
       --warn-soft: #fff8e6;
+      --warn-line: #edcf82;
       --danger: #b42318;
-      --danger-soft: #fff0ee;
+      --danger-soft: #fef2f1;
+      --danger-line: #f0c0ba;
       --ok: #157347;
-      --ok-soft: #edf8f1;
-      --focus: rgba(15, 118, 110, .22);
+      --ok-soft: #ecf8f1;
+      --ok-line: #b7dfc8;
+      --focus: rgba(27, 110, 194, .28);
+      --radius: 10px;
+      --radius-sm: 7px;
+      --shadow: 0 1px 2px rgba(16, 24, 40, .05);
+      --shadow-lift: 0 6px 18px rgba(16, 24, 40, .1);
     }
     * { box-sizing: border-box; }
     html, body { min-height: 100%; }
@@ -33,64 +45,76 @@
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: "Malgun Gothic", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
       font-size: 14px;
-      line-height: 1.4;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
     }
     button, input, select, textarea { font: inherit; }
     button {
       min-height: 34px;
       border: 1px solid var(--line-strong);
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       background: #ffffff;
-      color: var(--text);
-      padding: 6px 11px;
+      color: var(--text-soft);
+      padding: 6px 12px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
       white-space: nowrap;
+      font-weight: 600;
+      transition: background-color .12s ease, border-color .12s ease, color .12s ease;
     }
-    button:hover { border-color: var(--accent); color: var(--accent); }
-    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    button:active { background: #dfeafa; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible,
+    summary:focus-visible, a:focus-visible {
       outline: 3px solid var(--focus);
       outline-offset: 1px;
+      border-radius: var(--radius-sm);
     }
     button.primary {
       background: var(--accent);
       border-color: var(--accent);
       color: #ffffff;
+      box-shadow: var(--shadow);
     }
-    button.primary:hover { background: var(--accent-dark); color: #ffffff; }
+    button.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: #ffffff; }
     button:disabled, a.action.disabled {
       cursor: not-allowed;
-      opacity: .48;
+      opacity: .5;
       border-color: var(--line);
       color: var(--muted);
+      background: var(--surface-alt);
+      box-shadow: none;
       pointer-events: none;
     }
     button.danger {
-      background: var(--danger);
-      border-color: var(--danger);
-      color: #ffffff;
+      background: #ffffff;
+      border-color: var(--danger-line);
+      color: var(--danger);
     }
-    button.danger:hover { background: #8f1d14; color: #ffffff; }
+    button.danger:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
     a.action {
       min-height: 34px;
       border: 1px solid var(--line-strong);
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       background: #ffffff;
-      color: var(--text);
-      padding: 6px 11px;
+      color: var(--text-soft);
+      padding: 6px 12px;
       text-decoration: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       white-space: nowrap;
+      font-weight: 600;
+      cursor: pointer;
     }
-    a.action:hover { border-color: var(--accent); color: var(--accent); }
+    a.action:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
     a.action.disabled { background: var(--surface-alt); }
+
     /* In-app preview: the desktop shell is a webview that blocks new windows,
        so reports and evidence must open inside this page, never in a new tab. */
     .viewer {
@@ -101,7 +125,8 @@
       align-items: center;
       justify-content: center;
       padding: 24px;
-      background: rgba(23, 32, 51, .55);
+      background: rgba(16, 24, 40, .55);
+      backdrop-filter: blur(2px);
     }
     .viewer[hidden] { display: none; }
     .viewer-panel {
@@ -111,14 +136,15 @@
       height: min(880px, 100%);
       background: var(--surface);
       border: 1px solid var(--line-strong);
-      border-radius: 8px;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-lift);
       overflow: hidden;
     }
     .viewer-head {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 10px 12px;
+      padding: 10px 14px;
       border-bottom: 1px solid var(--line);
       background: var(--surface-alt);
     }
@@ -126,10 +152,10 @@
     .viewer-body { flex: 1; overflow: auto; background: #ffffff; }
     .viewer-body iframe { width: 100%; height: 100%; border: 0; display: block; }
     .viewer-body img { display: block; margin: 0 auto; max-width: 100%; }
-    .viewer-note { padding: 10px 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+    .viewer-note { padding: 10px 14px; color: var(--muted); border-bottom: 1px solid var(--line); }
     .viewer-text {
       margin: 0;
-      padding: 12px;
+      padding: 12px 14px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12px;
       white-space: pre;
@@ -137,68 +163,96 @@
     }
     .evidence-list { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 140px; }
     .evidence-card { display: inline-grid; gap: 3px; justify-items: stretch; }
-    .evidence-thumb { width: 80px; height: 60px; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; display: block; }
-    .evidence-add { cursor: pointer; color: var(--accent); font-weight: 600; white-space: nowrap; }
+    .evidence-thumb {
+      width: 80px;
+      height: 60px;
+      object-fit: cover;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      display: block;
+      cursor: zoom-in;
+    }
+    .evidence-thumb:hover { border-color: var(--accent); }
+    .evidence-add { cursor: pointer; color: var(--accent); font-weight: 600; white-space: nowrap; font-size: 12px; }
     .evidence-add input { display: none; }
-    button.evidence-delete { min-height: 24px; padding: 2px 6px; color: var(--danger); font-size: 12px; }
+    button.evidence-delete { min-height: 24px; padding: 2px 6px; color: var(--danger); font-size: 11px; }
+
     .app {
       min-height: 100vh;
       display: grid;
-      grid-template-columns: 232px minmax(0, 1fr);
+      grid-template-columns: 236px minmax(0, 1fr);
     }
     .sidebar {
       background: var(--sidebar);
       color: #f8fafc;
       display: grid;
       grid-template-rows: auto 1fr auto;
-      border-right: 1px solid #1d2025;
       min-height: 100vh;
     }
     .brand {
-      padding: 18px 16px 14px;
-      border-bottom: 1px solid rgba(255,255,255,.08);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 16px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, .08);
     }
-    .brand strong {
-      display: block;
-      font-size: 18px;
-    }
-    .brand span {
-      display: block;
-      color: #b8c0cc;
-      font-size: 12px;
-      margin-top: 2px;
-    }
-    .nav {
-      padding: 10px;
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      flex: 0 0 auto;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #ffffff;
       display: grid;
-      gap: 4px;
+      place-items: center;
+      font-weight: 800;
+      font-size: 15px;
+    }
+    .brand-text { min-width: 0; }
+    .brand strong { display: block; font-size: 16px; letter-spacing: .01em; }
+    .brand span { display: block; color: #9fb0c9; font-size: 11px; margin-top: 1px; }
+    .nav {
+      padding: 12px 10px;
+      display: grid;
+      gap: 3px;
       align-content: start;
     }
+    .nav-group-label {
+      color: #7f92ad;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .09em;
+      padding: 12px 10px 5px;
+    }
+    .nav-group-label:first-child { padding-top: 2px; }
     .nav button {
       width: 100%;
       justify-content: flex-start;
       border-color: transparent;
       background: transparent;
-      color: #d8dee8;
-      padding: 9px 10px;
-      min-height: 38px;
+      color: #ccd6e5;
+      padding: 8px 10px;
+      min-height: 36px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
     }
     .nav button:hover {
       color: #ffffff;
-      background: #2d3239;
+      background: rgba(255, 255, 255, .07);
       border-color: transparent;
     }
     .nav button.active {
       background: var(--sidebar-active);
       color: #ffffff;
-      border-color: rgba(255,255,255,.1);
+      border-color: transparent;
       box-shadow: inset 3px 0 0 var(--accent);
     }
     .sidebar-foot {
+      white-space: pre-line;
       padding: 12px 14px;
-      border-top: 1px solid rgba(255,255,255,.08);
-      color: #b8c0cc;
-      font-size: 12px;
+      border-top: 1px solid rgba(255, 255, 255, .08);
+      color: #9fb0c9;
+      font-size: 11px;
       overflow-wrap: anywhere;
     }
     .shell {
@@ -214,14 +268,14 @@
       align-items: center;
       justify-content: space-between;
       gap: 14px;
-      padding: 0 16px;
+      padding: 0 18px;
       min-width: 0;
     }
     .topbar h1 {
       margin: 0;
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 700;
-      min-width: 128px;
+      min-width: 110px;
     }
     .status-strip {
       display: flex;
@@ -234,20 +288,23 @@
     .workspace {
       min-width: 0;
       overflow: auto;
-      padding: 16px;
+      padding: 18px;
     }
     .view { display: none; }
     .view.active { display: block; }
     .view-head {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 12px;
       margin-bottom: 14px;
     }
-    .view-head h2 {
-      margin: 0;
-      font-size: 18px;
+    .view-head h2 { margin: 0; font-size: 17px; }
+    .view-head p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      max-width: 78ch;
     }
     .view-actions {
       display: flex;
@@ -261,23 +318,19 @@
       gap: 16px;
       align-items: start;
     }
-    .scan-layout {
-      grid-template-columns: minmax(380px, 470px) minmax(0, 1fr);
-    }
-    .layout-wide {
-      display: grid;
-      gap: 16px;
-      align-items: start;
-    }
+    .scan-layout { grid-template-columns: minmax(380px, 470px) minmax(0, 1fr); }
+    .layout-wide { display: grid; gap: 16px; align-items: start; }
     .band {
       background: var(--surface);
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
       min-width: 0;
+      overflow: hidden;
     }
     .band-head {
       min-height: 46px;
-      padding: 10px 12px;
+      padding: 10px 14px;
       border-bottom: 1px solid var(--line);
       display: flex;
       align-items: center;
@@ -286,80 +339,57 @@
     }
     .band-head h3 {
       margin: 0;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
+      letter-spacing: .01em;
     }
-    .band-body { padding: 12px; }
+    .band-body { padding: 14px; }
     .toolbar {
       min-height: 46px;
-      padding: 8px 12px;
+      padding: 8px 14px;
       border-bottom: 1px solid var(--line);
+      background: var(--surface-alt);
       display: flex;
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
     }
-    .toolbar-group {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    .toolbar-group + .toolbar-group {
-      border-left: 1px solid var(--line);
-      padding-left: 8px;
-    }
+    .toolbar-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .toolbar-group + .toolbar-group { border-left: 1px solid var(--line-strong); padding-left: 10px; }
     .toolbar-label {
       color: var(--muted);
       font-size: 11px;
       font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: .04em;
+      letter-spacing: .03em;
     }
-    form { display: grid; gap: 10px; }
+    form { display: grid; gap: 12px; }
     .form-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      gap: 10px 12px;
     }
     .field { display: grid; gap: 4px; min-width: 0; }
     .field.full { grid-column: 1 / -1; }
     label, .field-label {
-      color: var(--muted);
+      color: var(--text-soft);
       font-size: 12px;
       font-weight: 600;
     }
     input, select, textarea {
       width: 100%;
       min-height: 34px;
-      border: 1px solid #c6cfda;
-      border-radius: 6px;
-      padding: 7px 9px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius-sm);
+      padding: 7px 10px;
       background: #ffffff;
       color: var(--text);
     }
-    textarea {
-      resize: vertical;
-      min-height: 74px;
-    }
-    .helper {
-      color: var(--muted);
-      font-size: 11px;
-      line-height: 1.35;
-    }
-    .form-intro {
-      margin: 0 0 10px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .preset-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
-      margin-top: 2px;
-    }
-    .preset-row button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
+    input:hover, select:hover, textarea:hover { border-color: #aebbd0; }
+    textarea { resize: vertical; min-height: 74px; }
+    .helper { color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .form-intro { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+    .preset-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+    .preset-row button { min-height: 28px; padding: 4px 9px; font-size: 12px; }
     .preset-row button.active {
       border-color: var(--accent);
       background: var(--accent-soft);
@@ -376,61 +406,58 @@
     .port-file-action {
       min-height: 28px;
       border: 1px solid var(--line-strong);
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       background: #ffffff;
-      color: var(--text);
-      padding: 4px 8px;
+      color: var(--text-soft);
+      padding: 4px 9px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       font-size: 12px;
+      font-weight: 600;
       white-space: nowrap;
     }
-    .port-file-action:hover { border-color: var(--accent); color: var(--accent); }
+    .port-file-action:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
     .port-file-action input { display: none; }
     .custom-profile-list:empty { display: none; }
-    .custom-profile-chip {
-      display: inline-flex;
-      align-items: stretch;
-    }
-    .custom-profile-chip .custom-profile-use {
-      border-radius: 6px 0 0 6px;
-    }
+    .custom-profile-chip { display: inline-flex; align-items: stretch; }
+    .custom-profile-chip .custom-profile-use { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
     .custom-profile-chip .custom-profile-remove {
       min-width: 28px;
       border-left: 0;
-      border-radius: 0 6px 6px 0;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
       color: var(--danger);
       padding-left: 6px;
       padding-right: 6px;
     }
     details.advanced-panel {
       border: 1px solid var(--line);
-      border-radius: 7px;
+      border-radius: var(--radius-sm);
       background: var(--surface-alt);
     }
     details.advanced-panel summary {
       cursor: pointer;
-      padding: 9px 10px;
-      color: var(--text);
+      padding: 9px 11px;
+      color: var(--text-soft);
       font-size: 12px;
       font-weight: 700;
       user-select: none;
     }
     details.advanced-panel[open] summary { border-bottom: 1px solid var(--line); }
-    .advanced-body { padding: 10px; }
+    .advanced-body { padding: 12px; }
     .authorization-box {
-      border: 1px solid #edcf82;
-      border-radius: 7px;
+      border: 1px solid var(--warn-line);
+      border-left: 3px solid var(--warn);
+      border-radius: var(--radius-sm);
       background: var(--warn-soft);
-      padding: 7px 9px;
+      padding: 8px 11px;
     }
     .scan-preview {
       border-left: 3px solid var(--accent);
       background: var(--accent-soft);
       color: var(--accent-dark);
-      border-radius: 4px;
-      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      padding: 9px 11px;
       font-size: 12px;
       overflow-wrap: anywhere;
     }
@@ -442,108 +469,91 @@
       min-height: 34px;
       color: var(--text);
       font-size: 13px;
+      font-weight: 600;
     }
-    .check-row input {
-      width: 16px;
-      height: 16px;
-      min-height: 0;
-    }
-    .status {
-      color: var(--muted);
-      font-size: 12px;
-      min-height: 18px;
-      overflow-wrap: anywhere;
-    }
+    .check-row input { width: 16px; height: 16px; min-height: 0; accent-color: var(--accent); }
+    .status { color: var(--muted); font-size: 12px; min-height: 18px; overflow-wrap: anywhere; }
     .mono {
       font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
       font-size: 12px;
     }
     .pill {
-      min-height: 24px;
-      border: 1px solid var(--line);
+      min-height: 22px;
+      border: 1px solid var(--line-strong);
       border-radius: 999px;
-      padding: 2px 8px;
+      padding: 1px 9px;
       display: inline-flex;
       align-items: center;
       gap: 5px;
       color: var(--muted);
       background: var(--surface-alt);
-      font-size: 12px;
+      font-size: 11px;
+      font-weight: 700;
       white-space: nowrap;
       max-width: 100%;
     }
-    .pill.ok, .pill.state-open, .pill.state-completed { color: var(--ok); border-color: #b7dfc8; background: var(--ok-soft); }
-    .pill.warn, .pill.state-running, .pill.state-queued, .pill.state-recovering, .pill.state-open-filtered { color: var(--warn); border-color: #edcf82; background: var(--warn-soft); }
-    .pill.bad, .pill.state-failed, .pill.state-cancelled, .pill.state-cancel-requested, .pill.state-error { color: var(--danger); border-color: #edbbb5; background: var(--danger-soft); }
+    .pill.ok, .pill.state-open, .pill.state-completed { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
+    .pill.warn, .pill.state-running, .pill.state-queued, .pill.state-recovering, .pill.state-open-filtered { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
+    .pill.bad, .pill.state-failed, .pill.state-cancelled, .pill.state-cancel-requested, .pill.state-error { color: var(--danger); border-color: var(--danger-line); background: var(--danger-soft); }
     .metrics {
       display: grid;
       grid-template-columns: repeat(4, minmax(120px, 1fr));
-      gap: 10px;
+      gap: 12px;
     }
     .metric {
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: var(--radius);
       background: var(--surface);
-      padding: 10px;
+      box-shadow: var(--shadow);
+      padding: 12px 14px;
       min-width: 0;
-      min-height: 72px;
+      min-height: 74px;
     }
     .metric span {
       display: block;
       color: var(--muted);
-      font-size: 12px;
-      font-weight: 600;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .02em;
       overflow-wrap: anywhere;
     }
     .metric strong {
       display: block;
-      font-size: 22px;
-      margin-top: 4px;
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 5px;
+      font-variant-numeric: tabular-nums;
       overflow-wrap: anywhere;
     }
-    .table-wrap {
-      width: 100%;
-      overflow: auto;
-    }
+    .table-wrap { width: 100%; overflow: auto; }
     .scan-jobs-wrap { max-height: 430px; }
     .scan-results-wrap { max-height: 650px; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      min-width: 760px;
-    }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; }
     th, td {
       border-bottom: 1px solid var(--line);
       text-align: left;
-      padding: 8px;
+      padding: 9px 12px;
       vertical-align: top;
     }
+    td { color: var(--text-soft); }
     th {
       background: var(--surface-alt);
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
-    }
-    .table-wrap thead th { position: sticky; top: 0; z-index: 1; }
-    td.cell-clip {
-      max-width: 220px;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      letter-spacing: .03em;
       white-space: nowrap;
     }
-    .band-head-tools {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
+    .table-wrap thead th { position: sticky; top: 0; z-index: 1; box-shadow: inset 0 -1px 0 var(--line); }
+    tbody tr:last-child td { border-bottom: 0; }
+    td.cell-clip { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .band-head-tools { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     .compact-input, .compact-select {
       width: auto;
       min-width: 150px;
       max-width: 240px;
       min-height: 32px;
-      padding: 5px 8px;
+      padding: 5px 9px;
     }
     #scanResultSearch { min-width: 260px; }
     .result-navigator {
@@ -551,49 +561,28 @@
       gap: 8px;
       border-bottom: 1px solid var(--line);
       background: var(--surface-alt);
-      padding: 10px 12px;
+      padding: 10px 14px;
     }
-    .result-host-tabs, .result-state-tabs {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      min-width: 0;
-    }
-    .result-host-tabs {
-      overflow-x: auto;
-      padding-bottom: 2px;
-      scrollbar-width: thin;
-    }
+    .result-host-tabs, .result-state-tabs { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .result-host-tabs { overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
     .result-host-tabs:empty, .result-state-tabs:empty { display: none; }
-    .result-tab {
-      min-height: 30px;
-      padding: 4px 10px;
-      font-size: 12px;
-      flex: 0 0 auto;
-    }
+    .result-tab { min-height: 30px; padding: 4px 11px; font-size: 12px; flex: 0 0 auto; }
     .result-tab.active {
       border-color: var(--accent);
       background: var(--accent);
       color: #ffffff;
       font-weight: 700;
     }
-    .result-tab.active:hover { color: #ffffff; }
-    .result-tab .tab-count {
-      opacity: .75;
-      font-size: 11px;
-    }
-    .result-single-host {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 600;
-    }
+    .result-tab.active:hover { background: var(--accent-dark); color: #ffffff; }
+    .result-tab .tab-count { opacity: .75; font-size: 11px; }
+    .result-single-host { color: var(--muted); font-size: 12px; font-weight: 600; }
     .result-pagination {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 10px;
       border-top: 1px solid var(--line);
-      padding: 9px 12px;
+      padding: 9px 14px;
       background: var(--surface-alt);
       flex-wrap: wrap;
     }
@@ -603,73 +592,54 @@
     .selected-summary {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 6px 12px;
+      gap: 8px 14px;
       font-size: 12px;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
     .selected-summary div { min-width: 0; overflow-wrap: anywhere; }
-    .selected-summary span { color: var(--muted); display: block; font-size: 11px; font-weight: 600; }
+    .selected-summary span { color: var(--muted); display: block; font-size: 11px; font-weight: 700; }
     .port-summary { white-space: nowrap; }
-    details.ports-details summary {
-      cursor: pointer;
-      color: var(--text);
-      font-weight: 600;
-    }
+    details.ports-details summary { cursor: pointer; color: var(--text-soft); font-weight: 600; }
     details.ports-details div {
       max-height: 110px;
       margin-top: 5px;
       overflow: auto;
       border: 1px solid var(--line);
-      border-radius: 5px;
+      border-radius: 6px;
       background: var(--surface-alt);
-      padding: 6px;
+      padding: 7px;
       overflow-wrap: anywhere;
     }
-    tr.selected td { background: var(--accent-soft); }
+    tr.selected td { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
     tr.clickable { cursor: pointer; }
-    tr.clickable:hover td { background: #f1f7f6; }
+    tr.clickable:hover td { background: var(--surface-sunken); }
     .kv {
       display: grid;
-      grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+      grid-template-columns: minmax(120px, 190px) minmax(0, 1fr);
       border-top: 1px solid var(--line);
     }
-    .kv div {
-      padding: 8px;
-      border-bottom: 1px solid var(--line);
-      min-width: 0;
-      overflow-wrap: anywhere;
-    }
-    .kv div:nth-child(odd) {
-      color: var(--muted);
-      background: var(--surface-alt);
-      font-weight: 600;
-    }
+    .kv div { padding: 9px 12px; border-bottom: 1px solid var(--line); min-width: 0; overflow-wrap: anywhere; }
+    .kv div:nth-child(odd) { color: var(--muted); background: var(--surface-alt); font-weight: 600; }
     .json-block {
       margin: 0;
       max-height: 360px;
       overflow: auto;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #101418;
-      color: #e7edf4;
-      padding: 10px;
+      border-radius: var(--radius-sm);
+      background: #0f1623;
+      color: #dbe6f4;
+      padding: 12px;
       font-size: 12px;
     }
-    .tabs {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
     .template-fields { display: none; }
     .template-fields.active { display: contents; }
-    .empty {
-      color: var(--muted);
-      padding: 12px;
-    }
+    .empty { color: var(--muted); padding: 18px 12px; text-align: center; }
     @media (max-width: 1120px) {
       .app { grid-template-columns: 1fr; }
       .sidebar { min-height: auto; }
       .nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .nav-group-label { grid-column: 1 / -1; padding-top: 8px; }
       .sidebar-foot { display: none; }
       .shell { min-height: auto; }
       .layout-two { grid-template-columns: 1fr; }
@@ -677,7 +647,7 @@
       .metrics { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
     }
     @media (max-width: 680px) {
-      .workspace { padding: 10px; }
+      .workspace { padding: 12px; }
       .topbar { align-items: flex-start; flex-direction: column; height: auto; padding: 10px; }
       .form-grid { grid-template-columns: 1fr; }
       .metrics { grid-template-columns: 1fr; }
@@ -697,34 +667,43 @@
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <strong>Netroach</strong>
-        <span>Local Operations Console</span>
+        <span class="brand-mark" aria-hidden="true">N</span>
+        <span class="brand-text">
+          <strong>Netroach</strong>
+          <span>로컬 진단 콘솔</span>
+        </span>
       </div>
-      <nav class="nav" aria-label="Dashboard sections">
-        <button type="button" data-view-target="overview" class="active">Overview</button>
-        <button type="button" data-view-target="scans">Scans</button>
-        <button type="button" data-view-target="pcap">PCAP</button>
-        <button type="button" data-view-target="capture">Live Capture</button>
-        <button type="button" data-view-target="packets">Packet Send</button>
-        <button type="button" data-view-target="oast">OAST</button>
-        <button type="button" data-view-target="plugins">Plugins</button>
-        <button type="button" data-view-target="diagnostics">Diagnostics</button>
+      <nav class="nav" aria-label="대시보드 섹션">
+        <span class="nav-group-label">스캔</span>
+        <button type="button" data-view-target="overview" class="active">개요</button>
+        <button type="button" data-view-target="scans">포트 스캔</button>
+        <span class="nav-group-label">패킷</span>
+        <button type="button" data-view-target="pcap">PCAP 분석</button>
+        <button type="button" data-view-target="capture">라이브 캡처</button>
+        <button type="button" data-view-target="packets">패킷 전송</button>
+        <button type="button" data-view-target="oast">OAST 콜백</button>
+        <span class="nav-group-label">시스템</span>
+        <button type="button" data-view-target="plugins">플러그인</button>
+        <button type="button" data-view-target="diagnostics">진단</button>
       </nav>
-      <div class="sidebar-foot" id="dbPath">db checking</div>
+      <div class="sidebar-foot" id="dbPath">데이터베이스 확인 중</div>
     </aside>
     <div class="shell">
       <header class="topbar">
-        <h1 id="viewTitle">Overview</h1>
+        <h1 id="viewTitle">개요</h1>
         <div class="status-strip" id="topStatus">
-          <span class="pill warn">checking</span>
+          <span class="pill warn">확인 중</span>
         </div>
       </header>
       <main class="workspace">
         <section class="view active" id="view-overview">
           <div class="view-head">
-            <h2>Overview</h2>
+            <div>
+              <h2>개요</h2>
+              <p>엔진 상태와 최근 스캔을 한눈에 확인합니다.</p>
+            </div>
             <div class="view-actions">
-              <button type="button" id="refreshAll">Refresh</button>
+              <button type="button" id="refreshAll">새로고침</button>
             </div>
           </div>
           <div class="layout-wide">
@@ -732,13 +711,13 @@
             <div class="layout-two">
               <section class="band">
                 <div class="band-head">
-                  <h3>Recent Scans</h3>
-                  <button type="button" data-view-target="scans">Open Scans</button>
+                  <h3>최근 스캔</h3>
+                  <button type="button" data-view-target="scans">스캔 열기</button>
                 </div>
                 <div class="table-wrap">
                   <table>
                     <thead>
-                      <tr><th>ID</th><th>Status</th><th>Targets</th><th>Ports</th><th>Open</th></tr>
+                      <tr><th>ID</th><th>상태</th><th>대상</th><th>포트</th><th>open</th></tr>
                     </thead>
                     <tbody id="overviewScans"></tbody>
                   </table>
@@ -746,8 +725,8 @@
               </section>
               <section class="band">
                 <div class="band-head">
-                  <h3>Runtime</h3>
-                  <button type="button" data-view-target="diagnostics">Details</button>
+                  <h3>실행 환경</h3>
+                  <button type="button" data-view-target="diagnostics">자세히</button>
                 </div>
                 <div class="kv" id="overviewRuntime"></div>
               </section>
@@ -757,110 +736,113 @@
 
         <section class="view" id="view-scans">
           <div class="view-head">
-            <h2>Scans</h2>
+            <div>
+              <h2>포트 스캔</h2>
+              <p>승인된 대상에 TCP/UDP 스캔을 실행하고 결과를 검토합니다.</p>
+            </div>
             <div class="view-actions">
-              <button type="button" id="scanRefresh">Refresh</button>
+              <button type="button" id="scanRefresh">새로고침</button>
             </div>
           </div>
           <div class="layout-two scan-layout">
             <section class="band">
-              <div class="band-head"><h3>New Scan</h3></div>
+              <div class="band-head"><h3>새 스캔</h3></div>
               <div class="band-body">
-                <p class="form-intro">Enter authorized targets, choose a port set, and review the scope summary before starting.</p>
+                <p class="form-intro">승인된 대상을 입력하고 포트를 고른 뒤, 시작 전에 아래 요약을 확인하세요.</p>
                 <form id="scanForm">
                   <div class="form-grid">
                     <div class="field full">
-                      <label for="scanTargets">Targets</label>
+                      <label for="scanTargets">대상</label>
                       <textarea id="scanTargets" name="targets" required placeholder="192.168.1.10&#10;192.168.1.20"></textarea>
-                      <span class="helper">Comma or line separated IP addresses and CIDRs.</span>
+                      <span class="helper">IP · CIDR · 호스트명을 쉼표나 줄바꿈으로 구분합니다.</span>
                     </div>
                     <div class="field full">
-                      <label for="scanPorts">Ports</label>
+                      <label for="scanPorts">포트</label>
                       <input id="scanPorts" name="ports" placeholder="22,80,443">
-                      <div class="preset-row" aria-label="Port presets">
-                        <span class="helper">Presets:</span>
-                        <button type="button" data-port-preset="22,53,80,443,445,3389">Common</button>
-                        <button type="button" data-port-preset="80,443,8000,8080,8443">Web</button>
-                        <button type="button" data-port-preset="22,23,3389,5900">Remote</button>
-                        <button type="button" data-port-preset="25,110,143,465,587,993,995">Mail</button>
-                        <select class="preset-select" id="scanProfile" name="port_profile" aria-label="Configured port profile">
-                          <option value="">Configured profile...</option>
+                      <div class="preset-row" aria-label="포트 프리셋">
+                        <span class="helper">프리셋</span>
+                        <button type="button" data-port-preset="22,53,80,443,445,3389">기본</button>
+                        <button type="button" data-port-preset="80,443,8000,8080,8443">웹</button>
+                        <button type="button" data-port-preset="22,23,3389,5900">원격</button>
+                        <button type="button" data-port-preset="25,110,143,465,587,993,995">메일</button>
+                        <select class="preset-select" id="scanProfile" name="port_profile" aria-label="설정된 포트 프로필">
+                          <option value="">설정된 프로필...</option>
                         </select>
                         <label class="port-file-action" for="scanPortProfileFile">
-                          Import TXT
+                          TXT 가져오기
                           <input id="scanPortProfileFile" type="file" accept=".txt,text/plain">
                         </label>
                       </div>
-                      <div class="preset-row custom-profile-list" id="scanCustomProfiles" aria-label="Imported port profiles"></div>
-                      <span class="helper" id="scanProfileStatus">TXT supports comma-separated ports, ranges, and # comments.</span>
+                      <div class="preset-row custom-profile-list" id="scanCustomProfiles" aria-label="가져온 포트 프로필"></div>
+                      <span class="helper" id="scanProfileStatus">TXT는 쉼표로 구분한 포트, 범위, # 주석을 지원합니다.</span>
                     </div>
                     <div class="field">
-                      <label for="scanProtocol">Protocol</label>
+                      <label for="scanProtocol">프로토콜</label>
                       <select id="scanProtocol" name="protocol">
                         <option value="tcp">tcp</option>
                         <option value="udp">udp</option>
                       </select>
                     </div>
                     <div class="field">
-                      <span class="field-label">Scope Mode</span>
-                      <label class="check-row"><input id="scanScopeFromTargets" name="scope_from_targets" type="checkbox" checked>Use exact targets as scope</label>
+                      <span class="field-label">범위 지정</span>
+                      <label class="check-row"><input id="scanScopeFromTargets" name="scope_from_targets" type="checkbox" checked>대상을 그대로 승인 범위로 사용</label>
                     </div>
                     <div class="field full">
-                      <label for="scanScope">Authorized Scope</label>
+                      <label for="scanScope">승인 범위</label>
                       <input id="scanScope" name="scope" placeholder="192.168.1.0/24" readonly>
-                      <div class="preset-row"><button type="button" id="scanFillScope">Refresh From Targets</button></div>
+                      <div class="preset-row"><button type="button" id="scanFillScope">대상에서 다시 채우기</button></div>
                     </div>
                     <div class="field full">
-                      <span class="field-label">Options</span>
-                      <label class="check-row"><input name="service_probe" type="checkbox" checked>Service probe</label>
-                      <label class="check-row"><input name="capture_screenshots" type="checkbox">Capture service evidence</label>
+                      <span class="field-label">옵션</span>
+                      <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지</label>
+                      <label class="check-row"><input name="capture_screenshots" type="checkbox">서비스 증적 이미지 수집</label>
                     </div>
                     <div class="field full authorization-box">
-                      <label class="check-row"><input name="confirm_authorized" type="checkbox" required>Confirm authorized</label>
-                      <span class="helper">Only scan systems you own or are explicitly permitted to test.</span>
+                      <label class="check-row"><input name="confirm_authorized" type="checkbox" required>스캔 권한을 확인했습니다</label>
+                      <span class="helper">소유했거나 명시적으로 허가받은 시스템만 스캔하세요.</span>
                     </div>
                   </div>
                   <details class="advanced-panel" id="scanAdvanced">
-                    <summary>Advanced options</summary>
+                    <summary>고급 설정</summary>
                     <div class="advanced-body form-grid">
                       <div class="field">
-                        <label for="scanTopPorts">Top Ports</label>
+                        <label for="scanTopPorts">상위 포트 수</label>
                         <input id="scanTopPorts" name="top_ports" type="number" min="1" placeholder="20">
                       </div>
                       <div class="field full">
-                        <label for="scanExclude">Exclude</label>
+                        <label for="scanExclude">제외 대상</label>
                         <input id="scanExclude" name="exclude" placeholder="192.168.1.20/32">
                       </div>
                       <div class="field">
-                        <label for="scanTimeout">Timeout ms</label>
+                        <label for="scanTimeout">타임아웃 (ms)</label>
                         <input id="scanTimeout" name="timeout_ms" type="number" min="1" value="800">
                       </div>
                       <div class="field">
-                        <label for="scanConcurrency">Concurrency</label>
+                        <label for="scanConcurrency">동시 실행 수</label>
                         <input id="scanConcurrency" name="concurrency" type="number" min="1" value="2000">
                       </div>
                       <div class="field">
-                        <label for="scanRate">Rate/sec</label>
+                        <label for="scanRate">초당 속도</label>
                         <input id="scanRate" name="rate_limit_per_sec" type="number" min="1" value="5000">
                       </div>
                       <div class="field">
-                        <label for="scanUdpRetries">UDP Retries</label>
+                        <label for="scanUdpRetries">UDP 재시도</label>
                         <input id="scanUdpRetries" name="udp_retries" type="number" min="0" max="3" value="1">
                       </div>
                       <div class="field">
-                        <label for="scanMaxAttempts">Max Attempts</label>
+                        <label for="scanMaxAttempts">최대 시도 수</label>
                         <input id="scanMaxAttempts" name="max_attempts" type="number" min="1" value="1000000">
                       </div>
                       <div class="field full">
-                        <label class="check-row"><input name="confirm_large_scan" type="checkbox">Confirm scan above Max Attempts</label>
-                        <span class="helper">Required only when the estimated Host × Port workload exceeds the configured limit.</span>
+                        <label class="check-row"><input name="confirm_large_scan" type="checkbox">최대 시도 수를 초과하는 스캔을 승인합니다</label>
+                        <span class="helper">호스트 × 포트 예상 작업량이 설정된 한도를 넘을 때만 필요합니다.</span>
                       </div>
                     </div>
                   </details>
-                  <div class="scan-preview" id="scanPreview">Add at least one target to preview this scan.</div>
+                  <div class="scan-preview" id="scanPreview">대상을 하나 이상 입력하면 예상 작업량을 보여줍니다.</div>
                   <div class="view-actions">
-                    <button class="primary" id="scanSubmit" type="submit">Start Scan</button>
-                    <button id="scanReset" type="button">Reset</button>
+                    <button class="primary" id="scanSubmit" type="submit">스캔 시작</button>
+                    <button id="scanReset" type="button">초기화</button>
                     <span class="status" id="scanStatus"></span>
                   </div>
                 </form>
@@ -868,46 +850,46 @@
             </section>
             <section class="band">
               <div class="band-head">
-                <h3>Jobs</h3>
-                <span class="status" id="selectedScanLabel">Select a job to view results</span>
+                <h3>작업</h3>
+                <span class="status" id="selectedScanLabel">작업을 선택하면 결과가 표시됩니다</span>
               </div>
               <div class="toolbar">
-                <input class="compact-input" id="scanJobSearch" aria-label="Search jobs" placeholder="Search ID or target">
-                <select class="compact-select" id="scanJobStatus" aria-label="Filter jobs by status">
-                  <option value="">All statuses</option>
-                  <option value="queued">Queued</option>
-                  <option value="running">Running</option>
-                  <option value="recovering">Recovering</option>
-                  <option value="cancel_requested">Cancel requested</option>
-                  <option value="completed">Completed</option>
-                  <option value="failed">Failed</option>
-                  <option value="cancelled">Cancelled</option>
+                <input class="compact-input" id="scanJobSearch" aria-label="작업 검색" placeholder="ID 또는 대상 검색">
+                <select class="compact-select" id="scanJobStatus" aria-label="상태로 작업 필터">
+                  <option value="">모든 상태</option>
+                  <option value="queued">대기</option>
+                  <option value="running">실행 중</option>
+                  <option value="recovering">복구 중</option>
+                  <option value="cancel_requested">취소 요청됨</option>
+                  <option value="completed">완료</option>
+                  <option value="failed">실패</option>
+                  <option value="cancelled">취소됨</option>
                 </select>
                 <span class="status" id="scanJobCount"></span>
               </div>
               <div class="toolbar">
                 <div class="toolbar-group">
-                  <span class="toolbar-label">Export</span>
-                  <a class="action disabled" id="scanReportLink" rel="noreferrer" aria-disabled="true">Report</a>
+                  <span class="toolbar-label">내보내기</span>
+                  <a class="action disabled" id="scanReportLink" rel="noreferrer" aria-disabled="true">보고서</a>
                   <a class="action disabled" id="scanExportJson" rel="noreferrer" aria-disabled="true">JSON</a>
-                  <a class="action disabled" id="scanExportCsv" rel="noreferrer" aria-disabled="true" title="CSV bundle with attached images">CSV</a>
-                  <a class="action disabled" id="scanExportXlsx" rel="noreferrer" aria-disabled="true" title="Excel workbook with embedded images">Excel</a>
+                  <a class="action disabled" id="scanExportCsv" rel="noreferrer" aria-disabled="true" title="증적 이미지를 포함한 CSV 묶음">CSV</a>
+                  <a class="action disabled" id="scanExportXlsx" rel="noreferrer" aria-disabled="true" title="이미지가 삽입된 Excel 통합 문서">Excel</a>
                   <span class="status" id="scanExportStatus" role="status"></span>
                 </div>
                 <div class="toolbar-group">
-                  <span class="toolbar-label">Job</span>
-                  <button type="button" id="scanCancel" disabled>Cancel</button>
-                  <button class="danger" type="button" id="scanDelete" disabled>Delete</button>
+                  <span class="toolbar-label">작업</span>
+                  <button type="button" id="scanCancel" disabled>취소</button>
+                  <button class="danger" type="button" id="scanDelete" disabled>삭제</button>
                 </div>
               </div>
               <div class="band-body">
-                <div class="selected-summary" id="selectedScanSummary"><div>Select a scan job from the table.</div></div>
+                <div class="selected-summary" id="selectedScanSummary"><div>아래 표에서 스캔 작업을 선택하세요.</div></div>
                 <div class="metrics" id="scanMetrics"></div>
               </div>
               <div class="table-wrap scan-jobs-wrap">
                 <table>
                   <thead>
-                    <tr><th>ID</th><th>Status</th><th>Targets</th><th>Ports</th><th>Total</th><th>Open</th><th>Created</th></tr>
+                    <tr><th>ID</th><th>상태</th><th>대상</th><th>포트</th><th>전체</th><th>open</th><th>생성 시각</th></tr>
                   </thead>
                   <tbody id="scanJobs"></tbody>
                 </table>
@@ -916,27 +898,27 @@
           </div>
           <section class="band" style="margin-top:16px">
             <div class="band-head">
-              <h3>Results</h3>
+              <h3>결과</h3>
               <div class="band-head-tools">
-                <input class="compact-input" id="scanResultSearch" aria-label="Search results" placeholder="Search host, service, banner">
-                <select class="compact-select" id="scanResultPageSize" aria-label="Rows per page" disabled>
-                  <option value="25">25 rows</option>
-                  <option value="50" selected>50 rows</option>
-                  <option value="100">100 rows</option>
-                  <option value="250">250 rows</option>
-                  <option value="500">500 rows</option>
+                <input class="compact-input" id="scanResultSearch" aria-label="결과 검색" placeholder="호스트 · 서비스 · 배너 검색">
+                <select class="compact-select" id="scanResultPageSize" aria-label="페이지당 행 수" disabled>
+                  <option value="25">25행</option>
+                  <option value="50" selected>50행</option>
+                  <option value="100">100행</option>
+                  <option value="250">250행</option>
+                  <option value="500">500행</option>
                 </select>
                 <span class="status" id="resultCount"></span>
               </div>
             </div>
             <div class="result-navigator">
-              <div class="result-host-tabs" id="scanHostTabs" role="tablist" aria-label="Result hosts"></div>
-              <div class="result-state-tabs" id="scanStateTabs" role="tablist" aria-label="Result states"></div>
+              <div class="result-host-tabs" id="scanHostTabs" role="tablist" aria-label="결과 호스트"></div>
+              <div class="result-state-tabs" id="scanStateTabs" role="tablist" aria-label="결과 상태"></div>
             </div>
             <div class="table-wrap scan-results-wrap">
               <table>
                 <thead>
-                  <tr><th>Host</th><th>Port</th><th>Proto</th><th>State</th><th>Service</th><th>Banner</th><th>Evidence</th><th>Tags</th><th>Note</th></tr>
+                  <tr><th>호스트</th><th>포트</th><th>프로토콜</th><th>상태</th><th>서비스</th><th>배너</th><th>증적</th><th>태그</th><th>메모</th></tr>
                 </thead>
                 <tbody id="scanResults"></tbody>
               </table>
@@ -947,106 +929,117 @@
 
         <section class="view" id="view-pcap">
           <div class="view-head">
-            <h2>PCAP</h2>
-            <div class="view-actions"><button type="button" id="pcapRefresh">Refresh</button></div>
+            <div>
+              <h2>PCAP 분석</h2>
+              <p>저장된 pcap/pcapng 파일의 프로토콜·통신 상대·DNS·TLS 정보를 요약합니다.</p>
+            </div>
+            <div class="view-actions"><button type="button" id="pcapRefresh">새로고침</button></div>
           </div>
           <div class="layout-two">
             <section class="band">
-              <div class="band-head"><h3>Analyze File</h3></div>
+              <div class="band-head"><h3>파일 분석</h3></div>
               <div class="band-body">
                 <form id="pcapForm">
                   <div class="form-grid">
                     <div class="field full">
-                      <label for="pcapFile">File</label>
+                      <label for="pcapFile">파일 경로</label>
                       <input id="pcapFile" name="file" required placeholder="capture.pcapng">
                     </div>
                     <div class="field">
-                      <label for="pcapTop">Top</label>
+                      <label for="pcapTop">상위 N개</label>
                       <input id="pcapTop" name="top" type="number" min="1" value="10">
                     </div>
                   </div>
                   <div class="view-actions">
-                    <button class="primary" type="submit">Analyze PCAP</button>
+                    <button class="primary" type="submit">PCAP 분석</button>
                     <span class="status" id="pcapStatus"></span>
                   </div>
                 </form>
               </div>
               <div class="table-wrap">
                 <table>
-                  <thead><tr><th>ID</th><th>File</th><th>Packets</th><th>Created</th></tr></thead>
+                  <thead><tr><th>ID</th><th>파일</th><th>패킷 수</th><th>생성 시각</th></tr></thead>
                   <tbody id="pcapHistory"></tbody>
                 </table>
               </div>
             </section>
             <section class="band">
-              <div class="band-head"><h3>Analysis</h3><span class="status" id="pcapSelected"></span></div>
+              <div class="band-head"><h3>분석 결과</h3><span class="status" id="pcapSelected"></span></div>
               <div class="band-body" id="pcapSummary"></div>
             </section>
           </div>
         </section>
 
         <section class="view" id="view-capture">
-          <div class="view-head"><h2>Live Capture</h2></div>
+          <div class="view-head">
+            <div>
+              <h2>라이브 캡처</h2>
+              <p>시간 또는 패킷 수로 제한된 캡처를 수행합니다. Windows는 Npcap과 관리자 권한이 필요합니다.</p>
+            </div>
+          </div>
           <section class="band">
-            <div class="band-head"><h3>Capture</h3></div>
+            <div class="band-head"><h3>캡처 설정</h3></div>
             <div class="band-body">
               <form id="captureForm">
                 <div class="form-grid">
                   <div class="field full">
-                    <label for="captureOutput">Output</label>
+                    <label for="captureOutput">저장 경로</label>
                     <input id="captureOutput" name="output" required placeholder="capture.pcap">
                   </div>
                   <div class="field">
-                    <label for="captureDuration">Duration s</label>
+                    <label for="captureDuration">지속 시간 (초)</label>
                     <input id="captureDuration" name="duration_s" type="number" min="0.001" step="0.001" placeholder="10">
                   </div>
                   <div class="field">
-                    <label for="captureCount">Packet Count</label>
+                    <label for="captureCount">패킷 수</label>
                     <input id="captureCount" name="count" type="number" min="1" placeholder="100">
                   </div>
                   <div class="field">
-                    <label for="captureIface">Interface</label>
+                    <label for="captureIface">인터페이스</label>
                     <input id="captureIface" name="iface" placeholder="Ethernet">
                   </div>
                   <div class="field">
-                    <label for="captureFilter">BPF Filter</label>
+                    <label for="captureFilter">BPF 필터</label>
                     <input id="captureFilter" name="bpf_filter" placeholder="tcp port 80">
                   </div>
                   <div class="field">
                     <span class="field-label">Options</span>
-                    <label class="check-row"><input name="analyze" type="checkbox" checked>Analyze after capture</label>
+                    <label class="check-row"><input name="analyze" type="checkbox" checked>캡처 후 자동 분석</label>
                   </div>
                   <div class="field">
-                    <span class="field-label">Authorization</span>
-                    <label class="check-row"><input name="confirm_authorized" type="checkbox" required>Confirm authorized</label>
+                    <span class="field-label">권한 확인</span>
+                    <label class="check-row"><input name="confirm_authorized" type="checkbox" required>권한을 확인했습니다</label>
                   </div>
                 </div>
                 <div class="view-actions">
-                  <button class="primary" type="submit">Start Capture</button>
+                  <button class="primary" type="submit">캡처 시작</button>
                   <span class="status" id="captureStatus"></span>
                 </div>
               </form>
             </div>
           </section>
           <section class="band" style="margin-top:16px">
-            <div class="band-head"><h3>Capture Result</h3></div>
+            <div class="band-head"><h3>캡처 결과</h3></div>
             <div class="band-body" id="captureResult"></div>
           </section>
         </section>
 
         <section class="view" id="view-packets">
           <div class="view-head">
-            <h2>Packet Send</h2>
-            <div class="view-actions"><button type="button" id="auditRefresh">Refresh</button></div>
+            <div>
+              <h2>패킷 전송</h2>
+              <p>템플릿 기반 패킷만 전송합니다. 임의 바이트 주입은 지원하지 않습니다.</p>
+            </div>
+            <div class="view-actions"><button type="button" id="auditRefresh">새로고침</button></div>
           </div>
           <div class="layout-two">
             <section class="band">
-              <div class="band-head"><h3>Template</h3></div>
+              <div class="band-head"><h3>템플릿</h3></div>
               <div class="band-body">
                 <form id="packetForm">
                   <div class="form-grid">
                     <div class="field">
-                      <label for="packetTemplate">Template</label>
+                      <label for="packetTemplate">템플릿</label>
                       <select id="packetTemplate" name="template">
                         <option value="icmp">icmp</option>
                         <option value="tcp">tcp</option>
@@ -1056,83 +1049,83 @@
                       </select>
                     </div>
                     <div class="field">
-                      <label for="packetTarget">Target</label>
+                      <label for="packetTarget">대상</label>
                       <input id="packetTarget" name="target" required placeholder="127.0.0.1">
                     </div>
                     <div class="field full">
-                      <label for="packetScope">Scope</label>
+                      <label for="packetScope">승인 범위</label>
                       <input id="packetScope" name="scope" required placeholder="127.0.0.0/8">
                     </div>
                     <div class="field">
-                      <label for="packetCount">Count</label>
+                      <label for="packetCount">전송 횟수</label>
                       <input id="packetCount" name="count" type="number" min="1" max="1000" value="1">
                     </div>
                     <div class="field">
-                      <label for="packetInterval">Interval ms</label>
+                      <label for="packetInterval">전송 간격 (ms)</label>
                       <input id="packetInterval" name="interval_ms" type="number" min="10" value="1000">
                     </div>
                     <div class="field packet-port-fields">
-                      <label for="packetDport">Dport</label>
+                      <label for="packetDport">목적지 포트</label>
                       <input id="packetDport" name="dport" type="number" min="1" max="65535" placeholder="53">
                     </div>
                     <div class="field packet-sport-fields">
-                      <label for="packetSport">Sport</label>
+                      <label for="packetSport">출발지 포트</label>
                       <input id="packetSport" name="sport" type="number" min="1" max="65535">
                     </div>
                     <div class="field template-fields" data-template-fields="tcp">
-                      <label for="packetFlags">Flags</label>
+                      <label for="packetFlags">TCP 플래그</label>
                       <input id="packetFlags" name="flags" value="S">
                     </div>
                     <div class="field template-fields" data-template-fields="dns">
-                      <label for="packetDnsName">DNS Name</label>
+                      <label for="packetDnsName">DNS 질의 이름</label>
                       <input id="packetDnsName" name="dns_name" placeholder="example.com">
                     </div>
                     <div class="field template-fields" data-template-fields="http">
-                      <label for="packetHttpMethod">HTTP Method</label>
+                      <label for="packetHttpMethod">HTTP 메서드</label>
                       <input id="packetHttpMethod" name="http_method" value="GET">
                     </div>
                     <div class="field template-fields" data-template-fields="http">
-                      <label for="packetHttpPath">HTTP Path</label>
+                      <label for="packetHttpPath">HTTP 경로</label>
                       <input id="packetHttpPath" name="http_path" value="/">
                     </div>
                     <div class="field template-fields" data-template-fields="http">
-                      <label for="packetHttpHost">HTTP Host</label>
+                      <label for="packetHttpHost">HTTP Host 헤더</label>
                       <input id="packetHttpHost" name="http_host">
                     </div>
                     <div class="field full">
-                      <label for="packetPayload">Payload Text</label>
+                      <label for="packetPayload">페이로드 (텍스트)</label>
                       <textarea id="packetPayload" name="payload_text"></textarea>
                     </div>
                     <div class="field full">
-                      <label for="packetPayload64">Payload Base64</label>
+                      <label for="packetPayload64">페이로드 (Base64)</label>
                       <input id="packetPayload64" name="payload_base64">
                     </div>
                     <div class="field">
-                      <span class="field-label">Validation</span>
-                      <label class="check-row"><input name="dry_run" type="checkbox" checked>Dry run</label>
+                      <span class="field-label">검증</span>
+                      <label class="check-row"><input name="dry_run" type="checkbox" checked>실제 전송 없이 검증만</label>
                     </div>
                     <div class="field">
-                      <span class="field-label">Authorization</span>
-                      <label class="check-row"><input name="confirm_authorized" type="checkbox" required>Confirm authorized</label>
+                      <span class="field-label">권한 확인</span>
+                      <label class="check-row"><input name="confirm_authorized" type="checkbox" required>권한을 확인했습니다</label>
                     </div>
                   </div>
                   <div class="view-actions">
-                    <button class="primary" type="submit">Send Packet</button>
+                    <button class="primary" type="submit">패킷 전송</button>
                     <span class="status" id="packetStatus"></span>
                   </div>
                 </form>
               </div>
             </section>
             <section class="band">
-              <div class="band-head"><h3>Result</h3></div>
+              <div class="band-head"><h3>전송 결과</h3></div>
               <div class="band-body" id="packetResult"></div>
             </section>
           </div>
           <section class="band" style="margin-top:16px">
-            <div class="band-head"><h3>Audit History</h3></div>
+            <div class="band-head"><h3>전송 이력</h3></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>ID</th><th>Template</th><th>Target</th><th>Sent</th><th>Created</th></tr></thead>
+                <thead><tr><th>ID</th><th>템플릿</th><th>대상</th><th>전송 수</th><th>생성 시각</th></tr></thead>
                 <tbody id="auditHistory"></tbody>
               </table>
             </div>
@@ -1141,49 +1134,52 @@
 
         <section class="view" id="view-oast">
           <div class="view-head">
-            <h2>OAST</h2>
-            <div class="view-actions"><button type="button" id="oastRefresh">Refresh</button></div>
+            <div>
+              <h2>OAST 콜백</h2>
+              <p>인바운드 HTTP 콜백을 기록합니다. 익스플로잇 페이로드는 생성하지 않습니다.</p>
+            </div>
+            <div class="view-actions"><button type="button" id="oastRefresh">새로고침</button></div>
           </div>
           <div class="layout-two">
             <section class="band">
-              <div class="band-head"><h3>HTTP Callback Token</h3></div>
+              <div class="band-head"><h3>HTTP 콜백 토큰</h3></div>
               <div class="band-body">
                 <form id="oastForm">
                   <div class="form-grid">
                     <div class="field">
-                      <label for="oastLabel">Label</label>
+                      <label for="oastLabel">라벨</label>
                       <input id="oastLabel" name="label" placeholder="lab">
                     </div>
                     <div class="field">
-                      <label for="oastTtl">TTL seconds</label>
+                      <label for="oastTtl">유효 시간 (초)</label>
                       <input id="oastTtl" name="ttl_seconds" type="number" min="60" value="3600">
                     </div>
                     <div class="field full">
-                      <label for="oastBaseUrl">Base URL</label>
+                      <label for="oastBaseUrl">기준 URL</label>
                       <input id="oastBaseUrl" name="base_url">
                     </div>
                     <div class="field full">
-                      <label class="check-row"><input name="confirm_authorized" type="checkbox" required>Confirm authorized</label>
+                      <label class="check-row"><input name="confirm_authorized" type="checkbox" required>권한을 확인했습니다</label>
                     </div>
                   </div>
                   <div class="view-actions">
-                    <button class="primary" type="submit">Create Token</button>
+                    <button class="primary" type="submit">토큰 생성</button>
                     <span class="status" id="oastStatus"></span>
                   </div>
                 </form>
               </div>
               <div class="table-wrap">
                 <table>
-                  <thead><tr><th>ID</th><th>Label</th><th>URL</th><th>Expires</th></tr></thead>
+                  <thead><tr><th>ID</th><th>라벨</th><th>URL</th><th>만료</th></tr></thead>
                   <tbody id="oastSessions"></tbody>
                 </table>
               </div>
             </section>
             <section class="band">
-              <div class="band-head"><h3>Interactions</h3><span class="status" id="oastSelected"></span></div>
+              <div class="band-head"><h3>수신 기록</h3><span class="status" id="oastSelected"></span></div>
               <div class="table-wrap">
                 <table>
-                  <thead><tr><th>Time</th><th>Method</th><th>Path</th><th>Remote</th></tr></thead>
+                  <thead><tr><th>시각</th><th>메서드</th><th>경로</th><th>발신지</th></tr></thead>
                   <tbody id="oastInteractions"></tbody>
                 </table>
               </div>
@@ -1193,22 +1189,28 @@
 
         <section class="view" id="view-plugins">
           <div class="view-head">
-            <h2>Plugins</h2>
-            <div class="view-actions"><button type="button" id="pluginsRefresh">Refresh</button></div>
+            <div>
+              <h2>플러그인</h2>
+              <p>포트 프로필과 서비스 지문 규칙을 확장하는 JSON 데이터입니다. 코드는 실행되지 않습니다.</p>
+            </div>
+            <div class="view-actions"><button type="button" id="pluginsRefresh">새로고침</button></div>
           </div>
           <section class="band">
-            <div class="band-head"><h3>Catalog</h3></div>
+            <div class="band-head"><h3>카탈로그</h3></div>
             <div class="band-body" id="pluginsSummary"></div>
           </section>
         </section>
 
         <section class="view" id="view-diagnostics">
           <div class="view-head">
-            <h2>Diagnostics</h2>
-            <div class="view-actions"><button type="button" id="diagnosticsRefresh">Refresh</button></div>
+            <div>
+              <h2>진단</h2>
+              <p>엔진·패킷 드라이버·권한 등 실행 환경 상태입니다.</p>
+            </div>
+            <div class="view-actions"><button type="button" id="diagnosticsRefresh">새로고침</button></div>
           </div>
           <section class="band">
-            <div class="band-head"><h3>Runtime Diagnostics</h3></div>
+            <div class="band-head"><h3>실행 환경 진단</h3></div>
             <div class="kv" id="diagnosticsTable"></div>
           </section>
         </section>
@@ -1219,10 +1221,10 @@
   <div class="viewer" id="viewer" hidden role="dialog" aria-modal="true" aria-labelledby="viewerTitle">
     <div class="viewer-panel">
       <div class="viewer-head">
-        <strong id="viewerTitle">Preview</strong>
+        <strong id="viewerTitle">미리보기</strong>
         <span class="status" id="viewerStatus"></span>
-        <button type="button" id="viewerSave" hidden>Save</button>
-        <button type="button" id="viewerClose" aria-label="Close preview">Close</button>
+        <button type="button" id="viewerSave" hidden>저장</button>
+        <button type="button" id="viewerClose" aria-label="미리보기 닫기">닫기</button>
       </div>
       <div class="viewer-body" id="viewerBody"></div>
     </div>
@@ -1428,7 +1430,7 @@
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([name, ports]) => `<option value="${escapeHtml(name)}">${escapeHtml(name)} (${Array.isArray(ports) ? ports.length : 0})</option>`)
         .join('');
-      select.innerHTML = `<option value="">Configured profile...</option>${options}`;
+      select.innerHTML = `<option value="">설정된 프로필...</option>${options}`;
       if (Object.prototype.hasOwnProperty.call(profiles, selected)) select.value = selected;
     }
 
@@ -1465,7 +1467,7 @@
       $('scanTopPorts').value = '';
       $('scanProfile').value = '';
       $('scanProtocol').value = 'tcp';
-      setStatus('scanProfileStatus', `${profile.name}: ${profile.count} ports loaded`);
+      setStatus('scanProfileStatus', `${profile.name}: 포트 ${profile.count}개 적용됨`);
       renderCustomPortProfiles();
       updateScanPreview();
     }
@@ -1479,7 +1481,7 @@
         $('scanPorts').value = '';
       }
       const saved = saveCustomPortProfiles();
-      setStatus('scanProfileStatus', saved ? `${profile.name} removed` : `${profile.name} removed for this session only`, !saved);
+      setStatus('scanProfileStatus', saved ? `${profile.name} 삭제됨` : `${profile.name} 은(는) 이번 세션에서만 삭제됨`, !saved);
       renderCustomPortProfiles();
       updateScanPreview();
     }
@@ -1520,10 +1522,10 @@
     function openViewer(title, save = null) {
       closeViewer();
       $('viewerTitle').textContent = title;
-      $('viewerStatus').textContent = 'loading...';
+      $('viewerStatus').textContent = '불러오는 중...';
       const saveButton = $('viewerSave');
       saveButton.hidden = !save;
-      saveButton.textContent = save ? `Save ${save.name}` : 'Save';
+      saveButton.textContent = save ? `${save.name} 저장` : '저장';
       viewerSaveTarget = save;
       $('viewer').hidden = false;
     }
@@ -1536,7 +1538,7 @@
           const parsed = JSON.parse(detail);
           detail = parsed.detail?.error || parsed.detail || detail;
         } catch (_) {}
-        throw new Error(text(detail) || `request failed with status ${response.status}`);
+        throw new Error(text(detail) || `요청 실패 (HTTP ${response.status})`);
       }
       return response.blob();
     }
@@ -1561,7 +1563,7 @@
       const image = document.createElement('img');
       image.alt = title;
       image.onload = () => { $('viewerStatus').textContent = ''; };
-      image.onerror = () => { $('viewerStatus').textContent = 'could not load the evidence image'; };
+      image.onerror = () => { $('viewerStatus').textContent = '증적 이미지를 불러오지 못했습니다'; };
       image.src = path;
       $('viewerBody').replaceChildren(image);
     }
@@ -1586,10 +1588,10 @@
           const block = document.createElement('pre');
           block.className = 'viewer-text';
           block.textContent = body;
-          note.textContent = `${formatBytes(blob.size)} preview`;
+          note.textContent = `미리보기 ${formatBytes(blob.size)}`;
           $('viewerBody').replaceChildren(note, block);
         } else {
-          note.textContent = `${title} ready: ${formatBytes(blob.size)}. This format cannot be previewed here - use Save.`;
+          note.textContent = `${title} 준비됨 · ${formatBytes(blob.size)}. 이 형식은 미리보기가 불가능하니 저장을 사용하세요.`;
           $('viewerBody').replaceChildren(note);
         }
         $('viewerStatus').textContent = '';
@@ -1599,7 +1601,7 @@
     }
 
     async function downloadFile(path, fallbackName, statusId) {
-      if (statusId) setStatus(statusId, 'preparing download...');
+      if (statusId) setStatus(statusId, '파일 준비 중...');
       try {
         const blob = await fetchBlob(path);
         const url = URL.createObjectURL(blob);
@@ -1611,7 +1613,7 @@
         link.remove();
         // Revoke late: the webview reads the blob after the click returns.
         setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        if (statusId) setStatus(statusId, `saved ${fallbackName}`);
+        if (statusId) setStatus(statusId, `${fallbackName} 저장됨`);
       } catch (err) {
         if (statusId) setStatus(statusId, err.message, true);
       }
@@ -1632,7 +1634,7 @@
       state.view = view;
       document.querySelectorAll('.view').forEach((node) => node.classList.toggle('active', node.id === `view-${view}`));
       document.querySelectorAll('[data-view-target]').forEach((node) => node.classList.toggle('active', node.dataset.viewTarget === view));
-      const title = document.querySelector(`[data-view-target="${view}"]`)?.textContent || 'Overview';
+      const title = document.querySelector(`[data-view-target="${view}"]`)?.textContent || '개요';
       $('viewTitle').textContent = title;
       if (view === 'overview') refreshOverview();
       if (view === 'scans') refreshScans();
@@ -1650,12 +1652,13 @@
       const driverOk = Boolean(diagnostics.packet_driver_available);
       const rawOk = Boolean(diagnostics.raw_socket_privileged);
       $('topStatus').innerHTML = [
-        pill('API', health.status === 'ok' ? 'ok' : 'warn'),
-        pill(engineOk ? 'Engine ready' : 'Engine missing', engineOk ? 'ok' : 'warn'),
-        pill(driverOk ? text(diagnostics.packet_driver || 'Driver ready') : 'Driver missing', driverOk ? 'ok' : 'warn'),
-        pill(rawOk ? 'Raw privileged' : 'Raw limited', rawOk ? 'ok' : 'warn')
+        pill(health.status === 'ok' ? 'API 정상' : 'API 주의', health.status === 'ok' ? 'ok' : 'warn'),
+        pill(engineOk ? '엔진 준비됨' : '엔진 없음', engineOk ? 'ok' : 'warn'),
+        pill(driverOk ? text(diagnostics.packet_driver || '드라이버 준비됨') : '패킷 드라이버 없음', driverOk ? 'ok' : 'warn'),
+        pill(rawOk ? 'raw 소켓 권한 있음' : 'raw 소켓 제한됨', rawOk ? 'ok' : 'warn')
       ].join('');
-      $('dbPath').textContent = health.db ? `db ${health.db}` : 'db unavailable';
+      $('dbPath').textContent = health.db ? `데이터베이스
+${health.db}` : '데이터베이스 없음';
     }
 
     function pill(label, tone = '') {
@@ -1689,10 +1692,10 @@
       const openPorts = state.scans.reduce((sum, job) => sum + Number(job.summary?.open || 0), 0);
       const pcapCount = state.pcaps.length;
       $('overviewMetrics').innerHTML = [
-        metric('Scan Jobs', totalScans),
-        metric('Active Jobs', running),
-        metric('Open Results', openPorts),
-        metric('PCAP Analyses', pcapCount)
+        metric('스캔 작업', totalScans),
+        metric('진행 중', running),
+        metric('open 포트', openPorts),
+        metric('PCAP 분석', pcapCount)
       ].join('');
     }
 
@@ -1709,7 +1712,7 @@
           <td>${compactPortsHtml(job.ports, 3)}</td>
           <td>${escapeHtml(job.summary?.open || 0)}</td>
         </tr>
-      `).join('') || `<tr><td colspan="5" class="empty">No scan jobs</td></tr>`;
+      `).join('') || `<tr><td colspan="5" class="empty">스캔 작업이 없습니다</td></tr>`;
       document.querySelectorAll('[data-scan-row]').forEach((node) => {
         node.addEventListener('click', async () => {
           await selectScan(node.dataset.scanRow);
@@ -1721,12 +1724,12 @@
     function renderOverviewRuntime() {
       const diagnostics = state.health?.diagnostics || {};
       $('overviewRuntime').innerHTML = kvRows({
-        version: diagnostics.app_version || state.health?.app_version || '',
-        platform: diagnostics.platform || '',
-        engine: diagnostics.rust_engine_version || 'unavailable',
-        scapy: diagnostics.scapy_available ? 'available' : 'unavailable',
-        packet_driver: diagnostics.packet_driver || '',
-        raw_socket: diagnostics.raw_socket_privileged ? 'privileged' : 'limited'
+        버전: diagnostics.app_version || state.health?.app_version || '',
+        플랫폼: diagnostics.platform || '',
+        엔진: diagnostics.rust_engine_version || '없음',
+        scapy: diagnostics.scapy_available ? '사용 가능' : '없음',
+        '패킷 드라이버': diagnostics.packet_driver || '',
+        'raw 소켓': diagnostics.raw_socket_privileged ? '권한 있음' : '제한됨'
       });
     }
 
@@ -1740,7 +1743,7 @@
           state.scanResultState = '';
           state.scanResultPage = 1;
           state.scanResultPayload = {results: [], total: 0, hosts: []};
-          $('selectedScanLabel').textContent = 'Select a job to view results';
+          $('selectedScanLabel').textContent = '작업을 선택하면 결과가 표시됩니다';
         }
         if (render) {
           renderScanJobs();
@@ -1764,7 +1767,7 @@
         return [job.id, job.targets, job.ports, job.status]
           .some((value) => text(value).toLowerCase().includes(query));
       });
-      $('scanJobCount').textContent = `${jobs.length} of ${state.scans.length}`;
+      $('scanJobCount').textContent = `${state.scans.length}건 중 ${jobs.length}건`;
       const emptyMessage = state.scans.length ? 'No matching scan jobs' : 'No scan jobs yet. Start a scan from the form.';
       $('scanJobs').innerHTML = jobs.map((job) => `
         <tr class="clickable ${job.id === state.scanId ? 'selected' : ''}" data-scan-row="${escapeHtml(job.id)}">
@@ -1790,7 +1793,7 @@
       const job = selectedScanJob();
       if (!job) {
         $('selectedScanLabel').style.color = '';
-        $('selectedScanLabel').textContent = 'Select a job to view results';
+        $('selectedScanLabel').textContent = '작업을 선택하면 결과가 표시됩니다';
         $('selectedScanSummary').innerHTML = '<div>Select a scan job from the table.</div>';
         $('scanMetrics').innerHTML = '';
         return;
@@ -1862,13 +1865,13 @@
       const exportPreview = (extension, kind) => (link) => previewExport(
         link.dataset.previewHref || link.getAttribute('href'),
         {
-          title: `Export ${extension.toUpperCase()}`,
+          title: `${extension.toUpperCase()} 내보내기`,
           kind,
           save: {url: link.getAttribute('href'), name: exportFileName(state.scanId, extension)},
         },
       );
       const actions = {
-        scanReportLink: (link) => viewDocument(link.getAttribute('href'), 'Scan report'),
+        scanReportLink: (link) => viewDocument(link.getAttribute('href'), '스캔 보고서'),
         scanExportJson: exportPreview('json', 'text'),
         scanExportCsv: exportPreview('zip', 'text'),
         scanExportXlsx: exportPreview('xlsx', 'binary'),
@@ -1888,7 +1891,7 @@
       const active = Boolean(job && ['queued', 'running', 'recovering', 'cancel_requested'].includes(job.status));
       const engineAvailable = Boolean(state.health?.rust_engine_available ?? state.health?.diagnostics?.rust_engine_available);
       $('scanSubmit').disabled = !engineAvailable;
-      $('scanSubmit').textContent = engineAvailable ? 'Start Scan' : 'Rust Engine Unavailable';
+      $('scanSubmit').textContent = engineAvailable ? '스캔 시작' : 'Rust 엔진 없음';
       $('scanCancel').disabled = !job || !active || job.status === 'cancel_requested';
       $('scanDelete').disabled = !job || active;
       $('scanResultSearch').disabled = !job;
@@ -1904,10 +1907,10 @@
       const progress = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/progress`);
       const states = progress.states || {};
       $('scanMetrics').innerHTML = [
-        metric('Progress', `${progress.percent || 0}%`),
-        metric('Completed', progress.completed_results || 0),
-        metric('Planned', progress.planned_total || 0),
-        metric('Open', states.open || 0)
+        metric('진행률', `${progress.percent || 0}%`),
+        metric('완료', progress.completed_results || 0),
+        metric('계획', progress.planned_total || 0),
+        metric('open', states.open || 0)
       ].join('');
     }
 
@@ -1945,7 +1948,7 @@
         updateScanLinks();
       } catch (err) {
         $('scanResults').innerHTML = `<tr><td colspan="9" class="empty">${escapeHtml(err.message)}</td></tr>`;
-        $('resultCount').textContent = 'Unable to load results';
+        $('resultCount').textContent = '결과를 불러오지 못했습니다';
         $('scanResultPagination').innerHTML = '';
       }
     }
@@ -2065,7 +2068,7 @@
 
     function renderScanResults() {
       if (!state.scanId) {
-        $('scanResults').innerHTML = `<tr><td colspan="9" class="empty">Select a scan job to view results</td></tr>`;
+        $('scanResults').innerHTML = `<tr><td colspan="9" class="empty">스캔 작업을 선택하면 결과가 표시됩니다</td></tr>`;
         $('scanHostTabs').innerHTML = '';
         $('scanStateTabs').innerHTML = '';
         $('scanResultPagination').innerHTML = '';
@@ -2074,7 +2077,7 @@
       }
       const payload = state.scanResultPayload || {results: [], total: 0, hosts: []};
       const results = payload.results || [];
-      $('resultCount').textContent = `${payload.total || 0} matching results`;
+      $('resultCount').textContent = `조건에 맞는 결과 ${payload.total || 0}건`;
       renderResultTabs(payload);
       renderResultPagination(payload);
       $('scanResults').innerHTML = results.map((result) => {
@@ -2102,13 +2105,13 @@
           <td>${escapeHtml(tags)}</td>
           <td>${escapeHtml(result.note || '')}</td>
         </tr>`;
-      }).join('') || `<tr><td colspan="9" class="empty">No results</td></tr>`;
+      }).join('') || `<tr><td colspan="9" class="empty">결과가 없습니다</td></tr>`;
       document.querySelectorAll('[data-evidence-target]').forEach((input) => {
         input.addEventListener('change', async () => {
           const file = input.files?.[0];
           if (!file) return;
           try {
-            $('resultCount').textContent = `uploading ${file.name}`;
+            $('resultCount').textContent = `${file.name} 업로드 중`;
             await api(`/v1/scans/${input.dataset.evidenceTarget}/evidence?filename=${encodeURIComponent(file.name)}`, {
               method: 'POST',
               headers: {'Content-Type': file.type || 'application/octet-stream'},
@@ -2124,9 +2127,9 @@
         button.addEventListener('click', async () => {
           const evidenceId = button.dataset.evidenceDelete;
           const evidenceName = button.dataset.evidenceName || 'evidence';
-          if (!evidenceId || !window.confirm(`Delete ${evidenceName}?`)) return;
+          if (!evidenceId || !window.confirm(`${evidenceName} 을(를) 삭제할까요?`)) return;
           try {
-            $('resultCount').textContent = `deleting ${evidenceName}`;
+            $('resultCount').textContent = `${evidenceName} 삭제 중`;
             await api(`/v1/evidence/${encodeURIComponent(evidenceId)}`, {method: 'DELETE'});
             await refreshScanResults();
           } catch (err) {
@@ -2161,7 +2164,7 @@
           <td>${escapeHtml(summary.packet_count || 0)}</td>
           <td>${escapeHtml(analysis.created_at || '')}</td>
         </tr>`;
-      }).join('') || `<tr><td colspan="4" class="empty">No analyses</td></tr>`;
+      }).join('') || `<tr><td colspan="4" class="empty">분석 기록이 없습니다</td></tr>`;
       document.querySelectorAll('[data-pcap-id]').forEach((node) => node.addEventListener('click', () => selectPcap(node.dataset.pcapId)));
     }
 
@@ -2176,10 +2179,10 @@
     function renderPcapSummary(summary) {
       $('pcapSummary').innerHTML = `
         <div class="metrics">
-          ${metric('Packets', summary.packet_count || 0)}
-          ${metric('Protocols', Object.keys(summary.protocols || {}).length)}
-          ${metric('DNS Queries', (summary.dns_queries || []).length)}
-          ${metric('TLS Entries', (summary.tls_metadata || []).length)}
+          ${metric('패킷 수', summary.packet_count || 0)}
+          ${metric('프로토콜', Object.keys(summary.protocols || {}).length)}
+          ${metric('DNS 질의', (summary.dns_queries || []).length)}
+          ${metric('TLS 항목', (summary.tls_metadata || []).length)}
         </div>
         <div style="height:12px"></div>
         <pre class="json-block">${prettyJson({
@@ -2218,7 +2221,7 @@
           <td>${escapeHtml(result.sent ?? '')}</td>
           <td>${escapeHtml(audit.created_at || '')}</td>
         </tr>`;
-      }).join('') || `<tr><td colspan="5" class="empty">No audits</td></tr>`;
+      }).join('') || `<tr><td colspan="5" class="empty">전송 이력이 없습니다</td></tr>`;
     }
 
     async function refreshOast(render = true) {
@@ -2239,7 +2242,7 @@
           <td class="mono">${escapeHtml(session.callback_url || '')}</td>
           <td>${escapeHtml(session.expires_at || '')}</td>
         </tr>
-      `).join('') || `<tr><td colspan="4" class="empty">No sessions</td></tr>`;
+      `).join('') || `<tr><td colspan="4" class="empty">세션이 없습니다</td></tr>`;
       document.querySelectorAll('[data-oast-id]').forEach((node) => node.addEventListener('click', () => selectOast(node.dataset.oastId)));
     }
 
@@ -2255,7 +2258,7 @@
           <td class="mono">${escapeHtml(item.path || '')}</td>
           <td>${escapeHtml(item.remote_addr || '')}</td>
         </tr>
-      `).join('') || `<tr><td colspan="4" class="empty">No interactions</td></tr>`;
+      `).join('') || `<tr><td colspan="4" class="empty">수신 기록이 없습니다</td></tr>`;
     }
 
     async function refreshPlugins() {
@@ -2266,10 +2269,10 @@
     function renderPlugins(plugins) {
       $('pluginsSummary').innerHTML = `
         <div class="metrics">
-          ${metric('Plugins', plugins.count || 0)}
-          ${metric('Port Profiles', Object.keys(plugins.port_profiles || {}).length)}
-          ${metric('TCP Services', Object.keys(plugins.tcp_services || {}).length)}
-          ${metric('UDP Services', Object.keys(plugins.udp_services || {}).length)}
+          ${metric('플러그인', plugins.count || 0)}
+          ${metric('포트 프로필', Object.keys(plugins.port_profiles || {}).length)}
+          ${metric('TCP 서비스', Object.keys(plugins.tcp_services || {}).length)}
+          ${metric('UDP 서비스', Object.keys(plugins.udp_services || {}).length)}
         </div>
         <div style="height:12px"></div>
         <pre class="json-block">${prettyJson(plugins)}</pre>`;
@@ -2322,7 +2325,7 @@
             : 'default port configuration';
       if (!targets.length) {
         $('scanPreview').classList.remove('warn');
-        $('scanPreview').textContent = 'Add at least one target to preview this scan.';
+        $('scanPreview').textContent = '대상을 하나 이상 입력하면 예상 작업량을 보여줍니다.';
         return;
       }
       let workload = '';
@@ -2347,14 +2350,14 @@
       const formElement = event.currentTarget;
       const submit = $('scanSubmit');
       if (!state.health?.rust_engine_available) {
-        setStatus('scanStatus', 'Rust scan engine is unavailable', true);
+        setStatus('scanStatus', 'Rust 스캔 엔진을 사용할 수 없습니다', true);
         return;
       }
       const form = new FormData(formElement);
       const scopeFromTargets = form.get('scope_from_targets') === 'on';
       const scopeValues = scopeFromTargets ? scopeListFromTargets(form.get('targets')) : asList(form.get('scope'));
       if (!scopeValues.length) {
-        setStatus('scanStatus', 'authorized scope is required', true);
+        setStatus('scanStatus', '승인 범위를 지정해야 합니다', true);
         return;
       }
       if (scopeFromTargets) $('scanScope').value = scopeValues.join(', ');
@@ -2379,10 +2382,10 @@
       };
       try {
         submit.disabled = true;
-        submit.textContent = 'Starting...';
-        setStatus('scanStatus', 'starting');
+        submit.textContent = '시작 중...';
+        setStatus('scanStatus', '시작하는 중');
         const created = await api('/v1/scans', {method: 'POST', body: JSON.stringify(body)});
-        setStatus('scanStatus', `started ${shortId(created.scan_id)}`);
+        setStatus('scanStatus', `${shortId(created.scan_id)} 시작됨`);
         formElement.elements.confirm_authorized.checked = false;
         await refreshScans();
         await selectScan(created.scan_id);
@@ -2397,7 +2400,7 @@
       event.preventDefault();
       const form = new FormData(event.currentTarget);
       try {
-        setStatus('pcapStatus', 'analyzing');
+        setStatus('pcapStatus', '분석 중');
         const payload = await api('/v1/pcaps/analyze', {method: 'POST', body: JSON.stringify({file: form.get('file'), top: Number(form.get('top') || 10)})});
         setStatus('pcapStatus', payload.analysis_id);
         await refreshPcaps();
@@ -2420,9 +2423,9 @@
         analyze: form.get('analyze') === 'on'
       };
       try {
-        setStatus('captureStatus', 'capturing');
+        setStatus('captureStatus', '캡처 중');
         const payload = await api('/v1/captures/live', {method: 'POST', body: JSON.stringify(body)});
-        setStatus('captureStatus', 'complete');
+        setStatus('captureStatus', '완료');
         $('captureResult').innerHTML = `<pre class="json-block">${prettyJson(payload)}</pre>`;
         await refreshPcaps(false);
       } catch (err) {
@@ -2452,7 +2455,7 @@
         dry_run: form.get('dry_run') === 'on'
       };
       try {
-        setStatus('packetStatus', 'sending');
+        setStatus('packetStatus', '전송 중');
         const payload = await api('/v1/packets/send', {method: 'POST', body: JSON.stringify(body)});
         setStatus('packetStatus', payload.audit_id);
         $('packetResult').innerHTML = `<pre class="json-block">${prettyJson(payload)}</pre>`;
@@ -2472,7 +2475,7 @@
         confirm_authorized: form.get('confirm_authorized') === 'on'
       };
       try {
-        setStatus('oastStatus', 'creating');
+        setStatus('oastStatus', '생성 중');
         const payload = await api('/v1/oast/sessions', {method: 'POST', body: JSON.stringify(body)});
         setStatus('oastStatus', payload.callback_url);
         await refreshOast();
@@ -2516,9 +2519,9 @@
     $('scanCancel').addEventListener('click', async () => {
       const job = selectedScanJob();
       if (!job || !['queued', 'running', 'recovering'].includes(job.status)) return;
-      if (!window.confirm(`Cancel scan ${shortId(job.id)}?`)) return;
+      if (!window.confirm(`스캔 ${shortId(job.id)} 을(를) 취소할까요?`)) return;
       try {
-        setStatus('selectedScanLabel', `cancelling ${shortId(job.id)}`);
+        setStatus('selectedScanLabel', `${shortId(job.id)} 취소 중`);
         await api(`/v1/scans/${encodeURIComponent(job.id)}/cancel`, {method: 'POST'});
         await refreshScans();
         await refreshScanProgress();
@@ -2530,10 +2533,10 @@
       const job = selectedScanJob();
       if (!job) return;
       if (['queued', 'running', 'recovering', 'cancel_requested'].includes(job.status)) {
-        window.alert('Cancel the running scan before deleting it.');
+        window.alert('실행 중인 스캔은 먼저 취소한 뒤 삭제하세요.');
         return;
       }
-      const warning = `Delete scan ${shortId(job.id)} and all of its results and evidence images? This cannot be undone.`;
+      const warning = `스캔 ${shortId(job.id)} 과(와) 모든 결과·증적 이미지를 삭제할까요? 되돌릴 수 없습니다.`;
       if (!window.confirm(warning)) return;
       try {
         await api(`/v1/scans/${encodeURIComponent(job.id)}`, {method: 'DELETE'});
@@ -2544,7 +2547,7 @@
         state.scanResultPage = 1;
         state.scanResultPayload = {results: [], total: 0, hosts: []};
         $('scanResultSearch').value = '';
-        $('selectedScanLabel').textContent = 'Select a job to view results';
+        $('selectedScanLabel').textContent = '작업을 선택하면 결과가 표시됩니다';
         await refreshScans();
         renderScanResults();
         updateScanActionState();
@@ -2565,7 +2568,7 @@
         $('scanTopPorts').value = '';
         $('scanProfile').value = '';
         $('scanProtocol').value = 'tcp';
-        setStatus('scanProfileStatus', `${button.textContent.trim()} preset selected`);
+        setStatus('scanProfileStatus', `${button.textContent.trim()} 프리셋 선택됨`);
         renderCustomPortProfiles();
         updateScanPreview();
       });
@@ -2591,7 +2594,7 @@
       if ($('scanProfile').value.trim()) {
         $('scanPorts').value = '';
         $('scanTopPorts').value = '';
-        setStatus('scanProfileStatus', `${$('scanProfile').value} configured profile selected`);
+        setStatus('scanProfileStatus', `${$('scanProfile').value} 프로필 선택됨`);
       }
       renderCustomPortProfiles();
     });
@@ -2648,7 +2651,7 @@
       state.activeCustomPortProfile = null;
       $('scanAdvanced').open = false;
       setStatus('scanStatus', '');
-      setStatus('scanProfileStatus', 'TXT supports comma-separated ports, ranges, and # comments.');
+      setStatus('scanProfileStatus', 'TXT는 쉼표로 구분한 포트, 범위, # 주석을 지원합니다.');
       renderCustomPortProfiles();
       updateScanScopeMode();
     });
