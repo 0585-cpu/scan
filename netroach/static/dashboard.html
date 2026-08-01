@@ -979,8 +979,10 @@
                 <button type="button" data-result-tab="log">로그</button>
                 <span class="result-progress" id="scanResultMetrics"></span>
               </div>
-              <button type="button" class="new-results" id="scanNewResults" hidden>새 결과 ↓</button>
-              <div class="host-rows" id="scanHostRows"></div>
+              <div class="host-rows" id="scanHostRows">
+                <button type="button" class="new-results" id="scanNewResults" hidden>새 결과 ↓</button>
+                <div id="scanHostRowsList"></div>
+              </div>
               <div id="scanPortsTab" hidden>
             <div class="result-navigator">
               <div class="result-host-tabs" id="scanHostTabs" role="tablist" aria-label="결과 호스트"></div>
@@ -1348,6 +1350,7 @@
       scanResultPayload: {results: [], total: 0, hosts: []},
       resultTab: 'hosts',
       autoScroll: true,
+      newResultCount: 0,
       scanPresets: [],
       activePresetId: null,
       presetDirty: false,
@@ -2435,12 +2438,22 @@ ${health.db}` : '데이터베이스 없음';
       return rows.sort((a, b) => (b.open.length ? 1 : 0) - (a.open.length ? 1 : 0));
     }
 
+    // The button lives inside the #scanHostRows scroller (not beside it) so
+    // its position: sticky actually has a scrolling ancestor to stick within.
+    function updateNewResultsButton() {
+      const button = $('scanNewResults');
+      button.hidden = state.resultTab !== 'hosts' || state.autoScroll;
+      button.textContent = state.autoScroll ? '새 결과 ↓' : `새 결과 ${state.newResultCount.toLocaleString()}건 ↓`;
+    }
+
     function renderHostRows() {
-      const container = $('scanHostRows');
+      const scroller = $('scanHostRows');
+      const container = $('scanHostRowsList');
       if (!state.scanId) {
         container.innerHTML = `<div class="empty">스캔 작업을 선택하면 결과가 표시됩니다</div>`;
         $('scanResultMetrics').textContent = '';
-        $('scanNewResults').hidden = true;
+        state.newResultCount = 0;
+        updateNewResultsButton();
         return;
       }
       const payload = state.scanResultPayload || {results: [], total: 0, hosts: []};
@@ -2451,6 +2464,7 @@ ${health.db}` : '데이터베이스 없음';
         : `${total.toLocaleString()}행`;
       const rows = groupResultsByHost(payload.results).slice(0, HOST_ROW_RENDER_LIMIT);
       const seen = new Set();
+      let newlyCreated = 0;
       rows.forEach((entry) => {
         const id = hostRowId(entry.host);
         seen.add(id);
@@ -2462,6 +2476,7 @@ ${health.db}` : '데이터베이스 없음';
           node.id = id;
           node.className = 'host-row';
           container.appendChild(node);
+          newlyCreated += 1;
         }
         const html = `<span class="host-name">${escapeHtml(entry.host)}</span><span class="host-open">${escapeHtml(openText)}</span><span class="host-state">${escapeHtml(stateText)}</span>`;
         // Replace only what changed: a full redraw at 700ms would fight the
@@ -2491,19 +2506,26 @@ ${health.db}` : '데이터베이스 없음';
       [...container.children].forEach((node) => {
         if (!seen.has(node.id)) node.remove();
       });
-      if (state.autoScroll) container.scrollTop = container.scrollHeight;
-      $('scanNewResults').hidden = state.autoScroll;
+      if (state.autoScroll) {
+        scroller.scrollTop = scroller.scrollHeight;
+        state.newResultCount = 0;
+      } else {
+        state.newResultCount += newlyCreated;
+      }
+      updateNewResultsButton();
     }
 
     $('scanHostRows').addEventListener('scroll', (event) => {
       const node = event.currentTarget;
       state.autoScroll = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
-      $('scanNewResults').hidden = state.autoScroll;
+      if (state.autoScroll) state.newResultCount = 0;
+      updateNewResultsButton();
     });
     $('scanNewResults').addEventListener('click', () => {
       state.autoScroll = true;
+      state.newResultCount = 0;
       $('scanHostRows').scrollTop = $('scanHostRows').scrollHeight;
-      $('scanNewResults').hidden = true;
+      updateNewResultsButton();
     });
 
     document.querySelectorAll('[data-result-tab]').forEach((node) => {
@@ -2516,7 +2538,7 @@ ${health.db}` : '데이터베이스 없음';
 
     function renderScanResults() {
       $('scanHostRows').hidden = state.resultTab !== 'hosts';
-      $('scanNewResults').hidden = state.resultTab !== 'hosts' || state.autoScroll;
+      updateNewResultsButton();
       $('scanPortsTab').hidden = state.resultTab !== 'ports';
       $('scanLogTab').hidden = state.resultTab !== 'log';
       if (state.resultTab === 'hosts') {
