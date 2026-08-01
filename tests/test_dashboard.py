@@ -190,5 +190,40 @@ class DashboardEstimateTests(unittest.TestCase):
         self.assertIn("renderScanEstimate()", body)
 
 
+class DashboardResultPaneTests(unittest.TestCase):
+    def test_scan_screen_is_a_command_pane_and_a_result_pane(self):
+        html = dashboard_html()
+
+        self.assertIn('class="scan-shell"', html)
+        self.assertIn('class="command-pane"', html)
+        self.assertIn('class="result-pane"', html)
+
+    def test_host_rows_are_grouped_and_open_hosts_come_first(self):
+        html = dashboard_html()
+
+        self.assertIn("function groupResultsByHost(", html)
+        self.assertIn("function renderHostRows(", html)
+        self.assertIn('id="scanHostRows"', html)
+        body = html.split("function groupResultsByHost(", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("sort(", body)
+
+    def test_result_tabs_exist(self):
+        html = dashboard_html()
+
+        for tab in ("data-result-tab=\"hosts\"", "data-result-tab=\"ports\"", "data-result-tab=\"log\""):
+            self.assertIn(tab, html)
+
+    def test_scrolling_up_pins_the_list(self):
+        html = dashboard_html()
+
+        self.assertIn('id="scanNewResults"', html)
+        self.assertIn("state.autoScroll", html)
+
+    def test_offscreen_rows_are_not_rendered_for_large_scans(self):
+        html = dashboard_html()
+
+        self.assertIn("HOST_ROW_RENDER_LIMIT", html)
+
+
 if __name__ == "__main__":
     unittest.main()
