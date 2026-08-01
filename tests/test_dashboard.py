@@ -224,6 +224,24 @@ class DashboardResultPaneTests(unittest.TestCase):
 
         self.assertIn("HOST_ROW_RENDER_LIMIT", html)
 
+    def test_new_results_button_lives_inside_the_scroll_container(self):
+        """position: sticky is inert unless the button is a descendant of the
+        element that actually scrolls (#scanHostRows)."""
+        html = dashboard_html()
+
+        host_rows_open = html.index('<div class="host-rows" id="scanHostRows">')
+        host_rows_close = html.index("</div>", html.index('id="scanHostRowsList"'))
+        button_index = html.index('id="scanNewResults"')
+        self.assertTrue(host_rows_open < button_index < host_rows_close)
+
+    def test_new_results_button_shows_a_count(self):
+        html = dashboard_html()
+
+        self.assertIn("function updateNewResultsButton(", html)
+        self.assertIn("state.newResultCount", html)
+        body = html.split("function updateNewResultsButton(", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("건", body)
+
 
 class DashboardShortcutTests(unittest.TestCase):
     def test_shortcut_handler_and_help_overlay_exist(self):
@@ -245,6 +263,15 @@ class DashboardShortcutTests(unittest.TestCase):
         body = html.split("function handleShortcut(", 1)[1].split("\n    }\n", 1)[0]
 
         self.assertIn("isTypingTarget(", body)
+
+    def test_ctrl_enter_is_scoped_to_the_scan_view(self):
+        """Ctrl+Enter must not submit the scan form from PCAP/packet/OAST
+        views, where the form isn't even visible."""
+        html = dashboard_html()
+        body = html.split("function handleShortcut(", 1)[1].split("\n    }\n", 1)[0]
+        ctrl_enter_block = body.split("event.ctrlKey && event.key === 'Enter'", 1)[1][:120]
+
+        self.assertIn("state.view !== 'scans'", ctrl_enter_block)
 
 
 class DashboardSelfContainmentTests(unittest.TestCase):
