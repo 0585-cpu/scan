@@ -69,5 +69,32 @@ class DashboardVisualLanguageTests(unittest.TestCase):
         self.assertIn('data-view-target="scans"', html)
 
 
+class DashboardProgressStripTests(unittest.TestCase):
+    def test_strip_markup_and_renderer_exist(self):
+        html = dashboard_html()
+
+        self.assertIn('id="progressStrip"', html)
+        self.assertIn("function renderProgressStrip(", html)
+        self.assertIn("async function refreshRunningProgress(", html)
+
+    def test_strip_shows_the_counts_an_operator_watches(self):
+        html = dashboard_html()
+
+        self.assertIn('id="stripTarget"', html)
+        self.assertIn('id="stripPercent"', html)
+        self.assertIn('id="stripCounts"', html)
+        self.assertIn('id="stripOpen"', html)
+        self.assertIn('id="stripElapsed"', html)
+        self.assertIn('id="stripStop"', html)
+        self.assertIn('id="stripOpenScan"', html)
+
+    def test_strip_reuses_the_scan_list_instead_of_a_new_endpoint(self):
+        html = dashboard_html()
+
+        # The backend contract is unchanged: no new routes were invented.
+        for route in ("/v1/scans/running", "/v1/progress", "/v1/scans/active"):
+            self.assertNotIn(route, html)
+
+
 if __name__ == "__main__":
     unittest.main()
