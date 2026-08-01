@@ -103,6 +103,8 @@ netroach pcap .\capture.pcapng --top 10
 
 PCAP summaries include protocols, top talkers, conversations, DNS, HTTP, TLS, ARP, ICMP, and DHCP metadata.
 
+A summary reports `packet_count` for every frame in the file and `decoded_frames` for the ones it could read; every other figure counts the decoded frames only. The two differ when a capture holds frames this analyser does not parse - most often the raw 802.11 copies pktmon records next to the Ethernet-shaped ones on a Wi-Fi adapter, which makes `packet_count` roughly double `decoded_frames`. The capture file keeps both, so nothing is lost for Wireshark.
+
 ## 6. Live Capture
 
 Live capture is bounded and requires confirmation.

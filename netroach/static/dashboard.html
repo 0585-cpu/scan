@@ -2189,6 +2189,7 @@ ${health.db}` : '데이터베이스 없음';
       $('pcapSummary').innerHTML = `
         <div class="metrics">
           ${metric('패킷 수', summary.packet_count || 0)}
+          ${metric('해석된 프레임', summary.decoded_frames ?? summary.packet_count ?? 0)}
           ${metric('프로토콜', Object.keys(summary.protocols || {}).length)}
           ${metric('DNS 질의', (summary.dns_queries || []).length)}
           ${metric('TLS 항목', (summary.tls_metadata || []).length)}
