@@ -2885,6 +2885,14 @@ ${health.db}` : '데이터베이스 없음';
     let pollTimer = null;
 
     function pollOnce() {
+      // Every entry path (initial call, a fired timer, visibilitychange's
+      // immediate call) goes through here first, so clearing here is what
+      // keeps "at most one pending timer" true even when visibility flips
+      // a few ms ahead of an already-due timer.
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
       refreshHealth().catch(() => {});
       refreshScans().catch(() => {}).finally(schedulePoll);
     }
@@ -2894,8 +2902,13 @@ ${health.db}` : '데이터베이스 없음';
         clearTimeout(pollTimer);
         pollTimer = null;
       }
-      if (!runningScanJobs().length && !state.runningProgress) return;
-      pollTimer = setTimeout(pollOnce, document.hidden ? POLL_HIDDEN_MS : POLL_ACTIVE_MS);
+      const active = runningScanJobs().length > 0;
+      if (!active && !state.runningProgress) return;
+      // Fast cadence only while a job is actually moving. An undismissed
+      // failed/cancelled strip still needs to reflect a dismissal, but it
+      // isn't "running" any more, so it doesn't earn the 700ms rate.
+      const interval = active && !document.hidden ? POLL_ACTIVE_MS : POLL_HIDDEN_MS;
+      pollTimer = setTimeout(pollOnce, interval);
     }
 
     pollOnce();
