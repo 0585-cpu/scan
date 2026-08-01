@@ -1569,7 +1569,7 @@
       setStatus('scanPresetStatus', full && !dirtyActive ? `프리셋은 ${SCAN_PRESET_MAX_COUNT}개까지 저장할 수 있습니다` : '');
     }
 
-    function parsePortExpression(value) {
+    function parsePortExpressionUncached(value) {
       const parts = text(value).split(',').map((item) => item.trim()).filter(Boolean);
       if (!parts.length) throw new Error('the profile does not contain any ports');
       const ports = new Set();
@@ -1588,6 +1588,38 @@
         expression: expression.join(','),
         ports: Array.from(ports).sort((left, right) => left - right)
       };
+    }
+
+    // renderScanJobs/renderSelectedScan/renderScanEstimate all parse the same
+    // job/form port expression every ~700ms poll tick; a 1-65535 expression
+    // costs a 65k-entry Set build plus a sort each time it's re-parsed. Cache
+    // by the raw input string so an unchanged expression is free on repeat
+    // polls. Bounded so switching between many distinct expressions (lots of
+    // scan jobs with different port lists) can't grow this without limit.
+    // Callers must treat the returned `ports` array as read-only - it is
+    // shared across every cache hit.
+    const PORT_EXPRESSION_CACHE = new Map();
+    const PORT_EXPRESSION_CACHE_LIMIT = 32;
+
+    function parsePortExpression(value) {
+      const key = text(value);
+      const cached = PORT_EXPRESSION_CACHE.get(key);
+      if (cached) {
+        if (cached.error) throw cached.error;
+        return cached.result;
+      }
+      let entry;
+      try {
+        entry = {result: parsePortExpressionUncached(key)};
+      } catch (err) {
+        entry = {error: err};
+      }
+      if (PORT_EXPRESSION_CACHE.size >= PORT_EXPRESSION_CACHE_LIMIT) {
+        PORT_EXPRESSION_CACHE.delete(PORT_EXPRESSION_CACHE.keys().next().value);
+      }
+      PORT_EXPRESSION_CACHE.set(key, entry);
+      if (entry.error) throw entry.error;
+      return entry.result;
     }
 
     function parsePortProfileText(value) {
