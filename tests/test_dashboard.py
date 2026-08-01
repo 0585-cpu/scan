@@ -38,5 +38,36 @@ class DashboardAssetTests(unittest.TestCase):
         self.assertIn('id="viewerSave"', html)
 
 
+class DashboardVisualLanguageTests(unittest.TestCase):
+    def test_accent_is_the_new_teal_and_the_old_blue_is_gone(self):
+        html = dashboard_html()
+
+        self.assertIn("--accent: #0f766e;", html)
+        self.assertIn("--bg: #f7f8f7;", html)
+        self.assertNotIn("#1b6ec2", html)
+        self.assertNotIn("#14589e", html)
+
+    def test_state_colours_are_declared_once_as_tokens(self):
+        html = dashboard_html()
+
+        for token in ("--state-open:", "--state-filtered:", "--state-closed:", "--state-error:"):
+            self.assertIn(token, html)
+
+    def test_corners_are_uniform(self):
+        html = dashboard_html()
+
+        self.assertIn("--radius: 4px;", html)
+        self.assertIn("--radius-sm: 4px;", html)
+
+    def test_navigation_is_an_icon_rail(self):
+        html = dashboard_html()
+
+        self.assertIn('class="rail"', html)
+        self.assertNotIn('class="sidebar"', html)
+        # Labels stay in the markup for screen readers and hover.
+        self.assertIn('data-rail-icon', html)
+        self.assertIn('data-view-target="scans"', html)
+
+
 if __name__ == "__main__":
     unittest.main()
