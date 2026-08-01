@@ -472,6 +472,34 @@
       color: var(--accent-dark);
       font-weight: 700;
     }
+    .preset-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .preset-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 26px;
+      padding: 0 10px;
+      font-size: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--muted);
+    }
+    .preset-chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .preset-chip-apply {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      color: inherit;
+      font: inherit;
+    }
+    .preset-chip .chip-dirty { color: var(--accent); font-weight: 700; }
+    .preset-chip .chip-key { opacity: 0.5; font-size: 10px; }
+    .preset-chip-actions { display: none; gap: 4px; }
+    .preset-chip:hover .preset-chip-actions { display: inline-flex; }
+    .preset-save-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
     .preset-select {
       width: auto;
       min-width: 150px;
@@ -495,17 +523,6 @@
     }
     .port-file-action:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
     .port-file-action input { display: none; }
-    .custom-profile-list:empty { display: none; }
-    .custom-profile-chip { display: inline-flex; align-items: stretch; }
-    .custom-profile-chip .custom-profile-use { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
-    .custom-profile-chip .custom-profile-remove {
-      min-width: 28px;
-      border-left: 0;
-      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-      color: var(--danger);
-      padding-left: 6px;
-      padding-right: 6px;
-    }
     details.advanced-panel {
       border: 1px solid var(--line);
       border-radius: var(--radius-sm);
@@ -830,6 +847,12 @@
               <div class="band-body">
                 <p class="form-intro">승인된 대상을 입력하고 포트를 고른 뒤, 시작 전에 아래 요약을 확인하세요.</p>
                 <form id="scanForm">
+                  <div class="preset-chips" id="scanPresetChips" aria-label="스캔 프리셋"></div>
+                  <div class="preset-save-row">
+                    <button type="button" id="scanPresetSave">+ 저장</button>
+                    <label class="check-row"><input id="scanPresetIncludeTargets" type="checkbox">대상도 함께 저장</label>
+                    <span class="helper" id="scanPresetStatus"></span>
+                  </div>
                   <div class="form-grid">
                     <div class="field full">
                       <label for="scanTargets">대상</label>
@@ -839,12 +862,7 @@
                     <div class="field full">
                       <label for="scanPorts">포트</label>
                       <input id="scanPorts" name="ports" placeholder="22,80,443">
-                      <div class="preset-row" aria-label="포트 프리셋">
-                        <span class="helper">프리셋</span>
-                        <button type="button" data-port-preset="22,53,80,443,445,3389">기본</button>
-                        <button type="button" data-port-preset="80,443,8000,8080,8443">웹</button>
-                        <button type="button" data-port-preset="22,23,3389,5900">원격</button>
-                        <button type="button" data-port-preset="25,110,143,465,587,993,995">메일</button>
+                      <div class="preset-row" aria-label="설정된 포트 프로필">
                         <select class="preset-select" id="scanProfile" name="port_profile" aria-label="설정된 포트 프로필">
                           <option value="">설정된 프로필...</option>
                         </select>
@@ -853,7 +871,6 @@
                           <input id="scanPortProfileFile" type="file" accept=".txt,text/plain">
                         </label>
                       </div>
-                      <div class="preset-row custom-profile-list" id="scanCustomProfiles" aria-label="가져온 포트 프로필"></div>
                       <span class="helper" id="scanProfileStatus">TXT는 쉼표로 구분한 포트, 범위, # 주석을 지원합니다.</span>
                     </div>
                     <div class="field">
@@ -878,7 +895,7 @@
                       <label class="check-row"><input name="capture_screenshots" type="checkbox">서비스 증적 이미지 수집</label>
                     </div>
                     <div class="field full authorization-box">
-                      <label class="check-row"><input name="confirm_authorized" type="checkbox" required>스캔 권한을 확인했습니다</label>
+                      <label class="check-row"><input id="scanAuthorized" name="confirm_authorized" type="checkbox" required>스캔 권한을 확인했습니다</label>
                       <span class="helper">소유했거나 명시적으로 허가받은 시스템만 스캔하세요.</span>
                     </div>
                   </div>
@@ -1334,8 +1351,9 @@
       scanResultPageSize: 50,
       scanResultSearchTimer: null,
       scanResultPayload: {results: [], total: 0, hosts: []},
-      customPortProfiles: [],
-      activeCustomPortProfile: null,
+      scanPresets: [],
+      activePresetId: null,
+      presetDirty: false,
       pcaps: [],
       pcapId: null,
       audits: [],
@@ -1361,9 +1379,123 @@
       return Number.isNaN(parsed.getTime()) ? source : parsed.toLocaleString();
     };
 
-    const CUSTOM_PORT_PROFILE_STORAGE_KEY = 'netroach.customPortProfiles.v1';
-    const CUSTOM_PORT_PROFILE_MAX_BYTES = 256 * 1024;
-    const CUSTOM_PORT_PROFILE_MAX_COUNT = 10;
+    const PORT_PROFILE_FILE_MAX_BYTES = 256 * 1024;
+
+    const SCAN_PRESET_STORAGE_KEY = 'netroach.scanPresets.v1';
+    const SCAN_PRESET_MAX_COUNT = 12;
+    // The authorization checkbox is deliberately absent: a restored tick would
+    // defeat the gate that makes every scan a deliberate act.
+    const PRESET_FIELDS = ['ports', 'protocol', 'concurrency', 'timeout_ms', 'udp_retries', 'service_probe', 'capture_screenshots'];
+
+    const BUILTIN_SCAN_PRESETS = [
+      {id: 'builtin-quick', name: '빠른 점검', builtin: true, values: {ports: '1-1024', protocol: 'tcp', service_probe: true}},
+      {id: 'builtin-web', name: '웹 포트', builtin: true, values: {ports: '80,443,8000-8090,8443', protocol: 'tcp', service_probe: true}},
+      {id: 'builtin-full', name: '전체 정밀', builtin: true, values: {ports: '1-65535', protocol: 'tcp', service_probe: true, timeout_ms: 3000, concurrency: 128}}
+    ];
+
+    function loadScanPresets() {
+      try {
+        const raw = JSON.parse(window.localStorage.getItem(SCAN_PRESET_STORAGE_KEY) || '[]');
+        if (!Array.isArray(raw)) return [];
+        return raw.filter((item) => item && typeof item.name === 'string').slice(0, SCAN_PRESET_MAX_COUNT);
+      } catch (err) {
+        return [];
+      }
+    }
+
+    function saveScanPresets(list) {
+      try {
+        window.localStorage.setItem(SCAN_PRESET_STORAGE_KEY, JSON.stringify(list.slice(0, SCAN_PRESET_MAX_COUNT)));
+      } catch (err) {
+        setStatus('scanPresetStatus', '프리셋을 저장하지 못했습니다', true);
+      }
+    }
+
+    function formFieldValue(name) {
+      const node = $('scanForm').elements[name];
+      if (!node) return undefined;
+      return node.type === 'checkbox' ? node.checked : node.value;
+    }
+
+    function presetFromForm(includeTargets) {
+      const values = {};
+      PRESET_FIELDS.forEach((name) => {
+        const value = formFieldValue(name);
+        if (value !== undefined && value !== '') values[name] = value;
+      });
+      return {name: '', targets: includeTargets ? $('scanTargets').value : '', values};
+    }
+
+    function applyScanPreset(preset) {
+      PRESET_FIELDS.forEach((name) => {
+        const node = $('scanForm').elements[name];
+        if (!node) return;
+        const value = preset.values[name];
+        if (value === undefined) return;
+        if (node.type === 'checkbox') node.checked = Boolean(value);
+        else node.value = value;
+      });
+      if (preset.targets) $('scanTargets').value = preset.targets;
+      // Authorization is never restored - it must be given for each scan.
+      $('scanAuthorized').checked = false;
+      state.activePresetId = preset.id;
+      state.presetDirty = false;
+      updateScanScopeMode();
+      updateScanActionState();
+      renderScanPresets();
+      $('scanTargets').focus();
+      $('scanTargets').select();
+    }
+
+    function allScanPresets() {
+      return [...BUILTIN_SCAN_PRESETS, ...state.scanPresets];
+    }
+
+    function renderScanPresets() {
+      const presets = allScanPresets();
+      $('scanPresetChips').innerHTML = presets.map((preset, index) => {
+        const active = preset.id === state.activePresetId;
+        const dirty = active && state.presetDirty ? '<span class="chip-dirty">*</span>' : '';
+        const key = index < 9 ? `<span class="chip-key">${index + 1}</span>` : '';
+        const actions = preset.builtin ? '' :
+          `<span class="preset-chip-actions"><button type="button" data-preset-rename="${escapeHtml(preset.id)}" title="이름 변경">✎</button><button type="button" data-preset-delete="${escapeHtml(preset.id)}" title="삭제">✕</button></span>`;
+        return `<span class="preset-chip ${active ? 'active' : ''}"><button type="button" class="preset-chip-apply" data-preset-apply="${escapeHtml(preset.id)}">${key}${escapeHtml(preset.name)}${dirty}</button>${actions}</span>`;
+      }).join('');
+
+      document.querySelectorAll('[data-preset-apply]').forEach((node) => {
+        node.addEventListener('click', (event) => {
+          if (event.target.closest('.preset-chip-actions')) return;
+          const preset = allScanPresets().find((item) => item.id === node.dataset.presetApply);
+          if (preset) applyScanPreset(preset);
+        });
+      });
+      document.querySelectorAll('[data-preset-delete]').forEach((node) => {
+        node.addEventListener('click', (event) => {
+          event.stopPropagation();
+          state.scanPresets = state.scanPresets.filter((item) => item.id !== node.dataset.presetDelete);
+          saveScanPresets(state.scanPresets);
+          renderScanPresets();
+        });
+      });
+      document.querySelectorAll('[data-preset-rename]').forEach((node) => {
+        node.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const preset = state.scanPresets.find((item) => item.id === node.dataset.presetRename);
+          if (!preset) return;
+          const name = window.prompt('프리셋 이름', preset.name);
+          if (!name || !name.trim()) return;
+          preset.name = name.trim().slice(0, 24);
+          saveScanPresets(state.scanPresets);
+          renderScanPresets();
+        });
+      });
+
+      const full = state.scanPresets.length >= SCAN_PRESET_MAX_COUNT;
+      const dirtyActive = state.presetDirty && state.activePresetId && !state.activePresetId.startsWith('builtin-');
+      $('scanPresetSave').textContent = dirtyActive ? '덮어쓰기' : '+ 저장';
+      $('scanPresetSave').disabled = full && !dirtyActive;
+      setStatus('scanPresetStatus', full && !dirtyActive ? `프리셋은 ${SCAN_PRESET_MAX_COUNT}개까지 저장할 수 있습니다` : '');
+    }
 
     function parsePortExpression(value) {
       const parts = text(value).split(',').map((item) => item.trim()).filter(Boolean);
@@ -1486,33 +1618,6 @@
       `;
     }
 
-    function loadCustomPortProfiles() {
-      try {
-        const stored = JSON.parse(localStorage.getItem(CUSTOM_PORT_PROFILE_STORAGE_KEY) || '[]');
-        if (!Array.isArray(stored)) return [];
-        return stored.slice(0, CUSTOM_PORT_PROFILE_MAX_COUNT).flatMap((profile) => {
-          try {
-            const parsed = parsePortExpression(profile.expression);
-            const name = text(profile.name).trim();
-            return name ? [{name, expression: parsed.expression, count: parsed.ports.length}] : [];
-          } catch (_) {
-            return [];
-          }
-        });
-      } catch (_) {
-        return [];
-      }
-    }
-
-    function saveCustomPortProfiles() {
-      try {
-        localStorage.setItem(CUSTOM_PORT_PROFILE_STORAGE_KEY, JSON.stringify(state.customPortProfiles));
-        return true;
-      } catch (_) {
-        return false;
-      }
-    }
-
     function renderAvailablePortProfiles() {
       const select = $('scanProfile');
       const selected = select.value;
@@ -1525,55 +1630,10 @@
       if (Object.prototype.hasOwnProperty.call(profiles, selected)) select.value = selected;
     }
 
-    function renderCustomPortProfiles() {
-      $('scanCustomProfiles').innerHTML = state.customPortProfiles.map((profile, index) => `
-        <span class="custom-profile-chip">
-          <button type="button" class="custom-profile-use ${profile.name === state.activeCustomPortProfile ? 'active' : ''}"
-            data-custom-profile-use="${index}" title="${escapeHtml(profile.expression)}">${escapeHtml(profile.name)} (${profile.count})</button>
-          <button type="button" class="custom-profile-remove" data-custom-profile-remove="${index}"
-            aria-label="Remove ${escapeHtml(profile.name)} profile" title="Remove profile">&times;</button>
-        </span>
-      `).join('');
-      document.querySelectorAll('[data-custom-profile-use]').forEach((button) => {
-        button.addEventListener('click', () => applyCustomPortProfile(Number(button.dataset.customProfileUse)));
-      });
-      document.querySelectorAll('[data-custom-profile-remove]').forEach((button) => {
-        button.addEventListener('click', () => removeCustomPortProfile(Number(button.dataset.customProfileRemove)));
-      });
-      updatePortPresetState();
-    }
-
-    function updatePortPresetState() {
-      const directPorts = $('scanPorts').value.trim();
-      document.querySelectorAll('[data-port-preset]').forEach((button) => {
-        button.classList.toggle('active', !state.activeCustomPortProfile && !$('scanProfile').value && directPorts === text(button.dataset.portPreset));
-      });
-    }
-
-    function applyCustomPortProfile(index) {
-      const profile = state.customPortProfiles[index];
-      if (!profile) return;
-      state.activeCustomPortProfile = profile.name;
-      $('scanPorts').value = profile.expression;
+    function applyPortsToForm(expression) {
+      $('scanPorts').value = expression;
       $('scanTopPorts').value = '';
       $('scanProfile').value = '';
-      $('scanProtocol').value = 'tcp';
-      setStatus('scanProfileStatus', `${profile.name}: 포트 ${profile.count}개 적용됨`);
-      renderCustomPortProfiles();
-      updateScanPreview();
-    }
-
-    function removeCustomPortProfile(index) {
-      const profile = state.customPortProfiles[index];
-      if (!profile) return;
-      state.customPortProfiles.splice(index, 1);
-      if (state.activeCustomPortProfile === profile.name) {
-        state.activeCustomPortProfile = null;
-        $('scanPorts').value = '';
-      }
-      const saved = saveCustomPortProfiles();
-      setStatus('scanProfileStatus', saved ? `${profile.name} 삭제됨` : `${profile.name} 은(는) 이번 세션에서만 삭제됨`, !saved);
-      renderCustomPortProfiles();
       updateScanPreview();
     }
 
@@ -2494,9 +2554,7 @@ ${health.db}` : '데이터베이스 없음';
       const targetEstimate = estimateTargetCount($('scanTargets').value);
       const portCount = selectedPortCount(ports, topPorts, profile);
       const portChoice = ports
-        ? state.activeCustomPortProfile
-          ? `TXT profile ${state.activeCustomPortProfile} | ${compactPortText(ports)}`
-          : `ports ${compactPortText(ports)}`
+        ? `ports ${compactPortText(ports)}`
         : topPorts
           ? `top ${topPorts} ports`
           : profile
@@ -2742,42 +2800,12 @@ ${health.db}` : '데이터베이스 없음';
     $('pluginsRefresh').addEventListener('click', refreshPlugins);
     $('diagnosticsRefresh').addEventListener('click', refreshHealth);
     $('packetTemplate').addEventListener('change', updatePacketFields);
-    document.querySelectorAll('[data-port-preset]').forEach((button) => {
-      button.addEventListener('click', () => {
-        state.activeCustomPortProfile = null;
-        $('scanPorts').value = button.dataset.portPreset || '';
-        $('scanTopPorts').value = '';
-        $('scanProfile').value = '';
-        $('scanProtocol').value = 'tcp';
-        setStatus('scanProfileStatus', `${button.textContent.trim()} 프리셋 선택됨`);
-        renderCustomPortProfiles();
-        updateScanPreview();
-      });
-    });
-    $('scanPorts').addEventListener('input', () => {
-      state.activeCustomPortProfile = null;
-      if ($('scanPorts').value.trim()) {
-        $('scanTopPorts').value = '';
-        $('scanProfile').value = '';
-      }
-      renderCustomPortProfiles();
-    });
-    $('scanTopPorts').addEventListener('input', () => {
-      state.activeCustomPortProfile = null;
-      if ($('scanTopPorts').value.trim()) {
-        $('scanPorts').value = '';
-        $('scanProfile').value = '';
-      }
-      renderCustomPortProfiles();
-    });
     $('scanProfile').addEventListener('change', () => {
-      state.activeCustomPortProfile = null;
       if ($('scanProfile').value.trim()) {
         $('scanPorts').value = '';
         $('scanTopPorts').value = '';
         setStatus('scanProfileStatus', `${$('scanProfile').value} 프로필 선택됨`);
       }
-      renderCustomPortProfiles();
     });
     $('scanPortProfileFile').addEventListener('change', async (event) => {
       const input = event.currentTarget;
@@ -2785,27 +2813,10 @@ ${health.db}` : '데이터베이스 없음';
       if (!file) return;
       try {
         if (!file.name.toLowerCase().endsWith('.txt')) throw new Error('select a .txt port profile');
-        if (file.size > CUSTOM_PORT_PROFILE_MAX_BYTES) throw new Error('port profile TXT must be 256 KB or smaller');
+        if (file.size > PORT_PROFILE_FILE_MAX_BYTES) throw new Error('port profile TXT must be 256 KB or smaller');
         const parsed = parsePortProfileText(await file.text());
-        const name = file.name.slice(0, -4).trim().slice(0, 64) || 'Custom';
-        let index = state.customPortProfiles.findIndex((profile) => profile.name.toLowerCase() === name.toLowerCase());
-        const imported = {name, expression: parsed.expression, count: parsed.ports.length};
-        if (index >= 0) {
-          state.customPortProfiles[index] = imported;
-        } else {
-          if (state.customPortProfiles.length >= CUSTOM_PORT_PROFILE_MAX_COUNT) {
-            throw new Error(`up to ${CUSTOM_PORT_PROFILE_MAX_COUNT} custom profiles can be saved`);
-          }
-          state.customPortProfiles.push(imported);
-          index = state.customPortProfiles.length - 1;
-        }
-        const saved = saveCustomPortProfiles();
-        applyCustomPortProfile(index);
-        setStatus(
-          'scanProfileStatus',
-          saved ? `${name}: ${parsed.ports.length} ports imported and saved` : `${name}: imported for this session only`,
-          !saved
-        );
+        applyPortsToForm(parsed.expression);
+        setStatus('scanProfileStatus', `${file.name}: ${parsed.ports.length} ports imported`);
       } catch (err) {
         setStatus('scanProfileStatus', err.message, true);
       } finally {
@@ -2829,12 +2840,39 @@ ${health.db}` : '데이터베이스 없음';
     $('scanScopeFromTargets').addEventListener('change', updateScanScopeMode);
     $('scanReset').addEventListener('click', () => {
       $('scanForm').reset();
-      state.activeCustomPortProfile = null;
       $('scanAdvanced').open = false;
       setStatus('scanStatus', '');
       setStatus('scanProfileStatus', 'TXT는 쉼표로 구분한 포트, 범위, # 주석을 지원합니다.');
-      renderCustomPortProfiles();
+      state.activePresetId = null;
+      state.presetDirty = false;
+      renderScanPresets();
       updateScanScopeMode();
+    });
+
+    $('scanPresetSave').addEventListener('click', () => {
+      const includeTargets = $('scanPresetIncludeTargets').checked;
+      const draft = presetFromForm(includeTargets);
+      const active = state.scanPresets.find((item) => item.id === state.activePresetId);
+      if (state.presetDirty && active) {
+        active.values = draft.values;
+        active.targets = draft.targets;
+      } else {
+        if (state.scanPresets.length >= SCAN_PRESET_MAX_COUNT) return;
+        const name = window.prompt('프리셋 이름');
+        if (!name || !name.trim()) return;
+        const preset = {...draft, id: `user-${Date.now()}`, name: name.trim().slice(0, 24)};
+        state.scanPresets.push(preset);
+        state.activePresetId = preset.id;
+      }
+      state.presetDirty = false;
+      saveScanPresets(state.scanPresets);
+      renderScanPresets();
+    });
+
+    $('scanForm').addEventListener('input', () => {
+      if (!state.activePresetId || state.presetDirty) return;
+      state.presetDirty = true;
+      renderScanPresets();
     });
 
     bindScanLinkActions();
@@ -2870,8 +2908,8 @@ ${health.db}` : '데이터베이스 없음';
     });
 
     $('oastBaseUrl').value = window.location.origin;
-    state.customPortProfiles = loadCustomPortProfiles();
-    renderCustomPortProfiles();
+    state.scanPresets = loadScanPresets();
+    renderScanPresets();
     updatePacketFields();
     updateScanScopeMode();
     updateScanActionState();
