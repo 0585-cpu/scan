@@ -157,5 +157,38 @@ class DashboardPresetTests(unittest.TestCase):
         self.assertIn("function renderScanPresets(", html)
 
 
+class DashboardEstimateTests(unittest.TestCase):
+    def test_estimate_helpers_exist(self):
+        html = dashboard_html()
+
+        self.assertIn("function estimateScanScale(", html)
+        self.assertIn("function renderScanEstimate(", html)
+        self.assertIn("function expandTargetCount(", html)
+        self.assertIn('id="scanEstimate"', html)
+
+    def test_estimate_runs_on_blur_not_only_on_submit(self):
+        html = dashboard_html()
+
+        self.assertRegex(html, r"scanTargets'\)\.addEventListener\('blur'")
+
+    def test_a_bad_target_disables_the_start_button(self):
+        html = dashboard_html()
+
+        body = html.split("function renderScanEstimate(", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("disabled", body)
+
+    def test_update_scan_action_state_no_longer_sets_disabled_directly(self):
+        """renderScanEstimate() is the sole owner of the button's disabled state.
+
+        If updateScanActionState() also set scanSubmit.disabled, the two
+        functions could race and re-enable a button that should stay locked.
+        """
+        html = dashboard_html()
+
+        body = html.split("function updateScanActionState(", 1)[1].split("\n    }", 1)[0]
+        self.assertNotIn("scanSubmit').disabled", body)
+        self.assertIn("renderScanEstimate()", body)
+
+
 if __name__ == "__main__":
     unittest.main()
