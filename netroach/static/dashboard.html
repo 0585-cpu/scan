@@ -2301,6 +2301,12 @@ ${health.db}` : '데이터베이스 없음';
     const HOST_VIEW_RESULT_LIMIT = 500;
 
     async function refreshScanResults() {
+      // Poll's refreshScans() calls this every cycle whenever a job is
+      // selected, regardless of which top-level view is on screen - skip
+      // the network round-trip (500 rows in host view) while the operator
+      // is looking at PCAP/Audit/etc. showView('scans') re-fetches on the
+      // way back in, so the list is never stale when they return.
+      if (state.view !== 'scans') return;
       if (!state.scanId) {
         state.scanResultPayload = {results: [], total: 0, hosts: []};
         renderScanResults();
@@ -2489,6 +2495,12 @@ ${health.db}` : '데이터베이스 없음';
 
     function renderHostRows() {
       const container = $('scanHostRows');
+      if (!state.scanId) {
+        container.innerHTML = `<div class="empty">스캔 작업을 선택하면 결과가 표시됩니다</div>`;
+        $('scanResultMetrics').textContent = '';
+        $('scanNewResults').hidden = true;
+        return;
+      }
       const payload = state.scanResultPayload || {results: [], total: 0, hosts: []};
       const loaded = (payload.results || []).length;
       const total = Number(payload.total || 0);
@@ -2498,8 +2510,8 @@ ${health.db}` : '데이터베이스 없음';
       const rows = groupResultsByHost(payload.results).slice(0, HOST_ROW_RENDER_LIMIT);
       const seen = new Set();
       rows.forEach((entry) => {
-        seen.add(entry.host);
         const id = hostRowId(entry.host);
+        seen.add(id);
         const openText = entry.open.length ? `open ${entry.open.join(',')}` : '';
         const stateText = entry.error ? '오류' : '완료';
         let node = document.getElementById(id);
@@ -2526,11 +2538,16 @@ ${health.db}` : '데이터베이스 없음';
           }
         }
       });
-      // One pass over the current children, O(n): direct child lookup
-      // instead of querySelector, and Element.remove() doesn't shift
-      // siblings, so this stays linear even for a large host list.
+      // One pass over the current children, O(n): compare against the id
+      // we assigned (seen holds ids, not textContent read back out of the
+      // DOM - a decoded string would stop round-tripping the moment the row
+      // template gains anything escapeHtml doesn't touch), and
+      // Element.remove() doesn't shift siblings, so this stays linear even
+      // for a large host list. This also clears the "select a job" message
+      // node from below once real rows start appearing (it has no id, so
+      // it's never in `seen`).
       [...container.children].forEach((node) => {
-        if (!seen.has(node.firstElementChild?.textContent)) node.remove();
+        if (!seen.has(node.id)) node.remove();
       });
       if (state.autoScroll) container.scrollTop = container.scrollHeight;
       $('scanNewResults').hidden = state.autoScroll;
