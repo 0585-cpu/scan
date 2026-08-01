@@ -3132,6 +3132,7 @@ ${health.db}` : '데이터베이스 없음';
         return;
       }
       if (event.ctrlKey && event.key === 'Enter') {
+        if (state.view !== 'scans') return;
         event.preventDefault();
         if (!$('scanAuthorized').checked) {
           $('scanAuthorized').focus();
