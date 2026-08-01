@@ -790,6 +790,13 @@
       .result-pagination { align-items: stretch; flex-direction: column; }
       .page-buttons { justify-content: center; }
     }
+
+    .shortcut-list { display: grid; grid-template-columns: 160px 1fr; gap: 6px 16px; padding: 14px; font-size: 13px; }
+    .shortcut-list dt { font-family: ui-monospace, monospace; color: var(--accent); }
+    .shortcut-list dd { margin: 0; color: var(--muted); }
+    .authorization-box.nudge { animation: nudge 320ms ease; }
+    @keyframes nudge { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+    @media (prefers-reduced-motion: reduce) { .authorization-box.nudge { animation: none; outline: 2px solid var(--state-error); } }
   </style>
 </head>
 <body>
@@ -1385,6 +1392,22 @@
         <button type="button" id="viewerClose" aria-label="미리보기 닫기">닫기</button>
       </div>
       <div class="viewer-body" id="viewerBody"></div>
+    </div>
+  </div>
+
+  <div class="viewer" id="shortcutHelp" hidden role="dialog" aria-modal="true" aria-label="단축키">
+    <div class="viewer-panel">
+      <div class="viewer-head"><h3>단축키</h3><button type="button" id="shortcutHelpClose">닫기</button></div>
+      <div class="viewer-body">
+        <dl class="shortcut-list">
+          <dt>1 ~ 9</dt><dd>프리셋 선택</dd>
+          <dt>Ctrl + Enter</dt><dd>스캔 시작</dd>
+          <dt>t</dt><dd>대상 칸으로 이동</dd>
+          <dt>g 다음 s / p / r</dt><dd>화면 이동 (스캔 / 패킷 / 리포트)</dd>
+          <dt>Esc</dt><dd>오버레이 닫기</dd>
+          <dt>?</dt><dd>이 목록</dd>
+        </dl>
+      </div>
     </div>
   </div>
 
@@ -3197,9 +3220,84 @@ ${health.db}` : '데이터베이스 없음';
     $('viewer').addEventListener('click', (event) => {
       if (event.target === $('viewer')) closeViewer();
     });
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && !$('viewer').hidden) closeViewer();
-    });
+    function isTypingTarget(node) {
+      if (!node) return false;
+      const tag = node.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || node.isContentEditable;
+    }
+
+    let pendingGoto = false;
+    let pendingGotoTimer = null;
+
+    // 'g' arms a one-key-deep prefix state (pendingGoto) that the very next
+    // keydown consumes, matched or not - so it never lingers past one
+    // keystroke. It's also cleared by a timeout, a window blur, or focus
+    // moving into a typing target, so walking away from the keyboard after
+    // 'g' can't silently eat a later shortcut.
+    function clearPendingGoto() {
+      pendingGoto = false;
+      if (pendingGotoTimer) { clearTimeout(pendingGotoTimer); pendingGotoTimer = null; }
+    }
+
+    // Single-key shortcuts must never steal a character from a field: the
+    // target box is the one thing an operator types into constantly.
+    function handleShortcut(event) {
+      if (event.key === 'Escape') {
+        clearPendingGoto();
+        if (!$('shortcutHelp').hidden) { $('shortcutHelp').hidden = true; return; }
+        if (!$('viewer').hidden) { closeViewer(); return; }
+        const advanced = $('scanAdvanced');
+        if (advanced && advanced.open) advanced.open = false;
+        return;
+      }
+      if (event.ctrlKey && event.key === 'Enter') {
+        event.preventDefault();
+        if (!$('scanAuthorized').checked) {
+          $('scanAuthorized').focus();
+          $('scanAuthorized').closest('.authorization-box')?.classList.add('nudge');
+          setTimeout(() => $('scanAuthorized').closest('.authorization-box')?.classList.remove('nudge'), 400);
+          return;
+        }
+        // renderScanEstimate() disables scanSubmit for anything native
+        // required-field validation can't see (engine unavailable, target/
+        // port parse errors) - requestSubmit() does not itself honor a
+        // disabled submit button when called with no submitter, so that
+        // has to be checked explicitly here or Ctrl+Enter would bypass it.
+        if ($('scanSubmit').disabled) return;
+        $('scanForm').requestSubmit();
+        return;
+      }
+      if (event.ctrlKey || event.altKey || event.metaKey || isTypingTarget(event.target)) return;
+
+      if (pendingGoto) {
+        clearPendingGoto();
+        const destination = {s: 'scans', p: 'packets', r: 'overview'}[event.key];
+        if (destination) { event.preventDefault(); showView(destination); }
+        return;
+      }
+      if (event.key === 'g') {
+        pendingGoto = true;
+        pendingGotoTimer = setTimeout(clearPendingGoto, 1500);
+        return;
+      }
+      if (event.key === '?') { event.preventDefault(); $('shortcutHelp').hidden = false; return; }
+      if (event.key === 't') {
+        event.preventDefault();
+        showView('scans');
+        $('scanTargets').focus();
+        $('scanTargets').select();
+        return;
+      }
+      if (/^[1-9]$/.test(event.key)) {
+        const preset = allScanPresets()[Number(event.key) - 1];
+        if (preset) { event.preventDefault(); applyScanPreset(preset); }
+      }
+    }
+
+    document.addEventListener('keydown', handleShortcut);
+    document.addEventListener('focusin', (event) => { if (isTypingTarget(event.target)) clearPendingGoto(); });
+    window.addEventListener('blur', clearPendingGoto);
+    $('shortcutHelpClose').addEventListener('click', () => { $('shortcutHelp').hidden = true; });
 
     $('oastBaseUrl').value = window.location.origin;
     state.scanPresets = loadScanPresets();

@@ -225,5 +225,27 @@ class DashboardResultPaneTests(unittest.TestCase):
         self.assertIn("HOST_ROW_RENDER_LIMIT", html)
 
 
+class DashboardShortcutTests(unittest.TestCase):
+    def test_shortcut_handler_and_help_overlay_exist(self):
+        html = dashboard_html()
+
+        self.assertIn("function handleShortcut(", html)
+        self.assertIn("function isTypingTarget(", html)
+        self.assertIn('id="shortcutHelp"', html)
+
+    def test_every_documented_shortcut_is_handled(self):
+        html = dashboard_html()
+        body = html.split("function handleShortcut(", 1)[1].split("\n    }\n", 1)[0]
+
+        for key in ("'t'", "'g'", "'?'", "'Escape'", "ctrlKey"):
+            self.assertIn(key, body)
+
+    def test_single_key_shortcuts_do_not_fire_while_typing(self):
+        html = dashboard_html()
+        body = html.split("function handleShortcut(", 1)[1].split("\n    }\n", 1)[0]
+
+        self.assertIn("isTypingTarget(", body)
+
+
 if __name__ == "__main__":
     unittest.main()
