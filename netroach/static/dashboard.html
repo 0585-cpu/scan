@@ -581,18 +581,9 @@
       background: var(--warn-soft);
       padding: 8px 12px;
     }
-    .scan-preview {
-      border-left: 3px solid var(--accent);
-      background: var(--accent-soft);
-      color: var(--accent-dark);
-      border-radius: var(--radius-sm);
-      padding: 8px 12px;
-      font-size: 12px;
-      overflow-wrap: anywhere;
-    }
-    .scan-preview.warn { border-left-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
     .scan-estimate { font-size: 12px; color: var(--muted); margin: 4px 0 8px; min-height: 16px; }
     .scan-estimate.bad { color: var(--state-error); }
+    .scan-estimate.warn { color: var(--warn); }
     .check-row {
       display: flex;
       align-items: center;
@@ -976,12 +967,11 @@
                         <input id="scanMaxAttempts" name="max_attempts" type="number" min="1" value="1000000">
                       </div>
                       <div class="field full">
-                        <label class="check-row"><input name="confirm_large_scan" type="checkbox">최대 시도 수를 초과하는 스캔을 승인합니다</label>
+                        <label class="check-row"><input id="scanConfirmLargeScan" name="confirm_large_scan" type="checkbox">최대 시도 수를 초과하는 스캔을 승인합니다</label>
                         <span class="helper">호스트 × 포트 예상 작업량이 설정된 한도를 넘을 때만 필요합니다.</span>
                       </div>
                     </div>
                   </details>
-                  <div class="scan-preview" id="scanPreview">대상을 하나 이상 입력하면 예상 작업량을 보여줍니다.</div>
                   <p class="scan-estimate" id="scanEstimate"></p>
                   <div class="view-actions">
                     <button class="primary" id="scanSubmit" type="submit">스캔 시작</button>
@@ -1643,38 +1633,6 @@
       return `<span class="port-summary mono" title="${escapeHtml(value)}">${escapeHtml(compactPortText(value, maxRanges))}</span>`;
     }
 
-    function estimateTargetCount(value) {
-      const items = asList(value);
-      if (!items.length) return null;
-      let total = 0n;
-      for (const item of items) {
-        const slash = item.lastIndexOf('/');
-        if (slash < 0) {
-          total += 1n;
-          continue;
-        }
-        const address = item.slice(0, slash);
-        const prefix = Number(item.slice(slash + 1));
-        const bits = address.includes(':') ? 128 : 32;
-        if (!Number.isInteger(prefix) || prefix < 0 || prefix > bits) return null;
-        const addresses = 1n << BigInt(bits - prefix);
-        total += addresses <= 2n ? addresses : addresses - 2n;
-      }
-      return total;
-    }
-
-    function selectedPortCount(ports, topPorts, profile) {
-      if (ports) {
-        try { return parsePortExpression(ports).ports.length; } catch (_) { return 0; }
-      }
-      if (topPorts) return Math.max(0, Number(topPorts) || 0);
-      if (profile) {
-        const values = state.health?.plugins?.port_profiles?.[profile];
-        return Array.isArray(values) ? values.length : 0;
-      }
-      return 0;
-    }
-
     // A /8 has 16 million addresses; counting them exactly would freeze the
     // page and the scanner refuses ranges that size anyway.
     const TARGET_COUNT_CEILING = 65536;
@@ -1732,7 +1690,14 @@
       // No port field filled in is a valid choice too (server default applies).
       if (ports === null) return {hosts, ports: null};
       const probes = hosts * ports;
-      return {hosts, ports, probes, seconds: Math.max(1, Math.round(probes / PROBES_PER_SECOND))};
+      const maxAttempts = Math.max(1, Number($('scanMaxAttempts').value) || 1000000);
+      return {
+        hosts,
+        ports,
+        probes,
+        seconds: Math.max(1, Math.round(probes / PROBES_PER_SECOND)),
+        overLimit: probes > maxAttempts
+      };
     }
 
     // Renders #scanEstimate and is the sole owner of the start button's
@@ -1745,27 +1710,19 @@
       const estimate = estimateScanScale();
       if (estimate.error) {
         node.textContent = estimate.error;
+        node.classList.remove('warn');
         node.classList.add('bad');
         submit.disabled = true;
         return;
       }
       node.classList.remove('bad');
-      node.textContent = estimate.ports === null
+      const overLimit = Boolean(estimate.overLimit) && !$('scanForm').elements.confirm_large_scan.checked;
+      node.classList.toggle('warn', overLimit);
+      const overLimitText = overLimit ? ' · 최대 시도 수 초과 - 큰 스캔 승인 필요' : '';
+      node.textContent = (estimate.ports === null
         ? `호스트 ${estimate.hosts.toLocaleString()}개 · 포트 수 알 수 없음 (서버 기본값/프로필에 따름)`
-        : `호스트 ${estimate.hosts.toLocaleString()}개 · 포트 ${estimate.ports.toLocaleString()}개 = 약 ${estimate.probes.toLocaleString()} 프로브 · 예상 ${estimate.seconds}초 (추정치)`;
+        : `호스트 ${estimate.hosts.toLocaleString()}개 · 포트 ${estimate.ports.toLocaleString()}개 = 약 ${estimate.probes.toLocaleString()} 프로브 · 예상 ${estimate.seconds}초 (추정치)`) + overLimitText;
       submit.disabled = !scanEngineAvailable() || !$('scanAuthorized').checked;
-    }
-
-    function formatBigInt(value) {
-      try { return new Intl.NumberFormat().format(value); } catch (_) { return value.toString(); }
-    }
-
-    function formatDuration(seconds) {
-      if (!Number.isFinite(seconds)) return 'unknown';
-      if (seconds < 60) return `${Math.max(1, Math.ceil(seconds))} sec`;
-      if (seconds < 3600) return `${Math.ceil(seconds / 60)} min`;
-      if (seconds < 86400) return `${Math.ceil(seconds / 3600)} hr`;
-      return `${Math.ceil(seconds / 86400)} days`;
     }
 
     function expandablePortsHtml(value) {
@@ -1797,7 +1754,7 @@
       $('scanPorts').value = expression;
       $('scanTopPorts').value = '';
       $('scanProfile').value = '';
-      updateScanPreview();
+      renderScanEstimate();
     }
 
     async function api(path, options = {}) {
@@ -2841,46 +2798,7 @@ ${health.db}` : '데이터베이스 없음';
       const automatic = $('scanScopeFromTargets').checked;
       $('scanScope').readOnly = automatic;
       if (automatic) $('scanScope').value = scopeListFromTargets($('scanTargets').value).join(', ');
-      updateScanPreview();
-    }
-
-    function updateScanPreview() {
-      const targets = asList($('scanTargets').value);
-      const scopes = $('scanScopeFromTargets').checked
-        ? scopeListFromTargets($('scanTargets').value)
-        : asList($('scanScope').value);
-      const ports = text($('scanPorts').value).trim();
-      const topPorts = text($('scanTopPorts').value).trim();
-      const profile = text($('scanProfile').value).trim();
-      const targetEstimate = estimateTargetCount($('scanTargets').value);
-      const portCount = selectedPortCount(ports, topPorts, profile);
-      const portChoice = ports
-        ? `ports ${compactPortText(ports)}`
-        : topPorts
-          ? `top ${topPorts} ports`
-          : profile
-            ? `profile ${profile}`
-            : 'default port configuration';
-      if (!targets.length) {
-        $('scanPreview').classList.remove('warn');
-        $('scanPreview').textContent = '대상을 하나 이상 입력하면 예상 작업량을 보여줍니다.';
-        return;
-      }
-      let workload = '';
-      let overLimit = false;
-      if (targetEstimate !== null && portCount > 0) {
-        const attempts = targetEstimate * BigInt(portCount);
-        const maxAttempts = BigInt(Math.max(1, Number($('scanMaxAttempts').value || 1000000)));
-        overLimit = attempts > maxAttempts;
-        const rate = Math.max(1, Number($('scanRate').value || 5000));
-        const concurrency = Math.max(1, Number($('scanConcurrency').value || 2000));
-        const timeoutSeconds = Math.max(0.001, Number($('scanTimeout').value || 800) / 1000);
-        const numericAttempts = Number(attempts > BigInt(Number.MAX_SAFE_INTEGER) ? BigInt(Number.MAX_SAFE_INTEGER) : attempts);
-        const minimumSeconds = Math.max(numericAttempts / rate, Math.ceil(numericAttempts / concurrency) * timeoutSeconds);
-        workload = ` | ${formatBigInt(attempts)} attempts | estimated minimum ${formatDuration(minimumSeconds)}`;
-      }
-      $('scanPreview').classList.toggle('warn', overLimit);
-      $('scanPreview').textContent = `${targets.length} target item(s) | ${scopes.length} scope item(s) | ${$('scanProtocol').value.toUpperCase()} | ${portChoice}${workload}${overLimit ? ' | large-scan confirmation required' : ''}`;
+      renderScanEstimate();
     }
 
     $('scanForm').addEventListener('submit', async (event) => {
@@ -3145,15 +3063,15 @@ ${health.db}` : '데이터베이스 없음';
       if ($('scanScopeFromTargets').checked) {
         $('scanScope').value = scopeListFromTargets($('scanTargets').value).join(', ');
       }
-      updateScanPreview();
+      renderScanEstimate();
     });
-    ['scanPorts', 'scanTopPorts', 'scanProfile', 'scanProtocol', 'scanScope', 'scanTimeout', 'scanConcurrency', 'scanRate', 'scanMaxAttempts'].forEach((id) => {
-      $(id).addEventListener('input', updateScanPreview);
-      $(id).addEventListener('change', updateScanPreview);
+    ['scanPorts', 'scanTopPorts', 'scanProfile', 'scanProtocol', 'scanScope', 'scanTimeout', 'scanConcurrency', 'scanRate', 'scanMaxAttempts', 'scanConfirmLargeScan'].forEach((id) => {
+      $(id).addEventListener('input', renderScanEstimate);
+      $(id).addEventListener('change', renderScanEstimate);
     });
     $('scanFillScope').addEventListener('click', () => {
       $('scanScope').value = scopeListFromTargets($('scanTargets').value).join(', ');
-      updateScanPreview();
+      renderScanEstimate();
     });
     $('scanScopeFromTargets').addEventListener('change', updateScanScopeMode);
     $('scanReset').addEventListener('click', () => {
@@ -3165,6 +3083,7 @@ ${health.db}` : '데이터베이스 없음';
       state.presetDirty = false;
       renderScanPresets();
       updateScanScopeMode();
+      updateScanActionState();
     });
 
     $('scanPresetSave').addEventListener('click', () => {
