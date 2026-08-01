@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {"name": "netroach", "runtimeExecutable": "python", "runtimeArgs": ["-m", "netroach", "serve", "--port", "8000"], "port": 8000}
+  ]
+}

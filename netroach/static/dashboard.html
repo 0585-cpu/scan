@@ -10,7 +10,7 @@
        states own, so "selected" and "open" can never be confused. */
     :root {
       color-scheme: light;
-      --bg: #eef1f6;
+      --bg: #f7f8f7;
       --surface: #ffffff;
       --surface-alt: #f6f8fc;
       --surface-sunken: #eff3f9;
@@ -21,9 +21,13 @@
       --text: #101828;
       --text-soft: #344256;
       --muted: #5d6b81;
-      --accent: #1b6ec2;
-      --accent-dark: #14589e;
-      --accent-soft: #e9f1fb;
+      --accent: #0f766e;
+      --accent-dark: #0b5f58;
+      --accent-soft: #e6f2f0;
+      --state-open: #0f766e;
+      --state-filtered: #6b7280;
+      --state-closed: #9ca3af;
+      --state-error: #b91c1c;
       --warn: #9a6700;
       --warn-soft: #fff8e6;
       --warn-line: #edcf82;
@@ -33,9 +37,9 @@
       --ok: #157347;
       --ok-soft: #ecf8f1;
       --ok-line: #b7dfc8;
-      --focus: rgba(27, 110, 194, .28);
-      --radius: 10px;
-      --radius-sm: 7px;
+      --focus: rgba(15, 118, 110, .28);
+      --radius: 4px;
+      --radius-sm: 4px;
       --shadow: 0 1px 2px rgba(16, 24, 40, .05);
       --shadow-lift: 0 6px 18px rgba(16, 24, 40, .1);
     }
@@ -180,14 +184,57 @@
     .app {
       min-height: 100vh;
       display: grid;
-      grid-template-columns: 236px minmax(0, 1fr);
+      grid-template-columns: 56px minmax(0, 1fr);
     }
-    .sidebar {
-      background: var(--sidebar);
-      color: #f8fafc;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      min-height: 100vh;
+    .rail {
+      width: 56px;
+      flex: 0 0 56px;
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      padding: 8px 0;
+      transition: width 120ms ease, flex-basis 120ms ease;
+      overflow: hidden;
+    }
+    .rail:hover, .rail:focus-within { width: 184px; flex-basis: 184px; }
+    .rail-brand {
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.04em;
+    }
+    .rail .nav { display: flex; flex-direction: column; gap: 2px; }
+    .rail .nav button {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 36px;
+      padding: 0 18px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      white-space: nowrap;
+      text-align: left;
+    }
+    .rail .nav button::before {
+      content: attr(data-rail-icon);
+      width: 20px;
+      flex: 0 0 20px;
+      text-align: center;
+      font-size: 14px;
+    }
+    .rail .nav button:hover { background: var(--accent-soft); color: var(--accent); }
+    .rail .nav button.active { background: var(--accent-soft); color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+    .rail-label { opacity: 0; transition: opacity 120ms ease; }
+    .rail:hover .rail-label, .rail:focus-within .rail-label { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) {
+      .rail, .rail-label { transition: none; }
     }
     .brand {
       display: flex;
@@ -665,28 +712,19 @@
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">N</span>
-        <span class="brand-text">
-          <strong>Netroach</strong>
-          <span>로컬 진단 콘솔</span>
-        </span>
-      </div>
+    <aside class="rail">
+      <div class="rail-brand" title="netroach">N</div>
       <nav class="nav" aria-label="대시보드 섹션">
-        <span class="nav-group-label">스캔</span>
-        <button type="button" data-view-target="overview" class="active">개요</button>
-        <button type="button" data-view-target="scans">포트 스캔</button>
-        <span class="nav-group-label">패킷</span>
-        <button type="button" data-view-target="pcap">PCAP 분석</button>
-        <button type="button" data-view-target="capture">라이브 캡처</button>
-        <button type="button" data-view-target="packets">패킷 전송</button>
-        <button type="button" data-view-target="oast">OAST 콜백</button>
-        <span class="nav-group-label">시스템</span>
-        <button type="button" data-view-target="plugins">플러그인</button>
-        <button type="button" data-view-target="diagnostics">진단</button>
+        <button type="button" data-view-target="overview" data-rail-icon="◈" class="active"><span class="rail-label">개요</span></button>
+        <button type="button" data-view-target="scans" data-rail-icon="◉"><span class="rail-label">포트 스캔</span></button>
+        <button type="button" data-view-target="pcap" data-rail-icon="⬡"><span class="rail-label">PCAP 분석</span></button>
+        <button type="button" data-view-target="capture" data-rail-icon="⬢"><span class="rail-label">라이브 캡처</span></button>
+        <button type="button" data-view-target="packets" data-rail-icon="◇"><span class="rail-label">패킷 전송</span></button>
+        <button type="button" data-view-target="oast" data-rail-icon="◎"><span class="rail-label">OAST 콜백</span></button>
+        <button type="button" data-view-target="plugins" data-rail-icon="▣"><span class="rail-label">플러그인</span></button>
+        <button type="button" data-view-target="diagnostics" data-rail-icon="⚙"><span class="rail-label">진단</span></button>
       </nav>
-      <div class="sidebar-foot" id="dbPath">데이터베이스 확인 중</div>
+      <div id="dbPath" style="display:none"></div>
     </aside>
     <div class="shell">
       <header class="topbar">
