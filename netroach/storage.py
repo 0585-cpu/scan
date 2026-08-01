@@ -52,6 +52,18 @@ def default_db_path() -> Path:
     system = platform.system().lower()
     if system == "windows":
         base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+        return base / "Netroach" / "netroach.db"
+    if system == "darwin":
+        return Path.home() / "Library" / "Application Support" / "netroach" / "netroach.db"
+    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return base / "netroach" / "netroach.db"
+
+
+def legacy_db_path() -> Path:
+    """Where the data lived when the project was still called Scaprobe."""
+    system = platform.system().lower()
+    if system == "windows":
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
         return base / "Scaprobe" / "scaprobe.db"
     if system == "darwin":
         return Path.home() / "Library" / "Application Support" / "scaprobe" / "scaprobe.db"
@@ -59,9 +71,38 @@ def default_db_path() -> Path:
     return base / "scaprobe" / "scaprobe.db"
 
 
+def migrate_legacy_data(new_path: Path, legacy_path: Path | None = None) -> bool:
+    """Move a pre-rename database and its artifacts to the new location.
+
+    Only runs when there is nothing at the new path yet, so it can never
+    overwrite current data, and it is a no-op on every later start. A failure
+    here must not stop the application: the worst case is an empty history
+    plus the untouched old directory, which the user can still copy by hand.
+    """
+    legacy = legacy_path or legacy_db_path()
+    if new_path.exists() or not legacy.is_file():
+        return False
+    legacy_artifacts = legacy.parent / f"{legacy.stem}-artifacts"
+    try:
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(os.fspath(legacy), os.fspath(new_path))
+        if legacy_artifacts.is_dir():
+            shutil.move(
+                os.fspath(legacy_artifacts),
+                os.fspath(new_path.parent / f"{new_path.stem}-artifacts"),
+            )
+    except OSError:
+        return False
+    return True
+
+
 class SQLiteRepository:
     def __init__(self, path: str | Path | None = None) -> None:
-        self.path = Path(path) if path else default_db_path()
+        if path:
+            self.path = Path(path)
+        else:
+            self.path = default_db_path()
+            migrate_legacy_data(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._init()
 

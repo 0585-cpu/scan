@@ -6,8 +6,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from netprobe.cli import main
-from netprobe.desktop import build_desktop_url, find_free_port
+from netroach.cli import main
+from netroach.desktop import build_desktop_url, find_free_port
 
 
 class DesktopTests(unittest.TestCase):
@@ -45,21 +45,21 @@ class DesktopTests(unittest.TestCase):
         self.assertIn("defaults to 8765", stdout.getvalue())
 
     def test_desktop_uses_fixed_default_port(self):
-        with patch("netprobe.desktop.run_desktop", return_value=0) as run_desktop:
+        with patch("netroach.desktop.run_desktop", return_value=0) as run_desktop:
             code = main(["desktop", "--no-open"])
 
         self.assertEqual(code, 0)
         self.assertEqual(run_desktop.call_args.args[0].port, 8765)
 
     def test_desktop_command_passes_settings(self):
-        with patch("netprobe.desktop.run_desktop", return_value=0) as run_desktop:
+        with patch("netroach.desktop.run_desktop", return_value=0) as run_desktop:
             code = main(
                 [
                     "desktop",
                     "--db",
-                    "scaprobe.db",
+                    "netroach.db",
                     "--config",
-                    "scaprobe.toml",
+                    "netroach.toml",
                     "--env",
                     "lab",
                     "--plugin",
@@ -74,8 +74,8 @@ class DesktopTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         settings = run_desktop.call_args.args[0]
-        self.assertEqual(settings.db_path, "scaprobe.db")
-        self.assertEqual(settings.config_path, "scaprobe.toml")
+        self.assertEqual(settings.db_path, "netroach.db")
+        self.assertEqual(settings.config_path, "netroach.toml")
         self.assertEqual(settings.config_env, "lab")
         self.assertEqual(tuple(settings.plugin_paths), ("plugin.json",))
         self.assertEqual(settings.host, "127.0.0.1")

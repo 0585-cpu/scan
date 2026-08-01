@@ -2,13 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from netprobe.config import ScaprobeConfig, load_config, resolve_scan_options
+from netroach.config import NetroachConfig, load_config, resolve_scan_options
 
 
 class ConfigTests(unittest.TestCase):
     def test_loads_scan_defaults_custom_profiles_and_environment(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "scaprobe.toml"
+            path = Path(tmp) / "netroach.toml"
             path.write_text(
                 """
 [scan]
@@ -40,7 +40,7 @@ port_profile = "app"
 
     def test_explicit_port_source_overrides_config_port_defaults(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "scaprobe.toml"
+            path = Path(tmp) / "netroach.toml"
             path.write_text(
                 """
 [scan]
@@ -63,7 +63,7 @@ port_profile = "web"
         self.assertIsNone(options["top_ports"])
 
     def test_builtin_local_environment_supplies_safe_loopback_defaults(self):
-        options = resolve_scan_options(config=ScaprobeConfig(), env="local", values={}, explicit_fields=set())
+        options = resolve_scan_options(config=NetroachConfig(), env="local", values={}, explicit_fields=set())
 
         self.assertIn("127.0.0.0/8", options["scope"])
         self.assertEqual(options["timeout_ms"], 300)
@@ -71,7 +71,7 @@ port_profile = "web"
 
     def test_config_loads_plugin_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "scaprobe.toml"
+            path = Path(tmp) / "netroach.toml"
             path.write_text(
                 """
 [plugins]
@@ -87,7 +87,7 @@ paths = ["plugins/lab.json"]
     def test_scan_resource_limits_reject_unsafe_values(self):
         with self.assertRaisesRegex(ValueError, "concurrency"):
             resolve_scan_options(
-                config=ScaprobeConfig(),
+                config=NetroachConfig(),
                 env=None,
                 values={"concurrency": 5000},
                 explicit_fields={"concurrency"},

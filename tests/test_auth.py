@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from netprobe.auth import (
+from netroach.auth import (
     AuthorizationError,
     is_loopback_host,
     require_active_authorization,
@@ -44,7 +44,7 @@ class ApiTokenTests(unittest.TestCase):
         self.assertEqual(resolve_api_token("  secret  ", "127.0.0.1"), "secret")
 
     def test_environment_token_is_used(self):
-        with patch.dict("os.environ", {"SCAPROBE_API_TOKEN": "env-secret"}):
+        with patch.dict("os.environ", {"NETROACH_API_TOKEN": "env-secret"}):
             self.assertEqual(resolve_api_token(None, "127.0.0.1"), "env-secret")
 
 

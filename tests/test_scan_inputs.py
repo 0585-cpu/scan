@@ -4,14 +4,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from netprobe.scan_inputs import (
+from netroach.scan_inputs import (
     TOP_PORTS,
     resolve_host_names,
     resolve_ports,
     resolve_targets,
     validate_scan_workload,
 )
-from netprobe.scope import ScopeError
+from netroach.scope import ScopeError
 
 
 def _addrinfo(*addresses: str) -> list[tuple]:
@@ -49,7 +49,7 @@ class HostNameTargetTests(unittest.TestCase):
                 resolve_host_names("nowhere.invalid")
 
     def test_resolved_targets_still_face_the_scope_guard(self):
-        from netprobe.scope import ScopeGuard
+        from netroach.scope import ScopeGuard
 
         with patch("socket.getaddrinfo", return_value=_addrinfo("203.0.113.9")):
             targets, expr = resolve_targets(targets="lab.example", max_hosts=16)

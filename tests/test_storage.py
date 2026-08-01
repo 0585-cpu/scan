@@ -3,14 +3,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from netprobe.models import PortResult, ScanSummary, SendResult
-from netprobe.storage import SQLiteRepository
+from netroach.models import PortResult, ScanSummary, SendResult
+from netroach.storage import SQLiteRepository
 
 
 class StorageTests(unittest.TestCase):
     def test_recoverable_jobs_are_claimed_atomically(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
                 ports="80",
@@ -35,7 +35,7 @@ class StorageTests(unittest.TestCase):
 
     def test_scan_job_and_results_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
                 ports="80",
@@ -68,7 +68,7 @@ class StorageTests(unittest.TestCase):
 
     def test_packet_audit_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             audit_id = repo.save_packet_audit(
                 request={"template": "icmp", "target": "127.0.0.1", "count": 1},
                 result=SendResult(template="icmp", target="127.0.0.1", sent=1, duration_s=0.1, details={"payload_bytes": 0}),
@@ -87,7 +87,7 @@ class StorageTests(unittest.TestCase):
 
     def test_pcap_history_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             analysis_id = repo.save_pcap_analysis(
                 "capture.pcap",
                 {"packet_count": 3, "protocols": {"TCP": 2, "UDP": 1}},
@@ -101,7 +101,7 @@ class StorageTests(unittest.TestCase):
 
     def test_oast_session_and_interaction_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             session = repo.create_oast_session(label="lab", base_url="http://127.0.0.1:8765", ttl_seconds=3600)
             interaction = repo.save_oast_interaction(
                 session_id=session["id"],
@@ -124,7 +124,7 @@ class StorageTests(unittest.TestCase):
 
     def test_result_filters_and_count(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
                 ports="53,80",
@@ -162,7 +162,7 @@ class StorageTests(unittest.TestCase):
 
     def test_result_host_search_and_state_summaries(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1,127.0.0.2",
                 ports="22,80",
@@ -222,7 +222,7 @@ class StorageTests(unittest.TestCase):
 
     def test_report_results_prioritize_open_and_review_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
                 ports="1,2,65000",
@@ -263,7 +263,7 @@ class StorageTests(unittest.TestCase):
 
     def test_result_metadata_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
                 ports="80",
@@ -290,7 +290,7 @@ class StorageTests(unittest.TestCase):
 
     def test_scan_progress_cancel_and_delete(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1,127.0.0.2",
                 ports="80,443",
@@ -323,7 +323,7 @@ class StorageTests(unittest.TestCase):
 
     def test_cleanup_scan_jobs(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             old_id = repo.create_scan_job(targets="127.0.0.1", ports="80", scope=["127.0.0.0/8"], params={})
             new_id = repo.create_scan_job(targets="127.0.0.2", ports="80", scope=["127.0.0.0/8"], params={})
             with repo.session() as conn:
@@ -418,7 +418,7 @@ class StorageTests(unittest.TestCase):
 
     def test_result_image_evidence_round_trip_and_delete(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
                 ports="80",
@@ -468,7 +468,7 @@ class StorageTests(unittest.TestCase):
 
     def test_duplicate_port_results_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
                 ports="80",
@@ -485,7 +485,7 @@ class StorageTests(unittest.TestCase):
 
     def test_complete_scan_rejects_summary_count_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = SQLiteRepository(Path(tmp) / "scaprobe.db")
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
                 ports="80,443",
@@ -499,6 +499,41 @@ class StorageTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "summary total mismatch"):
                 repo.complete_scan(scan_id, summary)
+
+
+class LegacyDataMigrationTests(unittest.TestCase):
+    def test_pre_rename_database_and_artifacts_are_moved_once(self):
+        from netroach.storage import migrate_legacy_data
+
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "Scaprobe" / "scaprobe.db"
+            legacy.parent.mkdir()
+            legacy.write_bytes(b"old database")
+            (legacy.parent / "scaprobe-artifacts").mkdir()
+            (legacy.parent / "scaprobe-artifacts" / "shot.png").write_bytes(b"png")
+            new = Path(tmp) / "Netroach" / "netroach.db"
+
+            self.assertTrue(migrate_legacy_data(new, legacy))
+            self.assertEqual(new.read_bytes(), b"old database")
+            self.assertEqual((new.parent / "netroach-artifacts" / "shot.png").read_bytes(), b"png")
+            self.assertFalse(legacy.exists())
+            # A second start has nothing left to move.
+            self.assertFalse(migrate_legacy_data(new, legacy))
+
+    def test_existing_data_is_never_overwritten(self):
+        from netroach.storage import migrate_legacy_data
+
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "Scaprobe" / "scaprobe.db"
+            legacy.parent.mkdir()
+            legacy.write_bytes(b"old database")
+            new = Path(tmp) / "Netroach" / "netroach.db"
+            new.parent.mkdir()
+            new.write_bytes(b"current database")
+
+            self.assertFalse(migrate_legacy_data(new, legacy))
+            self.assertEqual(new.read_bytes(), b"current database")
+            self.assertTrue(legacy.is_file())
 
 
 if __name__ == "__main__":

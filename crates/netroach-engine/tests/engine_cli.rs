@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 fn engine_path() -> &'static str {
-    env!("CARGO_BIN_EXE_scaprobe-engine")
+    env!("CARGO_BIN_EXE_netroach-engine")
 }
 
 #[test]
@@ -17,7 +17,7 @@ fn version_flag_prints_engine_version() {
     let output = Command::new(engine_path())
         .arg("--version")
         .output()
-        .expect("run scaprobe-engine --version");
+        .expect("run netroach-engine --version");
 
     assert!(
         output.status.success(),
@@ -26,7 +26,7 @@ fn version_flag_prints_engine_version() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
-    assert!(stdout.trim().starts_with("scaprobe-engine "));
+    assert!(stdout.trim().starts_with("netroach-engine "));
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn scan_open_banner_service_emits_expected_ndjson_schema() {
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("accept scanner connection");
         stream
-            .write_all(b"SSH-2.0-ScaprobeIntegrationTest\r\n")
+            .write_all(b"SSH-2.0-NetroachIntegrationTest\r\n")
             .expect("write banner");
         thread::sleep(Duration::from_millis(100));
     });
@@ -79,7 +79,7 @@ fn scan_open_banner_service_emits_expected_ndjson_schema() {
     assert!(port_event["service_confidence"].as_f64().unwrap() >= 0.98);
     assert_eq!(
         port_event["banner"].as_str(),
-        Some("SSH protocol=2.0; product=ScaprobeIntegrationTest")
+        Some("SSH protocol=2.0; product=NetroachIntegrationTest")
     );
     assert!(port_event["error"].is_null());
 
@@ -105,7 +105,7 @@ fn scan_accepts_targets_and_ports_from_files() {
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("accept file-input scanner");
         stream
-            .write_all(b"SSH-2.0-ScaprobeFileInputTest\r\n")
+            .write_all(b"SSH-2.0-NetroachFileInputTest\r\n")
             .expect("write file-input banner");
     });
     let targets_file = write_temp_input("targets", "127.0.0.1\n");
@@ -149,7 +149,7 @@ fn scan_udp_open_response_emits_udp_event() {
         let (size, peer) = socket.recv_from(&mut buf).expect("receive udp probe");
         assert!(size > 0);
         socket
-            .send_to(b"scaprobe-udp-test", peer)
+            .send_to(b"netroach-udp-test", peer)
             .expect("send udp response");
     });
     let port_arg = port.to_string();
@@ -205,7 +205,7 @@ fn scan_identifies_http_on_nonstandard_port() {
         let _ = stream.read(&mut buf);
         stream
             .write_all(
-                b"HTTP/1.0 200 OK\r\nServer: ScaprobeTest\r\nContent-Type: text/html\r\n\r\n<html><title>Scaprobe &amp; Lab</title></html>",
+                b"HTTP/1.0 200 OK\r\nServer: NetroachTest\r\nContent-Type: text/html\r\n\r\n<html><title>Netroach &amp; Lab</title></html>",
             )
             .expect("write http response");
     });
@@ -242,7 +242,7 @@ fn scan_identifies_http_on_nonstandard_port() {
     assert!(port_event["banner"]
         .as_str()
         .expect("banner string")
-        .contains("title=Scaprobe & Lab"));
+        .contains("title=Netroach & Lab"));
 }
 
 #[test]
@@ -300,7 +300,7 @@ fn scan_respects_start_rate_limit_under_high_concurrency() {
             let (mut stream, _) = listener
                 .accept()
                 .expect("accept rate-limit scanner connection");
-            let _ = stream.write_all(b"SCAPROBE-RATE-TEST\r\n");
+            let _ = stream.write_all(b"NETROACH-RATE-TEST\r\n");
         }));
     }
     let ports_arg = ports
@@ -472,7 +472,7 @@ fn run_engine_scan(args: &[&str]) -> Vec<Value> {
         .arg("scan")
         .args(args)
         .output()
-        .expect("run scaprobe-engine");
+        .expect("run netroach-engine");
     assert!(
         output.status.success(),
         "engine failed\nstatus: {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -495,7 +495,7 @@ fn write_temp_input(label: &str, contents: &str) -> PathBuf {
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "scaprobe-engine-{label}-{}-{id}.txt",
+        "netroach-engine-{label}-{}-{id}.txt",
         std::process::id()
     ));
     fs::write(&path, contents).expect("write temporary engine input");

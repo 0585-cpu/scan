@@ -7,8 +7,8 @@ from collections.abc import Iterable
 
 from .scope import ScopeGuard
 
-API_TOKEN_ENV = "SCAPROBE_API_TOKEN"
-API_TOKEN_COOKIE = "scaprobe_api_token"
+API_TOKEN_ENV = "NETROACH_API_TOKEN"
+API_TOKEN_COOKIE = "netroach_api_token"
 
 
 class AuthorizationError(PermissionError):

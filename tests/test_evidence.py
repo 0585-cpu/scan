@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from netprobe.evidence import (
+from netroach.evidence import (
     SCREENSHOT_HEIGHT,
     SCREENSHOT_WIDTH,
     ScreenshotCaptureSummary,
@@ -109,8 +109,8 @@ class EvidenceTests(unittest.TestCase):
     def test_powershell_diagnostic_passes_target_through_environment(self):
         dangerous_host = "127.0.0.1'; Remove-Item *; '"
         completed = SimpleNamespace(stdout="TcpTestSucceeded : True\n", stderr="", returncode=0)
-        with patch("netprobe.evidence.shutil.which", return_value="powershell.exe"):
-            with patch("netprobe.evidence.subprocess.run", return_value=completed) as run:
+        with patch("netroach.evidence.shutil.which", return_value="powershell.exe"):
+            with patch("netroach.evidence.subprocess.run", return_value=completed) as run:
                 transcript = run_powershell_diagnostic(
                     {
                         "host": dangerous_host,
@@ -123,10 +123,10 @@ class EvidenceTests(unittest.TestCase):
 
         arguments = run.call_args.args[0]
         self.assertNotIn(dangerous_host, arguments)
-        self.assertEqual(run.call_args.kwargs["env"]["SCAPROBE_TARGET"], dangerous_host)
-        self.assertEqual(run.call_args.kwargs["env"]["SCAPROBE_PREAUTH_MODE"], "ssh")
-        self.assertNotIn("SCAPROBE_USERNAME", run.call_args.kwargs["env"])
-        self.assertNotIn("SCAPROBE_PASSWORD", run.call_args.kwargs["env"])
+        self.assertEqual(run.call_args.kwargs["env"]["NETROACH_TARGET"], dangerous_host)
+        self.assertEqual(run.call_args.kwargs["env"]["NETROACH_PREAUTH_MODE"], "ssh")
+        self.assertNotIn("NETROACH_USERNAME", run.call_args.kwargs["env"])
+        self.assertNotIn("NETROACH_PASSWORD", run.call_args.kwargs["env"])
         self.assertNotIn("shell", run.call_args.kwargs)
         self.assertIn("TcpTestSucceeded", transcript.output)
 
@@ -154,8 +154,8 @@ class EvidenceTests(unittest.TestCase):
             output="TcpTestSucceeded : True",
             exit_code=0,
         )
-        with patch("netprobe.evidence.capture_web_screenshots", return_value=failed_web):
-            with patch("netprobe.evidence.run_powershell_diagnostic", return_value=transcript):
+        with patch("netroach.evidence.capture_web_screenshots", return_value=failed_web):
+            with patch("netroach.evidence.run_powershell_diagnostic", return_value=transcript):
                 summary = capture_automatic_evidence(results, store=store)
 
         self.assertEqual(

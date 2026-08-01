@@ -11,11 +11,11 @@ from pathlib import Path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build a portable Scaprobe artifact.")
+    parser = argparse.ArgumentParser(description="Build a portable Netroach artifact.")
     parser.add_argument("--output-dir", default="dist")
     parser.add_argument("--cargo-target-dir", default="target")
     parser.add_argument("--engine-profile", default="release", choices=["release", "portable", "debug"])
-    parser.add_argument("--require-engine", action="store_true", help="fail if scaprobe-engine is not present")
+    parser.add_argument("--require-engine", action="store_true", help="fail if netroach-engine is not present")
     parser.add_argument(
         "--archive-format",
         default="auto",
@@ -35,12 +35,12 @@ def main() -> int:
     engine_root = Path(args.cargo_target_dir)
     if not engine_root.is_absolute():
         engine_root = root / engine_root
-    engine = engine_root / profile_dir / f"scaprobe-engine{suffix}"
+    engine = engine_root / profile_dir / f"netroach-engine{suffix}"
     if args.require_engine and not engine.is_file():
         raise SystemExit(f"engine binary not found: {engine}")
     archive_format = resolve_archive_format(args.archive_format, platform_name)
     extension = ".zip" if archive_format == "zip" else ".tar.gz"
-    archive = output_dir / f"scaprobe-{read_app_version(root)}-{platform_name}{extension}"
+    archive = output_dir / f"netroach-{read_app_version(root)}-{platform_name}{extension}"
 
     if archive_format == "zip":
         write_zip_archive(root=root, archive=archive, engine=engine)
@@ -64,7 +64,7 @@ def resolve_archive_format(archive_format: str, platform_name: str) -> str:
 
 
 def read_app_version(root: Path) -> str:
-    version_file = root / "netprobe" / "version.py"
+    version_file = root / "netroach" / "version.py"
     text = version_file.read_text(encoding="utf-8")
     match = re.search(r"^__version__\s*=\s*['\"]([^'\"]+)['\"]", text, flags=re.MULTILINE)
     if not match:
@@ -74,7 +74,7 @@ def read_app_version(root: Path) -> str:
 
 def iter_payload_files(root: Path) -> list[Path]:
     files: list[Path] = []
-    for directory in ["netprobe", "postman", "docs", "tools", "desktop"]:
+    for directory in ["netroach", "postman", "docs", "tools", "desktop"]:
         for path in (root / directory).rglob("*"):
             ignored_parts = {"__pycache__", "node_modules", "target", "dist"}
             staged_desktop_binary = (
@@ -92,7 +92,7 @@ def iter_payload_files(root: Path) -> list[Path]:
                 and path.suffix != ".pyc"
             ):
                 files.append(path)
-    for filename in ["README.md", "CHANGELOG.md", "pyproject.toml", "requirements.txt"]:
+    for filename in ["README.md", "CHANGELOG.md", "pyproject.toml", "requirements.txt", "requirements.lock.txt"]:
         files.append(root / filename)
     return sorted(files)
 
@@ -112,9 +112,9 @@ def write_tar_archive(*, root: Path, archive: Path, engine: Path) -> None:
     with tarfile.open(archive, "w:gz") as tf:
         for path in iter_payload_files(root):
             add_tar_file(tf, path, path.relative_to(root))
-        write_tar_text(tf, "Start-Scaprobe.cmd", windows_quick_start_text(), mode=0o644)
-        write_tar_text(tf, "bin/scaprobe", posix_launcher_text(), mode=0o755)
-        write_tar_text(tf, "bin/scaprobe.cmd", windows_launcher_text(), mode=0o644)
+        write_tar_text(tf, "Start-Netroach.cmd", windows_quick_start_text(), mode=0o644)
+        write_tar_text(tf, "bin/netroach", posix_launcher_text(), mode=0o755)
+        write_tar_text(tf, "bin/netroach.cmd", windows_launcher_text(), mode=0o644)
         write_tar_text(tf, "bin/setup.cmd", windows_setup_text(), mode=0o644)
         write_tar_text(tf, "bin/start-desktop.cmd", windows_desktop_text(), mode=0o644)
         if engine.is_file():
@@ -151,8 +151,8 @@ def write_sha256_checksum(archive: Path) -> Path:
 
 def engine_missing_note() -> str:
     return (
-        "Build with: cargo build --release -p scaprobe-engine\n"
-        "On locked-down Windows systems, use: cargo build --profile portable -p scaprobe-engine\n"
+        "Build with: cargo build --release -p netroach-engine\n"
+        "On locked-down Windows systems, use: cargo build --profile portable -p netroach-engine\n"
     )
 
 
@@ -162,7 +162,7 @@ def posix_launcher_text() -> str:
         'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\n'
         'ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"\n'
         'cd "$ROOT" || exit 1\n'
-        'PATH="$SCRIPT_DIR:$PATH" PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" exec "${PYTHON:-python3}" -m netprobe "$@"\n'
+        'PATH="$SCRIPT_DIR:$PATH" PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" exec "${PYTHON:-python3}" -m netroach "$@"\n'
     )
 
 
@@ -174,11 +174,11 @@ def windows_launcher_text() -> str:
         "set PATH=%SCRIPT_DIR%;%PATH%\r\n"
         "pushd \"%SCRIPT_DIR%..\"\r\n"
         "if defined PYTHON (\r\n"
-        "  \"%PYTHON%\" -m netprobe %*\r\n"
+        "  \"%PYTHON%\" -m netroach %*\r\n"
         ") else if exist \"%SCRIPT_DIR%..\\.venv\\Scripts\\python.exe\" (\r\n"
-        "  \"%SCRIPT_DIR%..\\.venv\\Scripts\\python.exe\" -m netprobe %*\r\n"
+        "  \"%SCRIPT_DIR%..\\.venv\\Scripts\\python.exe\" -m netroach %*\r\n"
         ") else (\r\n"
-        "  py -3 -m netprobe %*\r\n"
+        "  py -3 -m netroach %*\r\n"
         ")\r\n"
         "set EXIT_CODE=%ERRORLEVEL%\r\n"
         "popd\r\n"
@@ -199,7 +199,7 @@ def windows_setup_text() -> str:
         ")\r\n"
         "py -3 -c \"import sys; raise SystemExit(not (sys.version_info.major == 3 and sys.version_info.minor in range(10, 100)))\"\r\n"
         "if errorlevel 1 (\r\n"
-        "  echo Scaprobe requires Python 3.10 or newer.\r\n"
+        "  echo Netroach requires Python 3.10 or newer.\r\n"
         "  exit /b 1\r\n"
         ")\r\n"
         "if not exist \"%VENV_PYTHON%\" (\r\n"
@@ -207,7 +207,7 @@ def windows_setup_text() -> str:
         "  py -3 -m venv \"%ROOT%\\.venv\"\r\n"
         "  if errorlevel 1 exit /b 1\r\n"
         ")\r\n"
-        "echo Installing Scaprobe dependencies...\r\n"
+        "echo Installing Netroach dependencies...\r\n"
         "\"%VENV_PYTHON%\" -m pip install -r \"%ROOT%\\requirements.txt\"\r\n"
         "if errorlevel 1 exit /b 1\r\n"
         "if /I \"%~1\"==\"--screenshots\" (\r\n"
@@ -217,9 +217,9 @@ def windows_setup_text() -> str:
         "  \"%VENV_PYTHON%\" -m playwright install chromium\r\n"
         "  if errorlevel 1 exit /b 1\r\n"
         ")\r\n"
-        "call \"%~dp0scaprobe.cmd\" serve --check\r\n"
+        "call \"%~dp0netroach.cmd\" serve --check\r\n"
         "if errorlevel 1 exit /b 1\r\n"
-        "echo Setup complete. Run bin\\start-desktop.cmd to open Scaprobe.\r\n"
+        "echo Setup complete. Run bin\\start-desktop.cmd to open Netroach.\r\n"
         "endlocal\r\n"
     )
 
@@ -229,10 +229,10 @@ def windows_desktop_text() -> str:
         "@echo off\r\n"
         "set \"ROOT=%~dp0..\"\r\n"
         "if not exist \"%ROOT%\\.venv\\Scripts\\python.exe\" (\r\n"
-        "  echo Scaprobe is not set up. Run bin\\setup.cmd first.\r\n"
+        "  echo Netroach is not set up. Run bin\\setup.cmd first.\r\n"
         "  exit /b 1\r\n"
         ")\r\n"
-        "call \"%~dp0scaprobe.cmd\" desktop --host 127.0.0.1 --port 8765\r\n"
+        "call \"%~dp0netroach.cmd\" desktop --host 127.0.0.1 --port 8765\r\n"
     )
 
 
@@ -240,7 +240,7 @@ def windows_quick_start_text() -> str:
     return (
         "@echo off\r\n"
         "setlocal\r\n"
-        "title Scaprobe\r\n"
+        "title Netroach\r\n"
         "set \"ROOT=%~dp0\"\r\n"
         "set \"VENV_PYTHON=%ROOT%.venv\\Scripts\\python.exe\"\r\n"
         "if /I \"%~1\"==\"--start\" goto start\r\n"
@@ -251,11 +251,11 @@ def windows_quick_start_text() -> str:
         ":menu\r\n"
         "cls\r\n"
         "echo ========================================\r\n"
-        "echo             Scaprobe Launcher\r\n"
+        "echo             Netroach Launcher\r\n"
         "echo ========================================\r\n"
-        "echo [1] Start Scaprobe\r\n"
+        "echo [1] Start Netroach\r\n"
         "echo [2] Install screenshot support and start\r\n"
-        "echo [3] Install or update Scaprobe only\r\n"
+        "echo [3] Install or update Netroach only\r\n"
         "echo [4] Run diagnostics\r\n"
         "echo [0] Exit\r\n"
         "echo.\r\n"
@@ -267,17 +267,17 @@ def windows_quick_start_text() -> str:
         "if errorlevel 1 goto start\r\n"
         ":start\r\n"
         "if exist \"%VENV_PYTHON%\" goto launch\r\n"
-        "echo First run detected. Setting up Scaprobe...\r\n"
+        "echo First run detected. Setting up Netroach...\r\n"
         "call \"%ROOT%bin\\setup.cmd\"\r\n"
         "if errorlevel 1 goto setup_failed\r\n"
         "goto launch\r\n"
         ":screenshots\r\n"
-        "echo Installing or updating Scaprobe with screenshot support...\r\n"
+        "echo Installing or updating Netroach with screenshot support...\r\n"
         "call \"%ROOT%bin\\setup.cmd\" --screenshots\r\n"
         "if errorlevel 1 goto setup_failed\r\n"
         "goto launch\r\n"
         ":setup_only\r\n"
-        "echo Installing or updating Scaprobe...\r\n"
+        "echo Installing or updating Netroach...\r\n"
         "call \"%ROOT%bin\\setup.cmd\"\r\n"
         "if errorlevel 1 goto setup_failed\r\n"
         "echo.\r\n"
@@ -287,13 +287,13 @@ def windows_quick_start_text() -> str:
         "goto menu\r\n"
         ":diagnostics\r\n"
         "if exist \"%VENV_PYTHON%\" goto run_diagnostics\r\n"
-        "echo Scaprobe must be set up before diagnostics can run.\r\n"
+        "echo Netroach must be set up before diagnostics can run.\r\n"
         "call \"%ROOT%bin\\setup.cmd\"\r\n"
         "if errorlevel 1 goto setup_failed\r\n"
         "set \"EXIT_CODE=0\"\r\n"
         "goto diagnostics_complete\r\n"
         ":run_diagnostics\r\n"
-        "call \"%ROOT%bin\\scaprobe.cmd\" serve --check\r\n"
+        "call \"%ROOT%bin\\netroach.cmd\" serve --check\r\n"
         "set \"EXIT_CODE=%ERRORLEVEL%\"\r\n"
         ":diagnostics_complete\r\n"
         "if not \"%~1\"==\"\" goto exit_with_code\r\n"
@@ -301,19 +301,19 @@ def windows_quick_start_text() -> str:
         "pause\r\n"
         "goto menu\r\n"
         ":launch\r\n"
-        "echo Starting Scaprobe...\r\n"
+        "echo Starting Netroach...\r\n"
         "call \"%ROOT%bin\\start-desktop.cmd\"\r\n"
         "set \"EXIT_CODE=%ERRORLEVEL%\"\r\n"
         "goto exit_with_code\r\n"
         ":setup_failed\r\n"
         "echo.\r\n"
-        "echo Scaprobe setup failed. Review the messages above and run this script again.\r\n"
+        "echo Netroach setup failed. Review the messages above and run this script again.\r\n"
         "set \"EXIT_CODE=1\"\r\n"
         "if not \"%~1\"==\"\" goto exit_with_code\r\n"
         "pause\r\n"
         "goto menu\r\n"
         ":usage\r\n"
-        "echo Usage: Start-Scaprobe.cmd [--start ^| --screenshots ^| --setup ^| --diagnostics]\r\n"
+        "echo Usage: Start-Netroach.cmd [--start ^| --screenshots ^| --setup ^| --diagnostics]\r\n"
         "set \"EXIT_CODE=2\"\r\n"
         "goto exit_with_code\r\n"
         ":exit_launcher\r\n"
@@ -328,11 +328,11 @@ def write_launcher_scripts(zf: zipfile.ZipFile) -> None:
 
 
 def write_zip_launcher_scripts(zf: zipfile.ZipFile) -> None:
-    posix_info = zipfile.ZipInfo("bin/scaprobe")
+    posix_info = zipfile.ZipInfo("bin/netroach")
     posix_info.external_attr = 0o755 << 16
-    zf.writestr("Start-Scaprobe.cmd", windows_quick_start_text())
+    zf.writestr("Start-Netroach.cmd", windows_quick_start_text())
     zf.writestr(posix_info, posix_launcher_text())
-    zf.writestr("bin/scaprobe.cmd", windows_launcher_text())
+    zf.writestr("bin/netroach.cmd", windows_launcher_text())
     zf.writestr("bin/setup.cmd", windows_setup_text())
     zf.writestr("bin/start-desktop.cmd", windows_desktop_text())
 

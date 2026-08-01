@@ -5,7 +5,7 @@ import tracemalloc
 import unittest
 from pathlib import Path
 
-from netprobe.pcap import analyze_pcap
+from netroach.pcap import analyze_pcap
 
 
 def has_scapy() -> bool:
@@ -72,7 +72,7 @@ class PcapAnalysisTests(unittest.TestCase):
         self.assertEqual(summary["dns_responses"]["nxdomain"], 1)
         self.assertEqual(summary["dns_responses"]["rcode_counts"]["NXDOMAIN"], 1)
         self.assertEqual(summary["http_hosts"], ["app.example.test"])
-        self.assertEqual(summary["http_user_agents"], ["ScaprobeTest/1.0"])
+        self.assertEqual(summary["http_user_agents"], ["NetroachTest/1.0"])
         self.assertEqual(summary["http_status_lines"], ["HTTP/1.1 404 Not Found"])
         metric = next(
             item
@@ -139,7 +139,7 @@ def fixture_packets(IP, TCP, UDP, DNS, DNSQR, Raw):
         / DNS(rd=1, qd=DNSQR(qname="example.test.")),
         IP(src="10.0.0.20", dst="10.0.0.30")
         / TCP(sport=49152, dport=80)
-        / Raw(b"GET / HTTP/1.1\r\nHost: app.example.test\r\nUser-Agent: Scaprobe\r\n\r\n"),
+        / Raw(b"GET / HTTP/1.1\r\nHost: app.example.test\r\nUser-Agent: Netroach\r\n\r\n"),
         IP(src="10.0.0.20", dst="10.0.0.40")
         / TCP(sport=49153, dport=443)
         / Raw(tls_client_hello("tls.example.test", ["h2", "http/1.1"])),
@@ -168,11 +168,11 @@ def v11_packets(ARP, BOOTP, DHCP, DNS, DNSQR, Ether, ICMP, IP, Raw, TCP, UDP):
         Ether()
         / IP(src="10.10.0.10", dst="10.10.0.20")
         / TCP(sport=51000, dport=80)
-        / Raw(b"GET /one HTTP/1.1\r\nHost: app.example.test\r\nUser-Agent: ScaprobeTest/1.0\r\n\r\n"),
+        / Raw(b"GET /one HTTP/1.1\r\nHost: app.example.test\r\nUser-Agent: NetroachTest/1.0\r\n\r\n"),
         Ether()
         / IP(src="10.10.0.10", dst="10.10.0.20")
         / TCP(sport=51000, dport=80)
-        / Raw(b"GET /two HTTP/1.1\r\nHost: app.example.test\r\nUser-Agent: ScaprobeTest/1.0\r\n\r\n"),
+        / Raw(b"GET /two HTTP/1.1\r\nHost: app.example.test\r\nUser-Agent: NetroachTest/1.0\r\n\r\n"),
         Ether()
         / IP(src="10.10.0.20", dst="10.10.0.10")
         / TCP(sport=80, dport=51000)

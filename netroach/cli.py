@@ -96,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="explicitly confirm a scan that exceeds max-attempts",
     )
-    scan.add_argument("--engine-path", help="path to scaprobe-engine; defaults to auto-discovery")
+    scan.add_argument("--engine-path", help="path to netroach-engine; defaults to auto-discovery")
     scan.add_argument("--json", action="store_true", help="emit JSON")
     scan.set_defaults(func=cmd_scan)
 
@@ -222,7 +222,7 @@ def add_db_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def add_config_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", help="scaprobe.toml path; defaults to ./scaprobe.toml or user config directory")
+    parser.add_argument("--config", help="netroach.toml path; defaults to ./netroach.toml or user config directory")
     parser.add_argument("--env", dest="config_env", help="config environment such as local, lab, or corp")
     parser.add_argument("--plugin", action="append", default=[], help="JSON plugin manifest or directory; repeatable")
 
@@ -531,7 +531,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     api_token = resolve_api_token(getattr(args, "api_token", None), args.host)
     if api_token:
-        print(f"Scaprobe API token: {api_token}")
+        print(f"Netroach API token: {api_token}")
         print(f"Dashboard: http://{args.host}:{args.port}/dashboard?token={api_token}")
     uvicorn.run(
         create_app(

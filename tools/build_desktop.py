@@ -23,14 +23,14 @@ PLAYWRIGHT_CACHE = ROOT / "target" / "desktop-playwright"
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Build the self-contained Scaprobe desktop installer.",
+        description="Build the self-contained Netroach desktop installer.",
     )
     parser.add_argument("--python", default=sys.executable, help="Python executable used by PyInstaller")
     parser.add_argument("--cargo", default="cargo", help="Cargo executable")
     parser.add_argument("--cargo-toolchain", help="optional Rust toolchain, for example stable-x86_64-pc-windows-msvc")
     parser.add_argument("--cargo-target", help="optional Rust target triple")
     parser.add_argument("--engine-profile", default="release", choices=("release", "portable", "debug"))
-    parser.add_argument("--engine-path", type=Path, help="use an existing scaprobe-engine binary")
+    parser.add_argument("--engine-path", type=Path, help="use an existing netroach-engine binary")
     parser.add_argument("--backend-path", type=Path, help="use an existing frozen backend binary")
     parser.add_argument("--skip-engine-build", action="store_true")
     parser.add_argument("--skip-backend-build", action="store_true")
@@ -63,19 +63,19 @@ def engine_output_path(profile: str, target: str | None = None) -> Path:
     parts = [ROOT / "target"]
     if target:
         parts.append(Path(target))
-    parts.extend((Path(profile), Path(executable_name("scaprobe-engine"))))
+    parts.extend((Path(profile), Path(executable_name("netroach-engine"))))
     return Path(*parts)
 
 
 def backend_output_path() -> Path:
-    return BACKEND_BUILD / "dist" / executable_name("scaprobe-backend")
+    return BACKEND_BUILD / "dist" / executable_name("netroach-backend")
 
 
 def cargo_build_command(args: argparse.Namespace) -> list[str]:
     command = [args.cargo]
     if args.cargo_toolchain:
         command.append(f"+{args.cargo_toolchain}")
-    command.extend(("build", "-p", "scaprobe-engine"))
+    command.extend(("build", "-p", "netroach-engine"))
     if args.engine_profile == "release":
         command.append("--release")
     elif args.engine_profile != "debug":
@@ -122,7 +122,7 @@ def pyinstaller_command(python: str) -> list[str]:
         "--onefile",
         "--console",
         "--name",
-        "scaprobe-backend",
+        "netroach-backend",
         "--distpath",
         os.fspath(BACKEND_BUILD / "dist"),
         "--workpath",
@@ -133,7 +133,7 @@ def pyinstaller_command(python: str) -> list[str]:
         os.fspath(ROOT),
         # The dashboard is a data file, so PyInstaller cannot find it by import.
         "--add-data",
-        f"{ROOT / 'netprobe' / 'static' / 'dashboard.html'}{os.pathsep}netprobe/static",
+        f"{ROOT / 'netroach' / 'static' / 'dashboard.html'}{os.pathsep}netroach/static",
         "--collect-all",
         "uvicorn",
         "--collect-all",
@@ -144,7 +144,7 @@ def pyinstaller_command(python: str) -> list[str]:
         "PIL",
         "--collect-all",
         "playwright",
-        os.fspath(ROOT / "netprobe" / "frozen_backend.py"),
+        os.fspath(ROOT / "netroach" / "frozen_backend.py"),
     ]
 
 
@@ -309,8 +309,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     engine = build_engine(args)
     browsers = build_playwright_browsers(args)
     backend = build_backend(args)
-    _stage_binary(engine, "scaprobe-engine")
-    _stage_binary(backend, "scaprobe-backend")
+    _stage_binary(engine, "netroach-engine")
+    _stage_binary(backend, "netroach-backend")
     _stage_playwright_browsers(browsers)
 
     if args.prepare_only:

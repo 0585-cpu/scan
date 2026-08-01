@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Scaprobe",
+  "productName": "Netroach",
   "version": "0.1.0",
-  "identifier": "dev.scaprobe.desktop",
+  "identifier": "dev.netroach.desktop",
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "",

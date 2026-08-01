@@ -22,20 +22,20 @@ def has_fastapi_testclient() -> bool:
 @unittest.skipUnless(has_fastapi_testclient(), "fastapi TestClient dependencies are not installed")
 class ApiTests(unittest.TestCase):
     def setUp(self) -> None:
-        from netprobe.version import __version__
+        from netroach.version import __version__
 
         diagnostics = {
             "app_version": __version__,
             "platform": "test",
             "python": "test",
-            "rust_engine": "scaprobe-engine",
+            "rust_engine": "netroach-engine",
             "rust_engine_available": True,
-            "rust_engine_version": "scaprobe-engine test",
+            "rust_engine_version": "netroach-engine test",
             "scapy_available": True,
             "database_path": "",
         }
-        self.engine_patch = patch("netprobe.api.resolve_engine_path", return_value="scaprobe-engine")
-        self.diagnostics_patch = patch("netprobe.api.collect_diagnostics")
+        self.engine_patch = patch("netroach.api.resolve_engine_path", return_value="netroach-engine")
+        self.diagnostics_patch = patch("netroach.api.collect_diagnostics")
         self.engine_patch.start()
         diagnostics_mock = self.diagnostics_patch.start()
         diagnostics_mock.return_value.to_dict.return_value = diagnostics
@@ -45,12 +45,12 @@ class ApiTests(unittest.TestCase):
     def test_startup_recovery_scans_only_missing_host_port_pairs(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import PortResult, ScanSummary
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.models import PortResult, ScanSummary
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
@@ -98,7 +98,7 @@ class ApiTests(unittest.TestCase):
                         )
                 return [], ScanSummary(scan_id=scan_id, total=len(targets) * len(ports))
 
-            with patch("netprobe.api.run_scan", side_effect=fake_run_scan):
+            with patch("netroach.api.run_scan", side_effect=fake_run_scan):
                 with TestClient(create_app(str(db_path))) as client:
                     self.assertEqual(client.get("/v1/health").status_code, 200)
                     deadline = time.monotonic() + 3
@@ -112,37 +112,37 @@ class ApiTests(unittest.TestCase):
     def test_health(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.version import __version__
+        from netroach.api import create_app
+        from netroach.version import __version__
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
             response = client.get("/v1/health")
             self.assertEqual(response.status_code, 200)
             payload = response.json()
             self.assertEqual(payload["status"], "ok")
             self.assertTrue(payload["rust_engine_available"])
-            self.assertEqual(Path(payload["db"]), Path(tmp) / "scaprobe.db")
+            self.assertEqual(Path(payload["db"]), Path(tmp) / "netroach.db")
             self.assertIn("diagnostics", payload)
             self.assertEqual(payload["diagnostics"]["app_version"], __version__)
             self.assertIn("platform", payload["diagnostics"])
             self.assertIn("rust_engine_available", payload["diagnostics"])
             self.assertIn("rust_engine_version", payload["diagnostics"])
             self.assertIn("scapy_available", payload["diagnostics"])
-            self.assertEqual(Path(payload["diagnostics"]["database_path"]), Path(tmp) / "scaprobe.db")
+            self.assertEqual(Path(payload["diagnostics"]["database_path"]), Path(tmp) / "netroach.db")
             self.assertIn("web", payload["plugins"]["port_profiles"])
             self.assertIn("infra", payload["plugins"]["port_profiles"])
 
     def test_health_is_degraded_and_scan_is_rejected_when_engine_is_missing(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
-            with patch("netprobe.api.resolve_engine_path", return_value=None):
-                with patch("netprobe.api.collect_diagnostics") as collect:
+            db_path = Path(tmp) / "netroach.db"
+            with patch("netroach.api.resolve_engine_path", return_value=None):
+                with patch("netroach.api.collect_diagnostics") as collect:
                     collect.return_value.to_dict.return_value = {
                         "rust_engine": None,
                         "rust_engine_available": False,
@@ -180,11 +180,11 @@ class ApiTests(unittest.TestCase):
     def test_startup_preserves_recoverable_jobs_when_engine_is_missing(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
@@ -193,7 +193,7 @@ class ApiTests(unittest.TestCase):
                 params={"resumable": True},
             )
             repo.mark_scan_started(scan_id)
-            with patch("netprobe.api.resolve_engine_path", return_value=None):
+            with patch("netroach.api.resolve_engine_path", return_value=None):
                 with TestClient(create_app(str(db_path))) as client:
                     self.assertEqual(client.get("/v1/scans").status_code, 200)
 
@@ -202,17 +202,17 @@ class ApiTests(unittest.TestCase):
     def test_dashboard_routes(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
+        from netroach.api import create_app
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
 
             root = client.get("/")
             dashboard = client.get("/dashboard")
 
             self.assertEqual(root.status_code, 200)
             self.assertIn("text/html", root.headers["content-type"])
-            self.assertIn("Scaprobe Dashboard", root.text)
+            self.assertIn("Netroach Dashboard", root.text)
             self.assertIn("/v1/scans", root.text)
             self.assertIn("data-view-target=\"overview\"", root.text)
             self.assertIn("Packet Send", root.text)
@@ -255,10 +255,10 @@ class ApiTests(unittest.TestCase):
     def test_scan_requires_scope(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
+        from netroach.api import create_app
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
             response = client.post(
                 "/v1/scans",
                 json={"targets": "127.0.0.1", "ports": "80", "confirm_authorized": True},
@@ -269,12 +269,12 @@ class ApiTests(unittest.TestCase):
     def test_scan_create_response_fields(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import ScanSummary
+        from netroach.api import create_app
+        from netroach.models import ScanSummary
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
-            with patch("netprobe.api.run_scan") as run_scan:
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
+            with patch("netroach.api.run_scan") as run_scan:
                 run_scan.side_effect = lambda **kwargs: ([], ScanSummary(scan_id=kwargs["scan_id"]))
                 response = client.post(
                     "/v1/scans",
@@ -296,12 +296,12 @@ class ApiTests(unittest.TestCase):
     def test_scan_can_derive_scope_from_targets(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import ScanSummary
+        from netroach.api import create_app
+        from netroach.models import ScanSummary
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
-            with patch("netprobe.api.run_scan") as run_scan:
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
+            with patch("netroach.api.run_scan") as run_scan:
                 run_scan.side_effect = lambda **kwargs: ([], ScanSummary(scan_id=kwargs["scan_id"]))
                 response = client.post(
                     "/v1/scans",
@@ -321,8 +321,8 @@ class ApiTests(unittest.TestCase):
     def test_scan_supports_exclude_profile_and_top_ports(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import ScanSummary
+        from netroach.api import create_app
+        from netroach.models import ScanSummary
 
         captured: dict[str, object] = {}
 
@@ -331,8 +331,8 @@ class ApiTests(unittest.TestCase):
             return [], ScanSummary(scan_id=kwargs["scan_id"])
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
-            with patch("netprobe.api.run_scan", side_effect=fake_run_scan):
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
+            with patch("netroach.api.run_scan", side_effect=fake_run_scan):
                 response = client.post(
                     "/v1/scans",
                     json={
@@ -352,11 +352,11 @@ class ApiTests(unittest.TestCase):
     def test_scan_requires_explicit_confirmation_above_max_attempts(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import ScanSummary
+        from netroach.api import create_app
+        from netroach.models import ScanSummary
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
             request = {
                 "targets": "127.0.0.1,127.0.0.2",
                 "ports": "80,443",
@@ -368,7 +368,7 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(rejected.status_code, 400)
             self.assertIn("4 attempts", rejected.json()["detail"]["error"])
 
-            with patch("netprobe.api.run_scan", return_value=([], ScanSummary(scan_id="ignored"))):
+            with patch("netroach.api.run_scan", return_value=([], ScanSummary(scan_id="ignored"))):
                 accepted = client.post("/v1/scans", json={**request, "confirm_large_scan": True})
             self.assertEqual(accepted.status_code, 200)
             self.assertEqual(accepted.json()["workload"], {"hosts": 2, "ports": 2, "attempts": 4})
@@ -376,8 +376,8 @@ class ApiTests(unittest.TestCase):
     def test_scan_uses_app_config_scope_defaults_and_custom_port_profile(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import ScanSummary
+        from netroach.api import create_app
+        from netroach.models import ScanSummary
 
         captured: dict[str, object] = {}
 
@@ -386,7 +386,7 @@ class ApiTests(unittest.TestCase):
             return [], ScanSummary(scan_id=kwargs["scan_id"])
 
         with tempfile.TemporaryDirectory() as tmp:
-            config_path = Path(tmp) / "scaprobe.toml"
+            config_path = Path(tmp) / "netroach.toml"
             config_path.write_text(
                 """
 [scan]
@@ -404,8 +404,8 @@ rate_limit_per_sec = 13
 """,
                 encoding="utf-8",
             )
-            client = TestClient(create_app(f"{tmp}/scaprobe.db", config_path=str(config_path), config_env="local"))
-            with patch("netprobe.api.run_scan", side_effect=fake_run_scan):
+            client = TestClient(create_app(f"{tmp}/netroach.db", config_path=str(config_path), config_env="local"))
+            with patch("netroach.api.run_scan", side_effect=fake_run_scan):
                 response = client.post(
                     "/v1/scans",
                     json={
@@ -425,8 +425,8 @@ rate_limit_per_sec = 13
     def test_scan_uses_plugin_profile_and_lists_plugins(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import ScanSummary
+        from netroach.api import create_app
+        from netroach.models import ScanSummary
 
         captured: dict[str, object] = {}
 
@@ -447,13 +447,13 @@ rate_limit_per_sec = 13
                 ),
                 encoding="utf-8",
             )
-            client = TestClient(create_app(f"{tmp}/scaprobe.db", plugin_paths=[str(plugin_path)]))
+            client = TestClient(create_app(f"{tmp}/netroach.db", plugin_paths=[str(plugin_path)]))
 
             plugins = client.get("/v1/plugins")
             self.assertEqual(plugins.status_code, 200)
             self.assertEqual(plugins.json()["plugins"][0]["name"], "lab")
 
-            with patch("netprobe.api.run_scan", side_effect=fake_run_scan):
+            with patch("netroach.api.run_scan", side_effect=fake_run_scan):
                 response = client.post(
                     "/v1/scans",
                     json={
@@ -472,11 +472,11 @@ rate_limit_per_sec = 13
     def test_scan_list_endpoint(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
@@ -496,10 +496,10 @@ rate_limit_per_sec = 13
     def test_scan_rejects_invalid_protocol(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
+        from netroach.api import create_app
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
             response = client.post(
                 "/v1/scans",
                 json={
@@ -516,12 +516,12 @@ rate_limit_per_sec = 13
     def test_scan_results_support_filters_and_pagination(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import PortResult
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.models import PortResult
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
@@ -570,12 +570,12 @@ rate_limit_per_sec = 13
     def test_scan_results_support_host_search_and_server_paging(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import PortResult
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.models import PortResult
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1,127.0.0.2",
@@ -615,12 +615,12 @@ rate_limit_per_sec = 13
     def test_scan_progress_cancel_delete_and_export(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import PortResult
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.models import PortResult
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1,127.0.0.2",
@@ -704,7 +704,7 @@ rate_limit_per_sec = 13
             report_html = client.get(f"/v1/scans/{scan_id}/report", params={"format": "html"})
             self.assertEqual(report_html.status_code, 200)
             self.assertIn("text/html", report_html.headers["content-type"])
-            self.assertIn("Scaprobe Scan Report", report_html.text)
+            self.assertIn("Netroach Scan Report", report_html.text)
             self.assertNotIn("<th>Latency</th>", report_html.text)
 
             cancelled = client.post(f"/v1/scans/{scan_id}/cancel")
@@ -719,12 +719,12 @@ rate_limit_per_sec = 13
     def test_result_image_evidence_upload_download_and_delete(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import PortResult
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.models import PortResult
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
@@ -805,13 +805,13 @@ rate_limit_per_sec = 13
             self.assertEqual(client.get(evidence["download_url"]).status_code, 404)
 
     def test_background_scan_can_capture_automatic_service_evidence(self):
-        from netprobe.api import _run_scan_job
-        from netprobe.evidence import ScreenshotCaptureSummary
-        from netprobe.models import EngineSettings, PortResult, ScanSummary
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import _run_scan_job
+        from netroach.evidence import ScreenshotCaptureSummary
+        from netroach.models import EngineSettings, PortResult, ScanSummary
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
@@ -848,8 +848,8 @@ rate_limit_per_sec = 13
                 self.assertEqual(maximum, 2)
                 return ScreenshotCaptureSummary(candidates=1, captured=1, failed=0, web_screenshots=1)
 
-            with patch("netprobe.api.run_scan", side_effect=fake_run_scan):
-                with patch("netprobe.api.capture_automatic_evidence", side_effect=fake_capture):
+            with patch("netroach.api.run_scan", side_effect=fake_run_scan):
+                with patch("netroach.api.capture_automatic_evidence", side_effect=fake_capture):
                     _run_scan_job(
                         str(db_path),
                         scan_id,
@@ -868,11 +868,11 @@ rate_limit_per_sec = 13
     def test_scan_cleanup_endpoint(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
@@ -900,11 +900,11 @@ rate_limit_per_sec = 13
     def test_scan_results_reject_invalid_filter(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             scan_id = repo.create_scan_job(
                 targets="127.0.0.1",
@@ -925,12 +925,12 @@ rate_limit_per_sec = 13
         from fastapi.testclient import TestClient
         from scapy.all import IP, TCP, Raw, wrpcap
 
-        from netprobe.api import create_app
+        from netroach.api import create_app
 
         with tempfile.TemporaryDirectory() as tmp:
             pcap_path = Path(tmp) / "fixture.pcap"
             wrpcap(str(pcap_path), [IP(src="10.0.0.1", dst="10.0.0.2") / TCP(sport=1, dport=2) / Raw(b"x")])
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
 
             response = client.post("/v1/pcaps/analyze", json={"file": str(pcap_path), "top": 10})
 
@@ -946,12 +946,12 @@ rate_limit_per_sec = 13
     def test_live_capture_endpoint_validates_and_persists_analysis(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.live_capture import LiveCaptureResult
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.live_capture import LiveCaptureResult
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             output = Path(tmp) / "capture.pcap"
             client = TestClient(create_app(str(db_path)))
 
@@ -963,7 +963,7 @@ rate_limit_per_sec = 13
             self.assertIn("confirm_authorized", rejected.json()["detail"]["error"])
 
             with patch(
-                "netprobe.api.execute_live_capture",
+                "netroach.api.execute_live_capture",
                 return_value=LiveCaptureResult(
                     file=str(output),
                     packet_count=3,
@@ -996,13 +996,13 @@ rate_limit_per_sec = 13
     def test_packet_send_response_fields_match_cli_shape(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import SendResult
+        from netroach.api import create_app
+        from netroach.models import SendResult
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
             with patch(
-                "netprobe.api.execute_packet_request",
+                "netroach.api.execute_packet_request",
                 return_value=SendResult(
                     template="icmp",
                     target="127.0.0.1",
@@ -1032,15 +1032,15 @@ rate_limit_per_sec = 13
     def test_packet_send_persists_full_audit_request_and_result(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import SendResult
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.models import SendResult
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             client = TestClient(create_app(str(db_path)))
             with patch(
-                "netprobe.api.execute_packet_request",
+                "netroach.api.execute_packet_request",
                 return_value=SendResult(
                     template="http",
                     target="127.0.0.1",
@@ -1084,11 +1084,11 @@ rate_limit_per_sec = 13
     def test_packet_send_dry_run_preview_is_audited(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             client = TestClient(create_app(str(db_path)))
             response = client.post(
                 "/v1/packets/send",
@@ -1114,12 +1114,12 @@ rate_limit_per_sec = 13
     def test_history_and_database_endpoints(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
-        from netprobe.models import SendResult
-        from netprobe.storage import SQLiteRepository
+        from netroach.api import create_app
+        from netroach.models import SendResult
+        from netroach.storage import SQLiteRepository
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             repo = SQLiteRepository(db_path)
             audit_id = repo.save_packet_audit(
                 request={"template": "icmp", "target": "127.0.0.1"},
@@ -1153,10 +1153,10 @@ rate_limit_per_sec = 13
     def test_oast_session_callback_and_history(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
+        from netroach.api import create_app
 
         with tempfile.TemporaryDirectory() as tmp:
-            client = TestClient(create_app(f"{tmp}/scaprobe.db"))
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
 
             rejected = client.post(
                 "/v1/oast/sessions",
@@ -1205,10 +1205,10 @@ rate_limit_per_sec = 13
     def test_api_token_guards_every_endpoint_except_oast_callbacks(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
+        from netroach.api import create_app
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = str(Path(tmp) / "scaprobe.db")
+            db_path = str(Path(tmp) / "netroach.db")
             app = create_app(db_path, api_token="s3cret")
             with TestClient(app) as client:
                 self.assertEqual(client.get("/v1/health").status_code, 401)
@@ -1225,16 +1225,16 @@ rate_limit_per_sec = 13
     def test_dashboard_token_query_sets_cookie_session(self):
         from fastapi.testclient import TestClient
 
-        from netprobe.api import create_app
+        from netroach.api import create_app
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = str(Path(tmp) / "scaprobe.db")
+            db_path = str(Path(tmp) / "netroach.db")
             app = create_app(db_path, api_token="s3cret")
             with TestClient(app) as client:
                 self.assertEqual(client.get("/dashboard").status_code, 401)
                 landing = client.get("/dashboard?token=s3cret")
                 self.assertEqual(landing.status_code, 200)
-                self.assertIn("scaprobe_api_token", client.cookies)
+                self.assertIn("netroach_api_token", client.cookies)
                 self.assertEqual(client.get("/v1/health").status_code, 200)
 
 

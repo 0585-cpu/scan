@@ -1,16 +1,16 @@
-# Scaprobe Install Guide
+# Netroach Install Guide
 
 ## Choose An Artifact
 
 Use the artifact that matches your OS and CPU label:
 
-- Windows: `scaprobe-<version>-windows-amd64.zip`
-- macOS: `scaprobe-<version>-darwin-arm64.tar.gz` or `scaprobe-<version>-darwin-x86_64.tar.gz`
-- Linux: `scaprobe-<version>-linux-x86_64.tar.gz`
+- Windows: `netroach-<version>-windows-amd64.zip`
+- macOS: `netroach-<version>-darwin-arm64.tar.gz` or `netroach-<version>-darwin-x86_64.tar.gz`
+- Linux: `netroach-<version>-linux-x86_64.tar.gz`
 
-The artifact contains the Python application, launcher scripts, docs, Postman collection, helper tools, and optionally `bin/scaprobe-engine`.
+The artifact contains the Python application, launcher scripts, docs, Postman collection, helper tools, and optionally `bin/netroach-engine`.
 
-For Windows users who should not install Python or download dependencies, use the self-contained `Scaprobe_<version>_x64-setup.exe` desktop installer instead. It includes the API/dashboard backend, Rust engine, Playwright headless Chromium, and the WebView2 offline installer and starts the runtime components automatically.
+For Windows users who should not install Python or download dependencies, use the self-contained `Netroach_<version>_x64-setup.exe` desktop installer instead. It includes the API/dashboard backend, Rust engine, Playwright headless Chromium, and the WebView2 offline installer and starts the runtime components automatically.
 
 ## Verify Checksum
 
@@ -19,7 +19,7 @@ Each packaged artifact is written with a `.sha256` sidecar by default.
 Windows PowerShell:
 
 ```powershell
-$artifact = "scaprobe-0.1.0-windows-amd64.zip"
+$artifact = "netroach-0.1.0-windows-amd64.zip"
 $expected = (Get-Content "$artifact.sha256").Split(" ")[0]
 $actual = (Get-FileHash $artifact -Algorithm SHA256).Hash.ToLower()
 if ($actual -ne $expected) { throw "checksum mismatch" }
@@ -28,7 +28,7 @@ if ($actual -ne $expected) { throw "checksum mismatch" }
 macOS/Linux:
 
 ```sh
-sha256sum -c scaprobe-0.1.0-linux-x86_64.tar.gz.sha256
+sha256sum -c netroach-0.1.0-linux-x86_64.tar.gz.sha256
 ```
 
 On macOS, use `shasum -a 256 <artifact>` if `sha256sum` is not installed.
@@ -38,16 +38,16 @@ On macOS, use `shasum -a 256 <artifact>` if `sha256sum` is not installed.
 Windows:
 
 ```powershell
-Expand-Archive .\scaprobe-0.1.0-windows-amd64.zip -DestinationPath .\scaprobe
-.\scaprobe\Start-Scaprobe.cmd
+Expand-Archive .\netroach-0.1.0-windows-amd64.zip -DestinationPath .\netroach
+.\netroach\Start-Netroach.cmd
 ```
 
-The Windows package requires Python 3.10 or newer on the destination PC. `Start-Scaprobe.cmd` opens an interactive menu with options to start Scaprobe, install screenshot support and start, install or update only, run diagnostics, or exit. The normal start option detects the first run, calls `bin\setup.cmd` to create an isolated `.venv`, installs the pinned project requirements, runs diagnostics, and then opens the local dashboard. Internet access is required during this one-time dependency installation. Future normal launches skip setup automatically.
+The Windows package requires Python 3.10 or newer on the destination PC. `Start-Netroach.cmd` opens an interactive menu with options to start Netroach, install screenshot support and start, install or update only, run diagnostics, or exit. The normal start option detects the first run, calls `bin\setup.cmd` to create an isolated `.venv`, installs the pinned project requirements, runs diagnostics, and then opens the local dashboard. Internet access is required during this one-time dependency installation. Future normal launches skip setup automatically.
 
-To install or update Chromium support for automatic web evidence and then start Scaprobe, run:
+To install or update Chromium support for automatic web evidence and then start Netroach, run:
 
 ```powershell
-.\scaprobe\Start-Scaprobe.cmd --screenshots
+.\netroach\Start-Netroach.cmd --screenshots
 ```
 
 For automation, the launcher also accepts `--start`, `--setup`, and `--diagnostics`. Running it without an argument shows the interactive menu.
@@ -57,15 +57,15 @@ The lower-level `bin\setup.cmd` and `bin\start-desktop.cmd` scripts remain avail
 macOS/Linux:
 
 ```sh
-mkdir -p scaprobe
-tar -xzf scaprobe-0.1.0-linux-x86_64.tar.gz -C scaprobe
-./scaprobe/bin/scaprobe --help
-./scaprobe/bin/scaprobe serve --check
+mkdir -p netroach
+tar -xzf netroach-0.1.0-linux-x86_64.tar.gz -C netroach
+./netroach/bin/netroach --help
+./netroach/bin/netroach serve --check
 ```
 
 Set `PYTHON=/path/to/python` before running the launcher if you need a specific Python interpreter.
 
-Scans, annotations, and evidence are stored outside the extracted application folder under `%APPDATA%\Scaprobe` on Windows, so replacing the application ZIP does not delete prior data. Use the database export/backup commands before moving data to a different PC.
+Scans, annotations, and evidence are stored outside the extracted application folder under `%APPDATA%\Netroach` on Windows, so replacing the application ZIP does not delete prior data. Use the database export/backup commands before moving data to a different PC.
 
 ## Windows Packet Driver
 
@@ -73,7 +73,7 @@ Template-based raw packet sending and live capture generally need Npcap and an e
 
 1. Install Npcap from the official Npcap installer.
 2. Open PowerShell or Command Prompt as Administrator.
-3. Run `scaprobe diagnostics`.
+3. Run `netroach diagnostics`.
 4. Confirm `packet_driver` is `Npcap`, `packet_driver_available` is `true`, and `raw_socket_privileged` is `true`.
 
 TCP connect scanning and file-based PCAP analysis do not require Npcap. Live capture does.
@@ -96,16 +96,16 @@ Raw packet sending and live capture may require root privileges.
 macOS:
 
 ```sh
-sudo ./bin/scaprobe diagnostics
+sudo ./bin/netroach diagnostics
 ```
 
 Linux:
 
 ```sh
-sudo ./bin/scaprobe diagnostics
+sudo ./bin/netroach diagnostics
 ```
 
-For Python-based development installs on Linux, `CAP_NET_RAW` can be granted to a dedicated interpreter or wrapper only after reviewing your local security policy. Scaprobe diagnostics reports whether the current process has root or `CAP_NET_RAW`.
+For Python-based development installs on Linux, `CAP_NET_RAW` can be granted to a dedicated interpreter or wrapper only after reviewing your local security policy. Netroach diagnostics reports whether the current process has root or `CAP_NET_RAW`.
 
 ## Build Artifacts Locally
 

@@ -16,8 +16,8 @@ from tools.build_desktop import (
 
 class DesktopBuildToolTests(unittest.TestCase):
     def test_executable_name_is_platform_specific(self):
-        self.assertEqual(executable_name("scaprobe-engine", system="Windows"), "scaprobe-engine.exe")
-        self.assertEqual(executable_name("scaprobe-engine", system="Linux"), "scaprobe-engine")
+        self.assertEqual(executable_name("netroach-engine", system="Windows"), "netroach-engine.exe")
+        self.assertEqual(executable_name("netroach-engine", system="Linux"), "netroach-engine")
 
     def test_cargo_command_supports_profile_toolchain_and_target(self):
         args = argparse.Namespace(
@@ -34,7 +34,7 @@ class DesktopBuildToolTests(unittest.TestCase):
                 "+stable",
                 "build",
                 "-p",
-                "scaprobe-engine",
+                "netroach-engine",
                 "--profile",
                 "portable",
                 "--target",
@@ -51,7 +51,7 @@ class DesktopBuildToolTests(unittest.TestCase):
         self.assertIn("scapy", command)
         self.assertIn("playwright", command)
         self.assertEqual(Path(command[-1]).name, "frozen_backend.py")
-        self.assertTrue(backend_output_path().name.startswith("scaprobe-backend"))
+        self.assertTrue(backend_output_path().name.startswith("netroach-backend"))
 
     def test_cargo_metadata_command_uses_desktop_manifest(self):
         args = argparse.Namespace(

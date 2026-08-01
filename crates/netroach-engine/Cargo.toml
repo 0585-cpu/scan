@@ -1,5 +1,5 @@
 [package]
-name = "scaprobe-engine"
+name = "netroach-engine"
 version = "0.1.0"
 edition = "2021"
 # The engine source needs 1.83 (io::ErrorKind::HostUnreachable), but the

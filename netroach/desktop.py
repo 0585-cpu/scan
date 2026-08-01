@@ -56,7 +56,7 @@ def run_desktop(settings: DesktopSettings) -> int:
     server = uvicorn.Server(server_config)
     if settings.open_browser:
         threading.Thread(target=_open_when_ready, args=(url,), daemon=True).start()
-    print(f"Scaprobe desktop: {url}")
+    print(f"Netroach desktop: {url}")
     server.run()
     return 0
 

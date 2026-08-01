@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from netprobe.reports import build_scan_report, embed_report_evidence, format_scan_report
+from netroach.reports import build_scan_report, embed_report_evidence, format_scan_report
 
 
 class ReportTests(unittest.TestCase):

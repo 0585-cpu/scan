@@ -191,7 +191,7 @@ def combine_plugins(manifests: Iterable[PluginManifest]) -> PluginCatalog:
 
 
 def plugin_paths_from_env() -> tuple[str, ...]:
-    raw = os.environ.get("SCAPROBE_PLUGINS", "")
+    raw = os.environ.get("NETROACH_PLUGINS", "")
     return tuple(part for part in raw.split(os.pathsep) if part)
 
 

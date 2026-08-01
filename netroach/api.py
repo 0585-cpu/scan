@@ -167,7 +167,7 @@ def create_app(
         application.state.recovery_threads = _start_scan_recovery(repo.path)
         yield
 
-    app = FastAPI(title="Scaprobe Local API", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Netroach Local API", version=__version__, lifespan=lifespan)
 
     if api_token:
         _install_token_guard(app, api_token)
@@ -599,7 +599,7 @@ def create_app(
                     content=bundle,
                     media_type="application/zip",
                     headers={
-                        "Content-Disposition": 'attachment; filename="scaprobe-csv-evidence.zip"'
+                        "Content-Disposition": 'attachment; filename="netroach-csv-evidence.zip"'
                     },
                 )
             return Response(content=format_results_csv(results), media_type="text/csv")
@@ -616,7 +616,7 @@ def create_app(
                 content=workbook,
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 headers={
-                    "Content-Disposition": 'attachment; filename="scaprobe-results.xlsx"'
+                    "Content-Disposition": 'attachment; filename="netroach-results.xlsx"'
                 },
             )
         if format == "ndjson":
@@ -1006,7 +1006,7 @@ def _start_scan_recovery(db_path) -> list[threading.Thread]:
                     int(params.get("screenshot_max", DEFAULT_SCREENSHOT_MAX)),
                     recovery_token,
                 ),
-                name=f"scaprobe-recovery-{scan_id[:8]}",
+                name=f"netroach-recovery-{scan_id[:8]}",
                 daemon=True,
             )
             thread.start()

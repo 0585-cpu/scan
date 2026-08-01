@@ -1,6 +1,6 @@
 import unittest
 
-from netprobe.ports import PortParseError, parse_ports
+from netroach.ports import PortParseError, parse_ports
 
 
 class PortTests(unittest.TestCase):

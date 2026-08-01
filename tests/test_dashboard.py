@@ -1,6 +1,6 @@
 import unittest
 
-from netprobe.dashboard import DASHBOARD_FILE, dashboard_html
+from netroach.dashboard import DASHBOARD_FILE, dashboard_html
 
 
 class DashboardAssetTests(unittest.TestCase):

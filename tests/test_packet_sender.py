@@ -3,8 +3,8 @@ import socket
 import threading
 import unittest
 
-from netprobe.models import PacketRequest
-from netprobe.packet_sender import (
+from netroach.models import PacketRequest
+from netroach.packet_sender import (
     MAX_PAYLOAD_BYTES,
     _summarize_dns_response,
     decode_payload,

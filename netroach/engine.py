@@ -90,14 +90,14 @@ def resolve_engine_path(explicit: str | None = None) -> str | None:
     candidates: list[str] = []
     if explicit:
         candidates.append(explicit)
-    if os.environ.get("SCAPROBE_ENGINE"):
-        candidates.append(os.environ["SCAPROBE_ENGINE"])
-    which = shutil.which("scaprobe-engine")
+    if os.environ.get("NETROACH_ENGINE"):
+        candidates.append(os.environ["NETROACH_ENGINE"])
+    which = shutil.which("netroach-engine")
     if which:
         candidates.append(which)
     suffix = ".exe" if os.name == "nt" else ""
     root = Path(__file__).resolve().parent.parent
-    engine_name = f"scaprobe-engine{suffix}"
+    engine_name = f"netroach-engine{suffix}"
     candidates.append(str(root / "bin" / engine_name))
     candidates.extend(
         str(root / "target" / profile / engine_name)
@@ -123,7 +123,7 @@ def _run_rust_engine(
     collect_results: bool = True,
     should_stop: StopCallback | None = None,
 ) -> tuple[list[PortResult], ScanSummary]:
-    with tempfile.TemporaryDirectory(prefix="scaprobe-engine-inputs-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="netroach-engine-inputs-") as tmp:
         input_dir = Path(tmp)
         plugin_catalog_file = None
         if plugin_catalog is not None and plugin_catalog.has_runtime_fingerprints:
@@ -300,7 +300,7 @@ def _run_rust_engine_command(
         stderr_thread.join(timeout=3)
     stderr = "".join(stderr_parts)
     if code != 0:
-        raise EngineError(stderr.strip() or f"scaprobe-engine exited with status {code}")
+        raise EngineError(stderr.strip() or f"netroach-engine exited with status {code}")
     return results, summary
 
 

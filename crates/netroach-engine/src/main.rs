@@ -19,8 +19,8 @@ use x509_parser::extensions::GeneralName;
 use x509_parser::prelude::*;
 
 #[derive(Parser)]
-#[command(name = "scaprobe-engine")]
-#[command(about = "High-throughput authorized scanner engine for Scaprobe")]
+#[command(name = "netroach-engine")]
+#[command(about = "High-throughput authorized scanner engine for Netroach")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -1214,7 +1214,7 @@ fn http_request(host: &str, port: u16) -> String {
         host.to_string()
     };
     format!(
-        "GET / HTTP/1.0\r\nHost: {host_header}:{port}\r\nUser-Agent: Scaprobe/0.1\r\nAccept: text/html,*/*;q=0.1\r\nConnection: close\r\n\r\n"
+        "GET / HTTP/1.0\r\nHost: {host_header}:{port}\r\nUser-Agent: Netroach/0.1\r\nAccept: text/html,*/*;q=0.1\r\nConnection: close\r\n\r\n"
     )
 }
 
@@ -1539,8 +1539,8 @@ fn effective_known_udp_service<'a>(
 
 fn udp_probe_payload(port: u16) -> Vec<u8> {
     match port {
-        53 => dns_query_payload("scaprobe.invalid"),
-        69 => b"\x00\x01scaprobe-test\x00octet\x00".to_vec(),
+        53 => dns_query_payload("netroach.invalid"),
+        69 => b"\x00\x01netroach-test\x00octet\x00".to_vec(),
         123 => {
             let mut payload = vec![0x1b];
             payload.resize(48, 0);
@@ -1589,7 +1589,7 @@ fn udp_response_matches(port: u16, request: &[u8], response: &[u8]) -> bool {
         5683 => request.len() >= 4 && response.len() >= 4 && response[2..4] == request[2..4],
         5060 => String::from_utf8_lossy(response)
             .to_ascii_lowercase()
-            .contains("call-id: scaprobe"),
+            .contains("call-id: netroach"),
         _ => true,
     }
 }
@@ -1640,7 +1640,7 @@ fn netbios_status_query_payload() -> Vec<u8> {
 }
 
 fn isakmp_probe_payload() -> Vec<u8> {
-    let mut payload = b"SCAPROBE".to_vec();
+    let mut payload = b"NETROACH".to_vec();
     payload.extend_from_slice(&[0; 8]);
     payload.extend_from_slice(&[0x00, 0x10, 0x02, 0x00]);
     payload.extend_from_slice(&[0; 4]);
@@ -1660,7 +1660,7 @@ fn ws_discovery_probe_payload() -> Vec<u8> {
 }
 
 fn sip_options_payload() -> Vec<u8> {
-    b"OPTIONS sip:scaprobe.invalid SIP/2.0\r\nVia: SIP/2.0/UDP scaprobe.invalid;branch=z9hG4bK-scaprobe\r\nMax-Forwards: 1\r\nFrom: <sip:scaprobe@scaprobe.invalid>;tag=scaprobe\r\nTo: <sip:scaprobe.invalid>\r\nCall-ID: scaprobe\r\nCSeq: 1 OPTIONS\r\nContent-Length: 0\r\n\r\n".to_vec()
+    b"OPTIONS sip:netroach.invalid SIP/2.0\r\nVia: SIP/2.0/UDP netroach.invalid;branch=z9hG4bK-netroach\r\nMax-Forwards: 1\r\nFrom: <sip:netroach@netroach.invalid>;tag=netroach\r\nTo: <sip:netroach.invalid>\r\nCall-ID: netroach\r\nCSeq: 1 OPTIONS\r\nContent-Length: 0\r\n\r\n".to_vec()
 }
 
 fn coap_core_query_payload() -> Vec<u8> {
@@ -2415,7 +2415,7 @@ mod tests {
         assert!(udp_probe_payload(69).starts_with(&[0x00, 0x01]));
         assert_eq!(udp_probe_payload(123).len(), 48);
         assert!(udp_probe_payload(137).len() > 40);
-        assert!(udp_probe_payload(500).starts_with(b"SCAPROBE"));
+        assert!(udp_probe_payload(500).starts_with(b"NETROACH"));
         assert_eq!(&udp_probe_payload(520)[..2], &[0x01, 0x02]);
         assert_eq!(udp_probe_payload(1434), b"\x02");
         assert!(String::from_utf8_lossy(&udp_probe_payload(1900)).contains("M-SEARCH"));
@@ -2506,7 +2506,7 @@ mod tests {
 
     #[test]
     fn udp_classifies_dns_fixture() {
-        let query = dns_query_payload("scaprobe.invalid");
+        let query = dns_query_payload("netroach.invalid");
         let mut response = Vec::new();
         response.extend_from_slice(&query[..2]);
         response.extend_from_slice(&[0x81, 0x80]);
@@ -2560,7 +2560,7 @@ mod tests {
 
     #[test]
     fn udp_classifies_ssdp_fixture() {
-        let response = b"HTTP/1.1 200 OK\r\nST: upnp:rootdevice\r\nUSN: uuid:scaprobe-test::upnp:rootdevice\r\n\r\n";
+        let response = b"HTTP/1.1 200 OK\r\nST: upnp:rootdevice\r\nUSN: uuid:netroach-test::upnp:rootdevice\r\n\r\n";
 
         let fingerprint = classify_udp_response(1900, response);
 
@@ -2582,7 +2582,7 @@ mod tests {
 
     #[test]
     fn udp_classifies_expanded_service_fixtures() {
-        let mut isakmp = b"SCAPROBE".to_vec();
+        let mut isakmp = b"NETROACH".to_vec();
         isakmp.extend_from_slice(&[0x01; 8]);
         isakmp.extend_from_slice(&[0x00, 0x10, 0x02, 0x00]);
         isakmp.extend_from_slice(&[0; 4]);
@@ -2603,7 +2603,7 @@ mod tests {
             ),
             (
                 5060,
-                b"SIP/2.0 200 OK\r\nVia: SIP/2.0/UDP scaprobe\r\nCSeq: 1 OPTIONS\r\n\r\n"
+                b"SIP/2.0 200 OK\r\nVia: SIP/2.0/UDP netroach\r\nCSeq: 1 OPTIONS\r\n\r\n"
                     .to_vec(),
                 "sip",
             ),

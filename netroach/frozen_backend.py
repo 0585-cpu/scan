@@ -9,16 +9,16 @@ from pathlib import Path
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="scaprobe-backend",
-        description="Run the local Scaprobe API for the desktop application.",
+        prog="netroach-backend",
+        description="Run the local Netroach API for the desktop application.",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=_port, default=8765)
     parser.add_argument("--db", help="SQLite database path")
-    parser.add_argument("--config", help="scaprobe.toml path")
+    parser.add_argument("--config", help="netroach.toml path")
     parser.add_argument("--env", dest="config_env", help="configuration environment")
     parser.add_argument("--plugin", action="append", default=[], help="plugin manifest or directory")
-    parser.add_argument("--engine-path", required=True, help="bundled scaprobe-engine executable")
+    parser.add_argument("--engine-path", required=True, help="bundled netroach-engine executable")
     parser.add_argument(
         "--playwright-browsers-path",
         help="bundled Playwright browser directory",
@@ -44,7 +44,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not engine_path.is_file():
         raise SystemExit(f"bundled Rust engine was not found: {engine_path}")
 
-    os.environ["SCAPROBE_ENGINE"] = os.fspath(engine_path)
+    os.environ["NETROACH_ENGINE"] = os.fspath(engine_path)
     if args.playwright_browsers_path:
         browsers_path = Path(args.playwright_browsers_path).resolve()
         if not browsers_path.is_dir():
@@ -53,7 +53,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     import uvicorn
 
-    from netprobe.api import create_app
+    from netroach.api import create_app
 
     uvicorn.run(
         create_app(

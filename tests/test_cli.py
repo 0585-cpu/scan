@@ -7,12 +7,12 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from netprobe.cli import main
-from netprobe.evidence import ScreenshotCaptureSummary
-from netprobe.exporters import RESULT_EXPORT_FIELDS
-from netprobe.models import PortResult, ScanSummary, SendResult
-from netprobe.storage import SQLiteRepository
-from netprobe.version import __version__
+from netroach.cli import main
+from netroach.evidence import ScreenshotCaptureSummary
+from netroach.exporters import RESULT_EXPORT_FIELDS
+from netroach.models import PortResult, ScanSummary, SendResult
+from netroach.storage import SQLiteRepository
+from netroach.version import __version__
 
 
 class CliTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class CliTests(unittest.TestCase):
                 main(["--version"])
 
         self.assertEqual(exc.exception.code, 0)
-        self.assertEqual(stdout.getvalue().strip(), f"scaprobe {__version__}")
+        self.assertEqual(stdout.getvalue().strip(), f"netroach {__version__}")
 
     def test_removed_history_commands_and_legacy_evidence_flag_are_not_recognized(self):
         commands = [
@@ -77,13 +77,13 @@ class CliTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             stdout = io.StringIO()
-            with patch("netprobe.cli.run_scan", side_effect=fake_run_scan):
+            with patch("netroach.cli.run_scan", side_effect=fake_run_scan):
                 with redirect_stdout(stdout):
                     code = main(
                         [
                             "scan",
                             "--db",
-                            str(Path(tmp) / "scaprobe.db"),
+                            str(Path(tmp) / "netroach.db"),
                             "--targets",
                             "127.0.0.1",
                             "--ports",
@@ -120,13 +120,13 @@ class CliTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             stdout = io.StringIO()
-            with patch("netprobe.cli.run_scan", side_effect=fake_run_scan):
+            with patch("netroach.cli.run_scan", side_effect=fake_run_scan):
                 with redirect_stdout(stdout):
                     code = main(
                         [
                             "scan",
                             "--db",
-                            str(Path(tmp) / "scaprobe.db"),
+                            str(Path(tmp) / "netroach.db"),
                             "--targets",
                             "127.0.0.1",
                             "--ports",
@@ -171,14 +171,14 @@ class CliTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             stdout = io.StringIO()
-            with patch("netprobe.cli.run_scan", side_effect=fake_run_scan):
-                with patch("netprobe.cli.capture_automatic_evidence", side_effect=fake_capture):
+            with patch("netroach.cli.run_scan", side_effect=fake_run_scan):
+                with patch("netroach.cli.capture_automatic_evidence", side_effect=fake_capture):
                     with redirect_stdout(stdout):
                         code = main(
                             [
                                 "scan",
                                 "--db",
-                                str(Path(tmp) / "scaprobe.db"),
+                                str(Path(tmp) / "netroach.db"),
                                 "--targets",
                                 "127.0.0.1",
                                 "--ports",
@@ -211,13 +211,13 @@ class CliTests(unittest.TestCase):
             targets_file = Path(tmp) / "targets.txt"
             targets_file.write_text("127.0.0.2\n127.0.0.3\n", encoding="utf-8")
             stdout = io.StringIO()
-            with patch("netprobe.cli.run_scan", side_effect=fake_run_scan):
+            with patch("netroach.cli.run_scan", side_effect=fake_run_scan):
                 with redirect_stdout(stdout):
                     code = main(
                         [
                             "scan",
                             "--db",
-                            str(Path(tmp) / "scaprobe.db"),
+                            str(Path(tmp) / "netroach.db"),
                             "--targets",
                             "127.0.0.1",
                             "--targets-file",
@@ -247,7 +247,7 @@ class CliTests(unittest.TestCase):
             return [], ScanSummary(scan_id=kwargs["scan_id"])
 
         with tempfile.TemporaryDirectory() as tmp:
-            config_path = Path(tmp) / "scaprobe.toml"
+            config_path = Path(tmp) / "netroach.toml"
             config_path.write_text(
                 """
 [scan]
@@ -264,13 +264,13 @@ custom = [8081, 8444]
                 encoding="utf-8",
             )
             stdout = io.StringIO()
-            with patch("netprobe.cli.run_scan", side_effect=fake_run_scan):
+            with patch("netroach.cli.run_scan", side_effect=fake_run_scan):
                 with redirect_stdout(stdout):
                     code = main(
                         [
                             "scan",
                             "--db",
-                            str(Path(tmp) / "scaprobe.db"),
+                            str(Path(tmp) / "netroach.db"),
                             "--config",
                             str(config_path),
                             "--targets",
@@ -307,7 +307,7 @@ custom = [8081, 8444]
                 ),
                 encoding="utf-8",
             )
-            config_path = Path(tmp) / "scaprobe.toml"
+            config_path = Path(tmp) / "netroach.toml"
             config_path.write_text(
                 """
 [plugins]
@@ -316,13 +316,13 @@ paths = ["lab-plugin.json"]
                 encoding="utf-8",
             )
             stdout = io.StringIO()
-            with patch("netprobe.cli.run_scan", side_effect=fake_run_scan):
+            with patch("netroach.cli.run_scan", side_effect=fake_run_scan):
                 with redirect_stdout(stdout):
                     code = main(
                         [
                             "scan",
                             "--db",
-                            str(Path(tmp) / "scaprobe.db"),
+                            str(Path(tmp) / "netroach.db"),
                             "--config",
                             str(config_path),
                             "--targets",
@@ -419,7 +419,7 @@ paths = ["lab-plugin.json"]
             stdout = io.StringIO()
 
             with redirect_stdout(stdout):
-                code = main(["pcap", "--db", str(Path(tmp) / "scaprobe.db"), str(pcap_path), "--json"])
+                code = main(["pcap", "--db", str(Path(tmp) / "netroach.db"), str(pcap_path), "--json"])
 
             self.assertEqual(code, 0)
             payload = json.loads(stdout.getvalue())
@@ -431,14 +431,14 @@ paths = ["lab-plugin.json"]
             self.assertIn("conversation_metrics", payload["summary"])
 
     def test_capture_json_response_fields_and_persists_analysis(self):
-        from netprobe.live_capture import LiveCaptureResult
+        from netroach.live_capture import LiveCaptureResult
 
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             output = Path(tmp) / "capture.pcap"
             stdout = io.StringIO()
             with patch(
-                "netprobe.cli.execute_live_capture",
+                "netroach.cli.execute_live_capture",
                 return_value=LiveCaptureResult(
                     file=str(output),
                     packet_count=2,
@@ -481,7 +481,7 @@ paths = ["lab-plugin.json"]
         with tempfile.TemporaryDirectory() as tmp:
             stdout = io.StringIO()
             with patch(
-                "netprobe.cli.execute_packet_request",
+                "netroach.cli.execute_packet_request",
                 return_value=SendResult(
                     template="icmp",
                     target="127.0.0.1",
@@ -496,7 +496,7 @@ paths = ["lab-plugin.json"]
                             "send",
                             "icmp",
                             "--db",
-                            str(Path(tmp) / "scaprobe.db"),
+                            str(Path(tmp) / "netroach.db"),
                             "--target",
                             "127.0.0.1",
                             "--scope",
@@ -514,10 +514,10 @@ paths = ["lab-plugin.json"]
 
     def test_send_persists_full_audit_request_and_result(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             stdout = io.StringIO()
             with patch(
-                "netprobe.cli.execute_packet_request",
+                "netroach.cli.execute_packet_request",
                 return_value=SendResult(
                     template="udp",
                     target="127.0.0.1",
@@ -569,7 +569,7 @@ paths = ["lab-plugin.json"]
 
     def test_send_dry_run_preview_is_audited(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "scaprobe.db"
+            db_path = Path(tmp) / "netroach.db"
             stdout = io.StringIO()
             with redirect_stdout(stdout):
                 code = main(
@@ -625,13 +625,13 @@ paths = ["lab-plugin.json"]
             self.assertEqual(code, 0)
             self.assertEqual(stdout.getvalue(), "")
             text = output.read_text(encoding="utf-8")
-            self.assertIn("# Scaprobe Scan Report", text)
+            self.assertIn("# Netroach Scan Report", text)
             self.assertIn("| 127.0.0.1 | 53 | udp | dns |", text)
             self.assertNotIn("Latency", text)
 
 
 def create_scan_with_results(tmp: str) -> tuple[Path, str]:
-    db_path = Path(tmp) / "scaprobe.db"
+    db_path = Path(tmp) / "netroach.db"
     repo = SQLiteRepository(db_path)
     scan_id = repo.create_scan_job(
         targets="127.0.0.1",

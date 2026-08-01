@@ -284,16 +284,16 @@ def run_powershell_diagnostic(
     environment = os.environ.copy()
     environment.update(
         {
-            "SCAPROBE_TARGET": host,
-            "SCAPROBE_PORT": str(port),
-            "SCAPROBE_PROTOCOL": protocol,
-            "SCAPROBE_CONNECT_TIMEOUT": str(max(250, timeout_ms - 2_000)),
-            "SCAPROBE_PREAUTH_MODE": preauth_mode,
-            "SCAPROBE_STATE": _clean_terminal_value(result.get("state"), maximum=128),
-            "SCAPROBE_SERVICE": _clean_terminal_value(result.get("service_name") or "unknown", maximum=256),
-            "SCAPROBE_BANNER": _clean_terminal_value(result.get("banner"), maximum=2_000),
-            "SCAPROBE_EVIDENCE": _clean_terminal_value(result.get("evidence"), maximum=2_000),
-            "SCAPROBE_ERROR": _clean_terminal_value(result.get("error"), maximum=1_000),
+            "NETROACH_TARGET": host,
+            "NETROACH_PORT": str(port),
+            "NETROACH_PROTOCOL": protocol,
+            "NETROACH_CONNECT_TIMEOUT": str(max(250, timeout_ms - 2_000)),
+            "NETROACH_PREAUTH_MODE": preauth_mode,
+            "NETROACH_STATE": _clean_terminal_value(result.get("state"), maximum=128),
+            "NETROACH_SERVICE": _clean_terminal_value(result.get("service_name") or "unknown", maximum=256),
+            "NETROACH_BANNER": _clean_terminal_value(result.get("banner"), maximum=2_000),
+            "NETROACH_EVIDENCE": _clean_terminal_value(result.get("evidence"), maximum=2_000),
+            "NETROACH_ERROR": _clean_terminal_value(result.get("error"), maximum=1_000),
         }
     )
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -393,7 +393,7 @@ def render_terminal_transcript(
             color = "#ff8080"
         elif line.startswith(("Client authentication prompt", "login as:", "USER:", "User (")):
             color = "#8cff8c"
-        elif line.startswith(("Scaprobe authorized", "Captured UTC:")):
+        elif line.startswith(("Netroach authorized", "Captured UTC:")):
             color = "#6bdcff"
         draw.text((14, y), line, fill=color, font=mono_font)
         y += 18
@@ -560,7 +560,7 @@ def _powershell_display_command(
             f"$tcp.ConnectAsync('{safe_host}', {port}).Wait({max(250, timeout_ms - 2_000)})"
         )
         if preauth_mode != "none":
-            command += f"; Read-ScaprobePreAuthPrompt -Mode '{preauth_mode}'  # no credentials"
+            command += f"; Read-NetroachPreAuthPrompt -Mode '{preauth_mode}'  # no credentials"
         return command
     return "$scanResult | Format-List  # UDP response recorded by the authorized scanner"
 
@@ -580,7 +580,7 @@ def _scan_record_text(result: Mapping[str, Any]) -> str:
         ("ProbeEvidence", result.get("evidence") or ""),
         ("Error", result.get("error") or ""),
     )
-    lines = ["Scaprobe authorized scan record"]
+    lines = ["Netroach authorized scan record"]
     for label, value in fields:
         lines.append(f"{label:<16}: {_clean_terminal_value(value, maximum=2_000)}")
     lines.append("Authentication  : stopped before username, password, key, or AUTH request")
@@ -681,40 +681,40 @@ _PREAUTH_SERVICE_MODES = (
 
 _POWERSHELL_DIAGNOSTIC_SCRIPT = r"""
 $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$target = $env:SCAPROBE_TARGET
-$port = [int]$env:SCAPROBE_PORT
-$protocol = $env:SCAPROBE_PROTOCOL
-$connectTimeout = [int]$env:SCAPROBE_CONNECT_TIMEOUT
-$preauthMode = $env:SCAPROBE_PREAUTH_MODE
+$target = $env:NETROACH_TARGET
+$port = [int]$env:NETROACH_PORT
+$protocol = $env:NETROACH_PROTOCOL
+$connectTimeout = [int]$env:NETROACH_CONNECT_TIMEOUT
+$preauthMode = $env:NETROACH_PREAUTH_MODE
 
-function ConvertTo-ScaprobeText {
+function ConvertTo-NetroachText {
     param([byte[]]$Bytes, [int]$Count)
     if ($Count -le 0) { return '' }
     $text = [System.Text.Encoding]::UTF8.GetString($Bytes, 0, $Count)
     return ($text -replace '[^\x09\x0A\x0D\x20-\x7E]', '.').Trim()
 }
 
-function Read-ScaprobeResponse {
+function Read-NetroachResponse {
     param([System.IO.Stream]$Stream, [int]$TimeoutMs)
     try {
         if ($Stream.CanTimeout) { $Stream.ReadTimeout = $TimeoutMs }
         $buffer = [byte[]]::new(4096)
         $count = $Stream.Read($buffer, 0, $buffer.Length)
-        return ConvertTo-ScaprobeText -Bytes $buffer -Count $count
+        return ConvertTo-NetroachText -Bytes $buffer -Count $count
     }
     catch {
         return ''
     }
 }
 
-function Send-ScaprobePreAuthCommand {
+function Send-NetroachPreAuthCommand {
     param([System.IO.Stream]$Stream, [string]$Text)
     $bytes = [System.Text.Encoding]::ASCII.GetBytes($Text)
     $Stream.Write($bytes, 0, $bytes.Length)
     $Stream.Flush()
 }
 
-function Show-ScaprobeResponse {
+function Show-NetroachResponse {
     param([string]$Label, [string]$Text)
     $value = $Text.Trim()
     if (-not $value) { return }
@@ -723,7 +723,7 @@ function Show-ScaprobeResponse {
     Write-Output $value
 }
 
-function Read-ScaprobePreAuthPrompt {
+function Read-NetroachPreAuthPrompt {
     param(
         [System.IO.Stream]$Stream,
         [string]$Mode,
@@ -741,8 +741,8 @@ function Read-ScaprobePreAuthPrompt {
     }
     $initial = ''
     if ($baseMode -in @('ssh', 'telnet', 'ftp', 'smtp', 'pop3', 'imap', 'mysql')) {
-        $initial = Read-ScaprobeResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
-        Show-ScaprobeResponse -Label 'Server pre-authentication response:' -Text $initial
+        $initial = Read-NetroachResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
+        Show-NetroachResponse -Label 'Server pre-authentication response:' -Text $initial
     }
 
     switch ($baseMode) {
@@ -756,35 +756,35 @@ function Read-ScaprobePreAuthPrompt {
             Write-Output '[stopped before sending Telnet input]'
         }
         'ftp' {
-            Send-ScaprobePreAuthCommand -Stream $Stream -Text "FEAT`r`n"
-            $response = Read-ScaprobeResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
-            Show-ScaprobeResponse -Label 'FTP FEAT response:' -Text $response
+            Send-NetroachPreAuthCommand -Stream $Stream -Text "FEAT`r`n"
+            $response = Read-NetroachResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
+            Show-NetroachResponse -Label 'FTP FEAT response:' -Text $response
             Write-Output ("User (" + $ComputerName + "):")
             Write-Output '[stopped before sending FTP USER or PASS]'
         }
         'smtp' {
-            Send-ScaprobePreAuthCommand -Stream $Stream -Text "EHLO scaprobe-evidence.invalid`r`n"
-            $response = Read-ScaprobeResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
-            Show-ScaprobeResponse -Label 'SMTP EHLO / authentication capability response:' -Text $response
+            Send-NetroachPreAuthCommand -Stream $Stream -Text "EHLO netroach-evidence.invalid`r`n"
+            $response = Read-NetroachResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
+            Show-NetroachResponse -Label 'SMTP EHLO / authentication capability response:' -Text $response
             Write-Output '[stopped before sending SMTP AUTH]'
         }
         'pop3' {
-            Send-ScaprobePreAuthCommand -Stream $Stream -Text "CAPA`r`n"
-            $response = Read-ScaprobeResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
-            Show-ScaprobeResponse -Label 'POP3 CAPA response:' -Text $response
+            Send-NetroachPreAuthCommand -Stream $Stream -Text "CAPA`r`n"
+            $response = Read-NetroachResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
+            Show-NetroachResponse -Label 'POP3 CAPA response:' -Text $response
             Write-Output 'USER:'
             Write-Output '[stopped before sending POP3 USER or PASS]'
         }
         'imap' {
-            Send-ScaprobePreAuthCommand -Stream $Stream -Text "a001 CAPABILITY`r`n"
-            $response = Read-ScaprobeResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
-            Show-ScaprobeResponse -Label 'IMAP CAPABILITY / authentication mechanism response:' -Text $response
+            Send-NetroachPreAuthCommand -Stream $Stream -Text "a001 CAPABILITY`r`n"
+            $response = Read-NetroachResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
+            Show-NetroachResponse -Label 'IMAP CAPABILITY / authentication mechanism response:' -Text $response
             Write-Output '[stopped before sending IMAP LOGIN or AUTHENTICATE]'
         }
         'redis' {
-            Send-ScaprobePreAuthCommand -Stream $Stream -Text "PING`r`n"
-            $response = Read-ScaprobeResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
-            Show-ScaprobeResponse -Label 'Redis pre-authentication PING response:' -Text $response
+            Send-NetroachPreAuthCommand -Stream $Stream -Text "PING`r`n"
+            $response = Read-NetroachResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
+            Show-NetroachResponse -Label 'Redis pre-authentication PING response:' -Text $response
             Write-Output '[stopped before sending Redis AUTH]'
         }
         'mysql' {
@@ -844,7 +844,7 @@ if ($protocol -eq 'tcp') {
                     } | Format-List | Out-String -Width 100 | Write-Output
                 }
                 $readTimeout = [Math]::Max(250, [Math]::Min(1000, [int]($connectTimeout / 3)))
-                Read-ScaprobePreAuthPrompt `
+                Read-NetroachPreAuthPrompt `
                     -Stream $ioStream `
                     -Mode $preauthMode `
                     -ComputerName $target `
@@ -875,16 +875,16 @@ else {
     Write-Output 'UDP has no generic connection test in PowerShell; displaying the scanner probe response.'
 }
 
-Write-Output 'Scaprobe authorized scan record'
+Write-Output 'Netroach authorized scan record'
 [pscustomobject]@{
     ComputerName = $target
     RemotePort = $port
     Protocol = $protocol
-    ScanState = $env:SCAPROBE_STATE
-    ServiceName = $env:SCAPROBE_SERVICE
-    ServiceBanner = $env:SCAPROBE_BANNER
-    ProbeEvidence = $env:SCAPROBE_EVIDENCE
-    Error = $env:SCAPROBE_ERROR
+    ScanState = $env:NETROACH_STATE
+    ServiceName = $env:NETROACH_SERVICE
+    ServiceBanner = $env:NETROACH_BANNER
+    ProbeEvidence = $env:NETROACH_EVIDENCE
+    Error = $env:NETROACH_ERROR
     Authentication = 'stopped before username, password, key, or AUTH request'
 } | Format-List | Out-String -Width 100 | Write-Output
 """

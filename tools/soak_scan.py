@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from netprobe.engine import run_scan
-from netprobe.performance import ProcessMeter, StreamingScanMetrics, distribution
+from netroach.engine import run_scan
+from netroach.performance import ProcessMeter, StreamingScanMetrics, distribution
 from tools.scan_harness import add_scan_arguments, prepare_scan
 
 
@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run repeated authorized Scaprobe scans and emit a soak JSON report.")
+    parser = argparse.ArgumentParser(description="Run repeated authorized Netroach scans and emit a soak JSON report.")
     add_scan_arguments(parser)
     parser.add_argument("--iterations", type=int, default=10, help="maximum scan iterations")
     parser.add_argument("--duration-s", type=float, help="optional wall-clock duration limit")

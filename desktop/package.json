@@ -1,8 +1,8 @@
 {
-  "name": "scaprobe-desktop",
+  "name": "netroach-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Desktop wrapper for the Scaprobe local dashboard.",
+  "description": "Desktop wrapper for the Netroach local dashboard.",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build"

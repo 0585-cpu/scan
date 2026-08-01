@@ -1,8 +1,8 @@
 # Desktop And Installer Packaging
 
-Scaprobe supports two desktop distribution modes:
+Netroach supports two desktop distribution modes:
 
-1. Portable CLI package with `scaprobe desktop`
+1. Portable CLI package with `netroach desktop`
 2. A self-contained Tauri installer that starts its bundled backend automatically
 
 ## Desktop Launcher
@@ -10,27 +10,27 @@ Scaprobe supports two desktop distribution modes:
 The fastest app-like mode is:
 
 ```powershell
-scaprobe desktop
+netroach desktop
 ```
 
-This starts the local FastAPI backend on the fixed `127.0.0.1:8765` address and opens the Scaprobe dashboard. Pass `--port 0` to opt into a free ephemeral port.
+This starts the local FastAPI backend on the fixed `127.0.0.1:8765` address and opens the Netroach dashboard. Pass `--port 0` to opt into a free ephemeral port.
 
 Use a stable port when another wrapper or shortcut needs a fixed URL:
 
 ```powershell
-scaprobe desktop --host 127.0.0.1 --port 8765
+netroach desktop --host 127.0.0.1 --port 8765
 ```
 
 Use `--no-open` when another shell, webview, or service manager will open the dashboard:
 
 ```powershell
-scaprobe desktop --host 127.0.0.1 --port 8765 --no-open
+netroach desktop --host 127.0.0.1 --port 8765 --no-open
 ```
 
 The command accepts the same local data options as `serve`:
 
 ```powershell
-scaprobe desktop --db .\scaprobe.db --config .\scaprobe.toml --env lab --plugin .\plugin.json
+netroach desktop --db .\netroach.db --config .\netroach.toml --env lab --plugin .\plugin.json
 ```
 
 ## Portable Artifact
@@ -44,7 +44,7 @@ py -3 tools\package.py --output-dir dist
 With a bundled Rust engine:
 
 ```powershell
-cargo build --release -p scaprobe-engine
+cargo build --release -p netroach-engine
 py -3 tools\package.py --output-dir dist --require-engine
 ```
 
@@ -66,7 +66,7 @@ Use `.\bin\setup.cmd --screenshots` when browser-based automatic evidence is req
 On macOS/Linux:
 
 ```sh
-./bin/scaprobe desktop
+./bin/netroach desktop
 ```
 
 ## Self-Contained Windows Installer
@@ -75,10 +75,10 @@ The installer contains all three application layers:
 
 - the Tauri desktop window;
 - a one-file Python API/dashboard backend produced by PyInstaller;
-- the `scaprobe-engine.exe` Rust scan engine;
+- the `netroach-engine.exe` Rust scan engine;
 - the Playwright Python driver and a version-matched headless Chromium build.
 
-The destination PC does not need Python, Node.js, Rust, a separately installed browser, or internet access. The installer embeds the WebView2 offline installer, and Chromium is bundled for automatic web screenshot evidence. When the desktop app starts, it selects a free loopback port, starts the backend without a console window, waits for `/v1/health`, and opens the dashboard. Closing the app terminates the backend and its browser/engine process tree. User data remains in `%APPDATA%\Scaprobe`.
+The destination PC does not need Python, Node.js, Rust, a separately installed browser, or internet access. The installer embeds the WebView2 offline installer, and Chromium is bundled for automatic web screenshot evidence. When the desktop app starts, it selects a free loopback port, starts the backend without a console window, waits for `/v1/health`, and opens the dashboard. Closing the app terminates the backend and its browser/engine process tree. User data remains in `%APPDATA%\Netroach`.
 
 Npcap and administrator privileges are still optional destination-PC prerequisites for live capture and raw packet sending. TCP connect scans and file PCAP analysis work without them.
 
@@ -130,8 +130,8 @@ Existing binaries can be reused when iterating on the desktop shell:
 
 ```powershell
 py -3 tools\build_desktop.py `
-  --engine-path .\target\release\scaprobe-engine.exe `
-  --backend-path .\target\desktop-backend\dist\scaprobe-backend.exe
+  --engine-path .\target\release\netroach-engine.exe `
+  --backend-path .\target\desktop-backend\dist\netroach-backend.exe
 ```
 
 Use `--bundles msi` when an MSI is required instead of the default Windows NSIS executable.
@@ -142,7 +142,7 @@ The `desktop/` directory can still be run against a separately started developme
 
 
 ```powershell
-scaprobe desktop --host 127.0.0.1 --port 8765 --no-open
+netroach desktop --host 127.0.0.1 --port 8765 --no-open
 ```
 
 Run the wrapper:
@@ -150,7 +150,7 @@ Run the wrapper:
 ```powershell
 cd desktop
 npm install
-$env:SCAPROBE_DESKTOP_URL = "http://127.0.0.1:8765/dashboard"
+$env:NETROACH_DESKTOP_URL = "http://127.0.0.1:8765/dashboard"
 npm run dev
 ```
 
@@ -161,8 +161,8 @@ cd desktop
 npm run build
 ```
 
-For development without a separately started server, stage the binaries with `--prepare-only` and omit `SCAPROBE_DESKTOP_URL`. `SCAPROBE_BACKEND_PATH` and `SCAPROBE_ENGINE_PATH` can override the staged resource paths for debugging.
+For development without a separately started server, stage the binaries with `--prepare-only` and omit `NETROACH_DESKTOP_URL`. `NETROACH_BACKEND_PATH` and `NETROACH_ENGINE_PATH` can override the staged resource paths for debugging.
 
 Backend startup output is appended to the Tauri application log directory as `backend.log`. Playwright browser navigation remains restricted to the scanned host by the evidence capture code. Updating the Playwright Python dependency requires rebuilding the installer so the matching Chromium revision is downloaded and bundled.
 
-The offline WebView2 payload and Playwright Chromium substantially increase installer size. WebView2 renders the Scaprobe window; Chromium is a separate browser process used only for automatic screenshots.
+The offline WebView2 payload and Playwright Chromium substantially increase installer size. WebView2 renders the Netroach window; Chromium is a separate browser process used only for automatic screenshots.

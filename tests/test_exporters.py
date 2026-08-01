@@ -5,7 +5,7 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 
-from netprobe.exporters import (
+from netroach.exporters import (
     format_results_csv,
     format_results_csv_bundle,
     format_results_json,

@@ -1,6 +1,6 @@
 import unittest
 
-from netprobe.oast import (
+from netroach.oast import (
     OastSessionRequest,
     body_preview,
     build_callback_url,

@@ -464,6 +464,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "netroach-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "ipnet",
+ "native-tls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-native-tls",
+ "x509-parser",
+]
+
+[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -665,22 +681,6 @@ dependencies = [
  "libc",
  "linux-raw-sys",
  "windows-sys",
-]
-
-[[package]]
-name = "scaprobe-engine"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "futures",
- "ipnet",
- "native-tls",
- "serde",
- "serde_json",
- "tokio",
- "tokio-native-tls",
- "x509-parser",
 ]
 
 [[package]]

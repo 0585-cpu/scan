@@ -47,7 +47,7 @@ class ScanConfig:
 
 
 @dataclass(frozen=True)
-class ScaprobeConfig:
+class NetroachConfig:
     path: Path | None = None
     scan: ScanConfig = field(default_factory=ScanConfig)
     environments: dict[str, ScanConfig] = field(default_factory=dict)
@@ -91,10 +91,10 @@ BUILTIN_ENVIRONMENTS: dict[str, ScanConfig] = {
 }
 
 
-def load_config(path: str | os.PathLike[str] | None = None) -> ScaprobeConfig:
+def load_config(path: str | os.PathLike[str] | None = None) -> NetroachConfig:
     config_path = resolve_config_path(path)
     if config_path is None:
-        return ScaprobeConfig()
+        return NetroachConfig()
     try:
         data = tomllib.loads(config_path.read_text(encoding="utf-8"))
     except OSError as exc:
@@ -117,25 +117,25 @@ def resolve_config_path(path: str | os.PathLike[str] | None = None) -> Path | No
 
 
 def default_config_paths() -> list[Path]:
-    paths = [Path.cwd() / "scaprobe.toml"]
+    paths = [Path.cwd() / "netroach.toml"]
     system = platform.system().lower()
     if system == "windows":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-        paths.append(base / "Scaprobe" / "scaprobe.toml")
+        paths.append(base / "Netroach" / "netroach.toml")
     elif system == "darwin":
-        paths.append(Path.home() / "Library" / "Application Support" / "scaprobe" / "scaprobe.toml")
+        paths.append(Path.home() / "Library" / "Application Support" / "netroach" / "netroach.toml")
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        paths.append(base / "scaprobe" / "scaprobe.toml")
+        paths.append(base / "netroach" / "netroach.toml")
     return paths
 
 
-def parse_config_data(data: dict[str, Any], *, path: Path | None = None) -> ScaprobeConfig:
+def parse_config_data(data: dict[str, Any], *, path: Path | None = None) -> NetroachConfig:
     scan = parse_scan_config(_mapping(data.get("scan"), "scan"), label="scan")
     environments = parse_environments(_mapping(data.get("environments"), "environments"))
     port_profiles = parse_port_profiles(data)
     plugin_paths = parse_plugin_paths(_mapping(data.get("plugins"), "plugins"))
-    return ScaprobeConfig(
+    return NetroachConfig(
         path=path,
         scan=scan,
         environments=environments,
@@ -220,7 +220,7 @@ def merge_scan_configs(configs: Iterable[ScanConfig]) -> ScanConfig:
 
 def resolve_scan_options(
     *,
-    config: ScaprobeConfig,
+    config: NetroachConfig,
     env: str | None,
     values: dict[str, Any],
     explicit_fields: set[str],

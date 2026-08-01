@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from netprobe.models import ScanSummary
-from netprobe.performance import ProcessMeter, StreamingScanMetrics, distribution, percentile, process_memory_bytes
+from netroach.models import ScanSummary
+from netroach.performance import ProcessMeter, StreamingScanMetrics, distribution, percentile, process_memory_bytes
 from tools import benchmark_scan, soak_scan
 
 

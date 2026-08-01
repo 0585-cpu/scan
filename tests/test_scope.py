@@ -1,7 +1,7 @@
 import ipaddress
 import unittest
 
-from netprobe.scope import ScopeError, ScopeGuard, parse_target_expr, scope_values_from_targets
+from netroach.scope import ScopeError, ScopeGuard, parse_target_expr, scope_values_from_targets
 
 
 class ScopeTests(unittest.TestCase):

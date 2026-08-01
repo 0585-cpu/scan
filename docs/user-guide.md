@@ -1,6 +1,6 @@
-# Scaprobe User Guide
+# Netroach User Guide
 
-Scaprobe is an authorization-first network diagnostics toolkit. Use it only on networks and systems you own or are explicitly allowed to test.
+Netroach is an authorization-first network diagnostics toolkit. Use it only on networks and systems you own or are explicitly allowed to test.
 
 ## 1. Install And Check
 
@@ -10,8 +10,8 @@ Development install:
 py -3 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
-scaprobe --help
-scaprobe serve --check
+netroach --help
+netroach serve --check
 ```
 
 Portable release installs are covered in `docs/install.md`.
@@ -21,27 +21,27 @@ Portable release installs are covered in `docs/install.md`.
 Active scans require both scope and confirmation.
 
 ```powershell
-scaprobe scan --targets 192.168.1.10 --ports 22,80,443 --scope 192.168.1.0/24 --confirm-authorized
-scaprobe scan --protocol udp --udp-retries 1 --targets 192.168.1.10 --ports 53,123,161 --scope 192.168.1.0/24 --confirm-authorized
+netroach scan --targets 192.168.1.10 --ports 22,80,443 --scope 192.168.1.0/24 --confirm-authorized
+netroach scan --protocol udp --udp-retries 1 --targets 192.168.1.10 --ports 53,123,161 --scope 192.168.1.0/24 --confirm-authorized
 ```
 
 Targets accept IP addresses, CIDR ranges, and hostnames. A hostname is resolved before anything else runs, so the scope guard always checks the addresses that will actually be probed - a name can never carry a target past it. Every address a name resolves to is scanned, up to 16 per name, and the stored job records the resolved addresses.
 
 ```powershell
-scaprobe scan --targets lab.example.internal --ports 22,80,443 --scope 10.0.0.0/8 --confirm-authorized
+netroach scan --targets lab.example.internal --ports 22,80,443 --scope 10.0.0.0/8 --confirm-authorized
 ```
 
 The scanner retries silent UDP probes once by default and accepts correlated replies for protocols that expose transaction IDs, cookies, request IDs, or message IDs. Use `--udp-retries 0` for one attempt or a value up to 3 for lossy networks.
 
-With service probing enabled, Scaprobe normalizes SSH product/version/platform fields and common FTP, SMTP, POP3, and IMAP greetings. HTTP results include a bounded status line plus selected `Server`, `Location`, `Content-Type`, and HTML title metadata. TLS-like services use a real bounded handshake to collect the certificate common name, up to five SAN entries, and expiry time; HTTPS-like services also collect HTTP metadata through the encrypted connection. A service name derived only from its well-known port is marked `inferred` in the dashboard instead of being presented as a confirmed fingerprint.
+With service probing enabled, Netroach normalizes SSH product/version/platform fields and common FTP, SMTP, POP3, and IMAP greetings. HTTP results include a bounded status line plus selected `Server`, `Location`, `Content-Type`, and HTML title metadata. TLS-like services use a real bounded handshake to collect the certificate common name, up to five SAN entries, and expiry time; HTTPS-like services also collect HTTP metadata through the encrypted connection. A service name derived only from its well-known port is marked `inferred` in the dashboard instead of being presented as a confirmed fingerprint.
 
 The default workload guard allows 1,000,000 host-port attempts. Scans above that configured threshold require a separate `--confirm-large-scan` acknowledgement and can never exceed the 100,000,000-attempt absolute limit. Timeout, worker concurrency, rate, and expanded-host counts are bounded as well. The dashboard previews attempts and an estimated minimum duration before submission.
 
 Use built-in or custom port profiles:
 
 ```powershell
-scaprobe scan --targets 192.168.1.10 --profile web --scope 192.168.1.0/24 --confirm-authorized
-scaprobe scan --config .\scaprobe.toml --env lab --targets 192.168.1.10 --confirm-authorized
+netroach scan --targets 192.168.1.10 --profile web --scope 192.168.1.0/24 --confirm-authorized
+netroach scan --config .\netroach.toml --env lab --targets 192.168.1.10 --confirm-authorized
 ```
 
 To capture automatic image evidence for discovered services, enable it per scan. Web services use real browser screenshots. SSH, FTP, SMTP, DNS, SNMP, database, and other non-web services receive an 800 x 600 PowerShell terminal image containing the executed diagnostic command, its output, and the scan's service banner or protocol response:
@@ -49,10 +49,10 @@ To capture automatic image evidence for discovered services, enable it per scan.
 ```powershell
 pip install -e ".[screenshots]"
 playwright install chromium
-scaprobe scan --targets 192.168.1.10 --ports 22,53,80,443 --scope 192.168.1.0/24 --confirm-authorized --capture-evidence
+netroach scan --targets 192.168.1.10 --ports 22,53,80,443 --scope 192.168.1.0/24 --confirm-authorized --capture-evidence
 ```
 
-`--capture-evidence` captures browser or terminal evidence. Browser navigation is limited to the scanned host. For TCP services, the terminal evidence runs a bounded PowerShell `.NET TcpClient.ConnectAsync()` diagnostic. SSH and Telnet stop at the client login prompt; FTP, SMTP, POP3, IMAP, and Redis use only pre-authentication capability commands such as `FEAT`, `EHLO`, `CAPA`, `CAPABILITY`, or `PING`. Implicit TLS variants perform the TLS handshake first. No username, password, key, `AUTH`, database startup, bind, or login packet is sent. UDP terminal evidence displays the response already obtained by the authorized scanner because PowerShell has no generic UDP connection test. If Playwright or a web page is unavailable, Scaprobe stores terminal evidence instead. The default timeout is 8 seconds and the unified automatic evidence set is capped at 20 services; adjust these bounds with `--screenshot-timeout-ms` and `--screenshot-max`.
+`--capture-evidence` captures browser or terminal evidence. Browser navigation is limited to the scanned host. For TCP services, the terminal evidence runs a bounded PowerShell `.NET TcpClient.ConnectAsync()` diagnostic. SSH and Telnet stop at the client login prompt; FTP, SMTP, POP3, IMAP, and Redis use only pre-authentication capability commands such as `FEAT`, `EHLO`, `CAPA`, `CAPABILITY`, or `PING`. Implicit TLS variants perform the TLS handshake first. No username, password, key, `AUTH`, database startup, bind, or login packet is sent. UDP terminal evidence displays the response already obtained by the authorized scanner because PowerShell has no generic UDP connection test. If Playwright or a web page is unavailable, Netroach stores terminal evidence instead. The default timeout is 8 seconds and the unified automatic evidence set is capped at 20 services; adjust these bounds with `--screenshot-timeout-ms` and `--screenshot-max`.
 
 In the dashboard, port presets and configured port profiles are selected from the same **Presets** row. **Import TXT** accepts a plain-text profile containing comma-separated ports, ranges, and `#` comments; imported profiles are validated and saved in the local dashboard browser for reuse. Enable `Use targets as authorized scope` to derive scan scope from the target field. Single IP targets become `/32` or `/128`; CIDR targets are used as-is.
 
@@ -69,11 +69,11 @@ PNG, JPEG, GIF, and WebP files up to 10 MB are accepted. Manual images, web scre
 Export or report:
 
 ```powershell
-scaprobe export <scan_id> --format csv --state open --output .\open.csv
-scaprobe export <scan_id> --format csv --bundle-evidence --output .\scan-evidence.zip
-scaprobe export <scan_id> --format xlsx --output .\scan-results.xlsx
-scaprobe report <scan_id> --format html --output .\scan-report.html
-scaprobe report <scan_id> --format html --embed-evidence --output .\scan-report-offline.html
+netroach export <scan_id> --format csv --state open --output .\open.csv
+netroach export <scan_id> --format csv --bundle-evidence --output .\scan-evidence.zip
+netroach export <scan_id> --format xlsx --output .\scan-results.xlsx
+netroach report <scan_id> --format html --output .\scan-report.html
+netroach report <scan_id> --format html --embed-evidence --output .\scan-report-offline.html
 ```
 
 The evidence bundle contains `results.csv`, `manifest.json`, and the attached image files under `evidence/`. Each CSV evidence entry includes its relative `bundle_path`.
@@ -98,7 +98,7 @@ The benchmark report verifies every planned result was emitted, then records sta
 ## 5. Analyze PCAP Files
 
 ```powershell
-scaprobe pcap .\capture.pcapng --top 10
+netroach pcap .\capture.pcapng --top 10
 ```
 
 PCAP summaries include protocols, top talkers, conversations, DNS, HTTP, TLS, ARP, ICMP, and DHCP metadata.
@@ -108,20 +108,20 @@ PCAP summaries include protocols, top talkers, conversations, DNS, HTTP, TLS, AR
 Live capture is bounded and requires confirmation.
 
 ```powershell
-scaprobe capture --output .\capture.pcap --duration-s 10 --confirm-authorized
-scaprobe capture --output .\sample.pcap --count 100 --iface "Ethernet" --confirm-authorized --json
+netroach capture --output .\capture.pcap --duration-s 10 --confirm-authorized
+netroach capture --output .\sample.pcap --count 100 --iface "Ethernet" --confirm-authorized --json
 ```
 
 Windows usually requires Npcap and an elevated terminal. macOS/Linux may require root or packet capture privileges.
 
 ## 7. Send Template Packets
 
-Scaprobe allows template-based traffic only. Arbitrary Scapy expressions and raw byte injection are intentionally not supported.
+Netroach allows template-based traffic only. Arbitrary Scapy expressions and raw byte injection are intentionally not supported.
 
 ```powershell
-scaprobe send tcp --target 192.168.1.10 --dport 443 --scope 192.168.1.0/24 --confirm-authorized --dry-run --json
-scaprobe send icmp --target 192.168.1.10 --scope 192.168.1.0/24 --count 3 --confirm-authorized
-scaprobe send dns --target 192.168.1.1 --dns-name example.com --scope 192.168.1.0/24 --confirm-authorized
+netroach send tcp --target 192.168.1.10 --dport 443 --scope 192.168.1.0/24 --confirm-authorized --dry-run --json
+netroach send icmp --target 192.168.1.10 --scope 192.168.1.0/24 --count 3 --confirm-authorized
+netroach send dns --target 192.168.1.1 --dns-name example.com --scope 192.168.1.0/24 --confirm-authorized
 ```
 
 Packet audit history remains available in the dashboard and REST API.
@@ -131,9 +131,9 @@ Packet audit history remains available in the dashboard and REST API.
 Plugins are JSON data files. They do not execute code.
 
 ```powershell
-scaprobe plugins validate .\docs\scaprobe.plugin.example.json
-scaprobe plugins list --plugin .\docs\scaprobe.plugin.example.json
-scaprobe scan --plugin .\docs\scaprobe.plugin.example.json --targets 192.168.1.10 --profile lab-app --scope 192.168.1.0/24 --confirm-authorized
+netroach plugins validate .\docs\netroach.plugin.example.json
+netroach plugins list --plugin .\docs\netroach.plugin.example.json
+netroach scan --plugin .\docs\netroach.plugin.example.json --targets 192.168.1.10 --profile lab-app --scope 192.168.1.0/24 --confirm-authorized
 ```
 
 Plugins can add port profiles, TCP/UDP service names, and simple banner/response fingerprint rules.
@@ -145,7 +145,7 @@ OAST support records inbound HTTP callbacks. It does not generate exploit payloa
 Start the API on the DB you want to store callbacks in:
 
 ```powershell
-scaprobe serve --host 127.0.0.1 --port 8765
+netroach serve --host 127.0.0.1 --port 8765
 ```
 
 Create callback tokens and inspect or delete interactions from the dashboard or `/v1/oast/sessions` REST endpoints. Use the generated `/oast/<token>` URL only in your authorized test.
@@ -155,7 +155,7 @@ Sensitive headers such as `Authorization` and `Cookie` are redacted before stora
 ## 10. Local API And Dashboard
 
 ```powershell
-scaprobe serve --host 127.0.0.1 --port 8765
+netroach serve --host 127.0.0.1 --port 8765
 ```
 
 Open:
@@ -164,28 +164,28 @@ Open:
 http://127.0.0.1:8765/dashboard
 ```
 
-A loopback bind (`127.0.0.1`, `localhost`, `::1`) needs no token. Any other bind is reachable from the network and therefore always requires one: pass `--api-token`, set `SCAPROBE_API_TOKEN`, or let the startup print the token it generated.
+A loopback bind (`127.0.0.1`, `localhost`, `::1`) needs no token. Any other bind is reachable from the network and therefore always requires one: pass `--api-token`, set `NETROACH_API_TOKEN`, or let the startup print the token it generated.
 
 ```powershell
-scaprobe serve --host 0.0.0.0 --port 8765 --api-token <token>
+netroach serve --host 0.0.0.0 --port 8765 --api-token <token>
 ```
 
 Some endpoints name files on the machine running the API - `/v1/pcaps/analyze` takes a pcap path, scans accept `ports_file` and `targets_file`, and live capture writes its output file. Those paths are read and written by the server, not by the caller, so anyone holding the token can read any file the server account can read. That is the intended trust level for a local operator tool: treat the token as full access to that machine, and do not hand it to anyone you would not give a shell to.
 
 With a token active, every endpoint requires `Authorization: Bearer <token>`. Open `/dashboard?token=<token>` once and the browser keeps an `HttpOnly` session cookie, so later URLs no longer carry the token. Only the `/oast/<token>` callback receiver stays open, because the scanned systems that deliver those callbacks cannot present operator credentials. The token authenticates the API; it is not transport security, so put TLS in front of anything beyond a trusted network.
 
-Import `postman/scaprobe.postman_collection.json` into Postman for API examples.
+Import `postman/netroach.postman_collection.json` into Postman for API examples.
 
 ## 11. Desktop Mode
 
 ```powershell
-scaprobe desktop
+netroach desktop
 ```
 
 This starts the same local API/dashboard on the fixed `127.0.0.1:8765` address and opens the dashboard. Use `--port 0` only when a free ephemeral port is preferred:
 
 ```powershell
-scaprobe desktop --host 127.0.0.1 --no-open
+netroach desktop --host 127.0.0.1 --no-open
 ```
 
 `desktop` accepts `--api-token` and follows the same rule as `serve`: loopback stays open, any other bind gets a token, and the opened URL carries it once.

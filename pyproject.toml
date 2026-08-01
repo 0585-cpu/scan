@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "scaprobe"
+name = "netroach"
 dynamic = ["version"]
 description = "Authorized network scanner, pcap analyzer, and packet crafting toolkit."
 readme = "README.md"
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-scaprobe = "netprobe.cli:main"
+netroach = "netroach.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -35,10 +35,10 @@ desktop-build = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["netprobe*"]
+include = ["netroach*"]
 
 [tool.setuptools.package-data]
-netprobe = ["static/*.html"]
+netroach = ["static/*.html"]
 
 [tool.ruff]
 line-length = 140
@@ -61,12 +61,12 @@ ignore = [
 # The tools/ scripts bootstrap sys.path before importing the package.
 "tools/*" = ["E402"]
 # Report templates are single-line HTML; wrapping them would change output.
-"netprobe/reports.py" = ["E501"]
+"netroach/reports.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.10"
 # tools/ has no package marker, so mypy would see each script twice.
-files = ["netprobe"]
+files = ["netroach"]
 ignore_missing_imports = true
 # The code is already fully annotated; these keep it that way without
 # demanding a strict-mode cleanup first.
@@ -75,4 +75,4 @@ warn_redundant_casts = true
 no_implicit_optional = true
 
 [tool.setuptools.dynamic]
-version = {attr = "netprobe.version.__version__"}
+version = {attr = "netroach.version.__version__"}

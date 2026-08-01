@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from netprobe.plugins import load_plugin_manifest, load_plugins, parse_plugin_manifest
+from netroach.plugins import load_plugin_manifest, load_plugins, parse_plugin_manifest
 
 
 class PluginTests(unittest.TestCase):

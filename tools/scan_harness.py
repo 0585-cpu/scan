@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from netprobe.auth import require_active_authorization
-from netprobe.models import EngineSettings
-from netprobe.scan_inputs import PORT_PROFILES, TOP_PORTS, resolve_ports, resolve_targets, validate_scan_workload
+from netroach.auth import require_active_authorization
+from netroach.models import EngineSettings
+from netroach.scan_inputs import PORT_PROFILES, TOP_PORTS, resolve_ports, resolve_targets, validate_scan_workload
 
 
 def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
@@ -24,7 +24,7 @@ def add_scan_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--rate-limit-per-sec", type=int, default=5000)
     parser.add_argument("--udp-retries", type=int, choices=range(0, 4), default=1)
     parser.add_argument("--no-service-probe", action="store_true")
-    parser.add_argument("--engine-path", help="path to scaprobe-engine")
+    parser.add_argument("--engine-path", help="path to netroach-engine")
     parser.add_argument("--max-hosts", type=int, default=65536)
     parser.add_argument("--max-attempts", type=int, default=1_000_000)
     parser.add_argument("--confirm-large-scan", action="store_true")

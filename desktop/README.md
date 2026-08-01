@@ -1,6 +1,6 @@
-# Scaprobe Desktop
+# Netroach Desktop
 
-This directory contains the Tauri window for the self-contained Scaprobe desktop application. A production bundle includes a PyInstaller-frozen API/dashboard backend, the Rust scan engine, Playwright with headless Chromium, and the WebView2 offline installer. The app starts the backend on a free loopback port, waits for its health endpoint, and stops its backend/browser/engine process tree when the desktop process exits.
+This directory contains the Tauri window for the self-contained Netroach desktop application. A production bundle includes a PyInstaller-frozen API/dashboard backend, the Rust scan engine, Playwright with headless Chromium, and the WebView2 offline installer. The app starts the backend on a free loopback port, waits for its health endpoint, and stops its backend/browser/engine process tree when the desktop process exits.
 
 ## Build The Windows Installer
 
@@ -26,7 +26,7 @@ The Playwright download is cached in `target\desktop-playwright`. Add `--skip-pl
 Start the existing Python launcher from the repository root:
 
 ```powershell
-scaprobe desktop --host 127.0.0.1 --port 8765 --no-open
+netroach desktop --host 127.0.0.1 --port 8765 --no-open
 ```
 
 Then run the wrapper:
@@ -34,10 +34,10 @@ Then run the wrapper:
 ```powershell
 cd desktop
 npm install
-$env:SCAPROBE_DESKTOP_URL = "http://127.0.0.1:8765/dashboard"
+$env:NETROACH_DESKTOP_URL = "http://127.0.0.1:8765/dashboard"
 npm run dev
 ```
 
-If `SCAPROBE_DESKTOP_URL` is not set, the wrapper uses the staged executables under `src-tauri/resources/bin`. `SCAPROBE_BACKEND_PATH` and `SCAPROBE_ENGINE_PATH` override those paths for debugging.
+If `NETROACH_DESKTOP_URL` is not set, the wrapper uses the staged executables under `src-tauri/resources/bin`. `NETROACH_BACKEND_PATH` and `NETROACH_ENGINE_PATH` override those paths for debugging.
 
 See `docs/desktop-packaging.md` for packaging details and destination-PC requirements.

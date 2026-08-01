@@ -115,7 +115,7 @@ fn wait_for_backend(child: &mut Child, port: u16) -> io::Result<()> {
     loop {
         if let Some(status) = child.try_wait()? {
             return Err(io::Error::other(format!(
-                "Scaprobe backend exited during startup with status {status}"
+                "Netroach backend exited during startup with status {status}"
             )));
         }
         if health_check(port).unwrap_or(false) {
@@ -124,7 +124,7 @@ fn wait_for_backend(child: &mut Child, port: u16) -> io::Result<()> {
         if started.elapsed() >= STARTUP_TIMEOUT {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "Scaprobe backend did not become ready within 20 seconds",
+                "Netroach backend did not become ready within 20 seconds",
             ));
         }
         thread::sleep(Duration::from_millis(100));
@@ -132,10 +132,10 @@ fn wait_for_backend(child: &mut Child, port: u16) -> io::Result<()> {
 }
 
 fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, Box<dyn std::error::Error>> {
-    let backend = runtime_binary_path(app, "SCAPROBE_BACKEND_PATH", "scaprobe-backend")?;
-    let engine = runtime_binary_path(app, "SCAPROBE_ENGINE_PATH", "scaprobe-engine")?;
+    let backend = runtime_binary_path(app, "NETROACH_BACKEND_PATH", "netroach-backend")?;
+    let engine = runtime_binary_path(app, "NETROACH_ENGINE_PATH", "netroach-engine")?;
     let playwright_browsers =
-        runtime_directory_path(app, "SCAPROBE_PLAYWRIGHT_BROWSERS_PATH", "playwright")?;
+        runtime_directory_path(app, "NETROACH_PLAYWRIGHT_BROWSERS_PATH", "playwright")?;
     let log_directory = app.path().app_log_dir()?;
     fs::create_dir_all(&log_directory)?;
     let log_path = log_directory.join("backend.log");
@@ -146,9 +146,9 @@ fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, Box<dyn std::erro
     let stderr = stdout.try_clone()?;
 
     // The window has no console, so backend.log is the only diagnostic channel.
-    // SCAPROBE_LOG_LEVEL=debug turns on the request log when something in the
+    // NETROACH_LOG_LEVEL=debug turns on the request log when something in the
     // installed app has to be traced.
-    let log_level = std::env::var("SCAPROBE_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+    let log_level = std::env::var("NETROACH_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
     let mut command = Command::new(backend);
     command
@@ -206,7 +206,7 @@ fn main() {
         .manage(BackendProcess::default())
         .setup(|app| {
             let url =
-                if let Ok(url) = std::env::var("SCAPROBE_DESKTOP_URL") {
+                if let Ok(url) = std::env::var("NETROACH_DESKTOP_URL") {
                     url
                 } else {
                     let port = reserve_local_port()?;
@@ -225,18 +225,18 @@ fn main() {
             let parsed_url = url.parse().map_err(|error| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("invalid Scaprobe desktop URL: {error}"),
+                    format!("invalid Netroach desktop URL: {error}"),
                 )
             })?;
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External(parsed_url))
-                .title("Scaprobe")
+                .title("Netroach")
                 .inner_size(1280.0, 820.0)
                 .min_inner_size(960.0, 640.0)
                 .build()?;
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building Scaprobe desktop");
+        .expect("error while building Netroach desktop");
 
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn executable_name_matches_the_platform() {
-        let name = executable_name("scaprobe-engine");
+        let name = executable_name("netroach-engine");
         assert_eq!(name.ends_with(".exe"), cfg!(windows));
     }
 }

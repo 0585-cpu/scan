@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from netprobe.engine import run_scan
-from netprobe.performance import ProcessMeter, StreamingScanMetrics, distribution
+from netroach.engine import run_scan
+from netroach.performance import ProcessMeter, StreamingScanMetrics, distribution
 from tools.scan_harness import add_scan_arguments, prepare_scan
 
 
@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run an authorized Scaprobe scan benchmark and emit a JSON report.")
+    parser = argparse.ArgumentParser(description="Run an authorized Netroach scan benchmark and emit a JSON report.")
     add_scan_arguments(parser)
     parser.add_argument("--warmup-runs", type=int, default=1, help="unmeasured warmup runs")
     parser.add_argument("--runs", type=int, default=3, help="measured benchmark runs")

@@ -113,8 +113,8 @@ def format_results_xlsx(
         raise RuntimeError("Excel export requires openpyxl and Pillow; install with: pip install -e .") from exc
 
     workbook = Workbook()
-    workbook.properties.title = f"Scaprobe Scan {job.get('id', '')}".strip()
-    workbook.properties.creator = "Scaprobe"
+    workbook.properties.title = f"Netroach Scan {job.get('id', '')}".strip()
+    workbook.properties.creator = "Netroach"
     results_sheet = workbook.active
     results_sheet.title = "Results"
     result_headers = [

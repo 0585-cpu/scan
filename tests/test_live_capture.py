@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from netprobe.live_capture import LiveCaptureRequest, execute_live_capture, validate_live_capture_request
+from netroach.live_capture import LiveCaptureRequest, execute_live_capture, validate_live_capture_request
 
 
 class FakePcapWriter:
@@ -61,10 +61,10 @@ class LiveCaptureTests(unittest.TestCase):
             output = Path(tmp) / "capture.pcap"
             with (
                 patch(
-                    "netprobe.live_capture._import_scapy_capture",
+                    "netroach.live_capture._import_scapy_capture",
                     return_value={"PcapWriter": FakePcapWriter, "sniff": fake_sniff},
                 ),
-                patch("netprobe.live_capture.analyze_pcap", side_effect=lambda path, top=10: FakeSummary(Path(path))),
+                patch("netroach.live_capture.analyze_pcap", side_effect=lambda path, top=10: FakeSummary(Path(path))),
             ):
                 result = execute_live_capture(
                     LiveCaptureRequest(
@@ -95,7 +95,7 @@ class LiveCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "capture.pcap"
             with patch(
-                "netprobe.live_capture._import_scapy_capture",
+                "netroach.live_capture._import_scapy_capture",
                 return_value={"PcapWriter": FakePcapWriter, "sniff": fake_sniff},
             ):
                 result = execute_live_capture(

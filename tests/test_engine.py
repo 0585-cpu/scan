@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from netprobe.engine import (
+from netroach.engine import (
     EngineUnavailableError,
     ScanCancelled,
     _run_rust_engine,
@@ -15,18 +15,18 @@ from netprobe.engine import (
     resolve_engine_path,
     run_scan,
 )
-from netprobe.models import EngineSettings
-from netprobe.plugins import load_plugins
+from netroach.models import EngineSettings
+from netroach.plugins import load_plugins
 
 
 class EngineTests(unittest.TestCase):
     def test_engine_discovery_supports_explicit_and_canonical_environment_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
-            engine = Path(tmp) / "scaprobe-engine"
+            engine = Path(tmp) / "netroach-engine"
             engine.touch()
             self.assertEqual(resolve_engine_path(str(engine)), str(engine))
-            with patch.dict(os.environ, {"SCAPROBE_ENGINE": str(engine)}, clear=True):
-                with patch("netprobe.engine.shutil.which", return_value=None):
+            with patch.dict(os.environ, {"NETROACH_ENGINE": str(engine)}, clear=True):
+                with patch("netroach.engine.shutil.which", return_value=None):
                     self.assertEqual(resolve_engine_path(), str(engine))
 
     def test_rust_engine_process_is_terminated_on_external_cancel(self):
@@ -66,10 +66,10 @@ class EngineTests(unittest.TestCase):
                 return self.returncode or 0
 
         process = FakeProcess()
-        with patch("netprobe.engine.subprocess.Popen", return_value=process):
+        with patch("netroach.engine.subprocess.Popen", return_value=process):
             with self.assertRaisesRegex(ScanCancelled, "cancelled"):
                 _run_rust_engine_command(
-                    ["scaprobe-engine", "scan"],
+                    ["netroach-engine", "scan"],
                     scan_id="cancel-rust",
                     on_event=None,
                     should_stop=lambda: True,
@@ -77,7 +77,7 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(process.terminated)
 
     def test_cancelling_a_flooding_engine_does_not_leak_the_reader_thread(self):
-        from netprobe.engine import ENGINE_EVENT_QUEUE_SIZE
+        from netroach.engine import ENGINE_EVENT_QUEUE_SIZE
 
         class FloodingStdout:
             """Emits far more events than the bounded queue can hold."""
@@ -113,10 +113,10 @@ class EngineTests(unittest.TestCase):
                 return self.returncode or 0
 
         before = threading.active_count()
-        with patch("netprobe.engine.subprocess.Popen", return_value=FakeProcess()):
+        with patch("netroach.engine.subprocess.Popen", return_value=FakeProcess()):
             with self.assertRaises(ScanCancelled):
                 _run_rust_engine_command(
-                    ["scaprobe-engine", "scan"],
+                    ["netroach-engine", "scan"],
                     scan_id="flood-cancel",
                     on_event=None,
                     should_stop=lambda: True,
@@ -162,9 +162,9 @@ class EngineTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with patch("netprobe.engine.subprocess.Popen", side_effect=fake_popen):
+            with patch("netroach.engine.subprocess.Popen", side_effect=fake_popen):
                 results, summary = _run_rust_engine(
-                    engine="scaprobe-engine",
+                    engine="netroach-engine",
                     scan_id="plugin-scan",
                     target_expr="127.0.0.1",
                     port_expr="18080",
@@ -184,7 +184,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(summary.scan_id, "plugin-scan")
 
     def test_missing_rust_engine_raises_unavailable_error(self):
-        with patch("netprobe.engine.resolve_engine_path", return_value=None):
+        with patch("netroach.engine.resolve_engine_path", return_value=None):
             with self.assertRaisesRegex(EngineUnavailableError, "Rust scan engine is unavailable"):
                 run_scan(
                     scan_id="missing-engine",
@@ -221,9 +221,9 @@ class EngineTests(unittest.TestCase):
 
         target_expr = ",".join(["127.0.0.1"] * 15_000)
         port_expr = ",".join(str(port) for port in range(1, 10_000))
-        with patch("netprobe.engine.subprocess.Popen", side_effect=fake_popen):
+        with patch("netroach.engine.subprocess.Popen", side_effect=fake_popen):
             results, summary = _run_rust_engine(
-                engine="scaprobe-engine",
+                engine="netroach-engine",
                 scan_id="large-input",
                 target_expr=target_expr,
                 port_expr=port_expr,

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Scaprobe Dashboard</title>
+  <title>Netroach Dashboard</title>
   <style>
     :root {
       color-scheme: light;
@@ -697,7 +697,7 @@
   <div class="app">
     <aside class="sidebar">
       <div class="brand">
-        <strong>Scaprobe</strong>
+        <strong>Netroach</strong>
         <span>Local Operations Console</span>
       </div>
       <nav class="nav" aria-label="Dashboard sections">
@@ -1268,7 +1268,7 @@
       return Number.isNaN(parsed.getTime()) ? source : parsed.toLocaleString();
     };
 
-    const CUSTOM_PORT_PROFILE_STORAGE_KEY = 'scaprobe.customPortProfiles.v1';
+    const CUSTOM_PORT_PROFILE_STORAGE_KEY = 'netroach.customPortProfiles.v1';
     const CUSTOM_PORT_PROFILE_MAX_BYTES = 256 * 1024;
     const CUSTOM_PORT_PROFILE_MAX_COUNT = 10;
 
@@ -1618,7 +1618,7 @@
     }
 
     function exportFileName(scanId, extension) {
-      return `scaprobe-${shortId(scanId) || 'scan'}.${extension}`;
+      return `netroach-${shortId(scanId) || 'scan'}.${extension}`;
     }
 
     function setStatus(id, value, bad = false) {

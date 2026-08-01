@@ -13,9 +13,9 @@ from pathlib import Path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Smoke test a Scaprobe portable zip artifact.")
+    parser = argparse.ArgumentParser(description="Smoke test a Netroach portable zip artifact.")
     parser.add_argument("artifact", help="zip file or directory containing one zip file")
-    parser.add_argument("--require-engine", action="store_true", help="require a bundled scaprobe-engine binary")
+    parser.add_argument("--require-engine", action="store_true", help="require a bundled netroach-engine binary")
     args = parser.parse_args()
 
     archive = resolve_archive(Path(args.artifact))
@@ -26,9 +26,9 @@ def main() -> int:
         assert_required_files(extract_dir)
         if args.require_engine:
             assert_engine_file(extract_dir)
-        run_scaprobe(extract_dir, ["--help"])
-        run_scaprobe(extract_dir, ["--version"])
-        diagnostics = run_scaprobe_json(extract_dir, ["serve", "--check"])
+        run_netroach(extract_dir, ["--help"])
+        run_netroach(extract_dir, ["--version"])
+        diagnostics = run_netroach_json(extract_dir, ["serve", "--check"])
         expected = {
             "app_version",
             "scapy_available",
@@ -100,14 +100,14 @@ def safe_extract_tar(tf: tarfile.TarFile, extract_dir: Path) -> None:
 
 def assert_required_files(root: Path) -> None:
     required = [
-        root / "Start-Scaprobe.cmd",
+        root / "Start-Netroach.cmd",
         root / "README.md",
         root / "CHANGELOG.md",
         root / "docs" / "install.md",
         root / "docs" / "release-checklist.md",
         root / "docs" / "desktop-packaging.md",
-        root / "docs" / "scaprobe.example.toml",
-        root / "docs" / "scaprobe.plugin.example.json",
+        root / "docs" / "netroach.example.toml",
+        root / "docs" / "netroach.plugin.example.json",
         root / "docs" / "user-guide.md",
         root / "desktop" / "README.md",
         root / "desktop" / "package.json",
@@ -119,15 +119,15 @@ def assert_required_files(root: Path) -> None:
         root / "desktop" / "src-tauri" / "src" / "main.rs",
         root / "desktop" / "src-tauri" / "tauri.conf.json",
         root / "pyproject.toml",
-        root / "netprobe" / "cli.py",
-        root / "netprobe" / "desktop.py",
-        root / "netprobe" / "frozen_backend.py",
-        root / "netprobe" / "dashboard.py",
-        root / "postman" / "scaprobe.postman_collection.json",
+        root / "netroach" / "cli.py",
+        root / "netroach" / "desktop.py",
+        root / "netroach" / "frozen_backend.py",
+        root / "netroach" / "dashboard.py",
+        root / "postman" / "netroach.postman_collection.json",
         root / "tools" / "benchmark_scan.py",
         root / "tools" / "build_desktop.py",
         root / "tools" / "soak_scan.py",
-        root / "bin" / ("scaprobe.cmd" if os.name == "nt" else "scaprobe"),
+        root / "bin" / ("netroach.cmd" if os.name == "nt" else "netroach"),
         root / "bin" / "setup.cmd",
         root / "bin" / "start-desktop.cmd",
     ]
@@ -138,12 +138,12 @@ def assert_required_files(root: Path) -> None:
 
 def assert_engine_file(root: Path) -> None:
     suffix = ".exe" if os.name == "nt" else ""
-    engine = root / "bin" / f"scaprobe-engine{suffix}"
+    engine = root / "bin" / f"netroach-engine{suffix}"
     if not engine.exists():
         raise SystemExit(f"artifact is missing required engine binary: {engine.relative_to(root)}")
 
 
-def run_scaprobe(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+def run_netroach(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     command = launcher_command(root, args)
     env = os.environ.copy()
     env["PYTHON"] = sys.executable
@@ -167,8 +167,8 @@ def run_scaprobe(root: Path, args: list[str]) -> subprocess.CompletedProcess[str
     return result
 
 
-def run_scaprobe_json(root: Path, args: list[str]) -> dict[str, object]:
-    result = run_scaprobe(root, args)
+def run_netroach_json(root: Path, args: list[str]) -> dict[str, object]:
+    result = run_netroach(root, args)
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -177,8 +177,8 @@ def run_scaprobe_json(root: Path, args: list[str]) -> dict[str, object]:
 
 def launcher_command(root: Path, args: list[str]) -> list[str]:
     if os.name == "nt":
-        return [os.environ.get("COMSPEC", "cmd.exe"), "/c", str(root / "bin" / "scaprobe.cmd"), *args]
-    return [str(root / "bin" / "scaprobe"), *args]
+        return [os.environ.get("COMSPEC", "cmd.exe"), "/c", str(root / "bin" / "netroach.cmd"), *args]
+    return [str(root / "bin" / "netroach"), *args]
 
 
 if __name__ == "__main__":

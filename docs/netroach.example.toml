@@ -1,5 +1,5 @@
-# Example Scaprobe configuration.
-# Copy this to ./scaprobe.toml or your user config directory and adjust for your authorized environment.
+# Example Netroach configuration.
+# Copy this to ./netroach.toml or your user config directory and adjust for your authorized environment.
 
 [scan]
 timeout_ms = 800
@@ -14,7 +14,7 @@ top_ports = 100
 exclude = []
 
 [plugins]
-# paths = ["docs/scaprobe.plugin.example.json"]
+# paths = ["docs/netroach.plugin.example.json"]
 paths = []
 
 [port_profiles]

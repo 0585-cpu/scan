@@ -86,7 +86,7 @@ def build_scan_report(
         if result.get("service_name") or result.get("banner")
     ]
     return {
-        "title": title or f"Scaprobe Scan Report {job.get('id', '')}".strip(),
+        "title": title or f"Netroach Scan Report {job.get('id', '')}".strip(),
         "generated_at": generated_at,
         "job": job,
         "summary": summary,

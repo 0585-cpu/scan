@@ -19,16 +19,20 @@ class PackageToolTests(unittest.TestCase):
         pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
 
         self.assertIn('dynamic = ["version"]', pyproject)
-        self.assertIn('version = {attr = "netprobe.version.__version__"}', pyproject)
-        self.assertNotIn('\nnetprobe = "netprobe.cli:main"', pyproject)
+        self.assertIn('version = {attr = "netroach.version.__version__"}', pyproject)
+        # Exactly one console script: a second name would install a second
+        # command that drifts out of sync with the documented one.
+        scripts = pyproject.split("[project.scripts]", 1)[1].split("[", 1)[0]
+        entries = [line for line in scripts.splitlines() if "=" in line]
+        self.assertEqual(entries, ['netroach = "netroach.cli:main"'])
 
     def test_dashboard_asset_ships_in_every_artifact(self):
         root = Path(__file__).resolve().parents[1]
-        dashboard = root / "netprobe" / "static" / "dashboard.html"
+        dashboard = root / "netroach" / "static" / "dashboard.html"
 
         self.assertIn(dashboard, iter_payload_files(root))
         pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn('netprobe = ["static/*.html"]', pyproject)
+        self.assertIn('netroach = ["static/*.html"]', pyproject)
 
         from tools.build_desktop import pyinstaller_command
 
@@ -46,7 +50,7 @@ class PackageToolTests(unittest.TestCase):
 
     def test_write_sha256_checksum(self):
         with tempfile.TemporaryDirectory() as tmp:
-            archive = Path(tmp) / "scaprobe-test.zip"
+            archive = Path(tmp) / "netroach-test.zip"
             archive.write_bytes(b"artifact")
 
             checksum = write_sha256_checksum(archive)
@@ -61,7 +65,7 @@ class PackageToolTests(unittest.TestCase):
         quick_start = windows_quick_start_text()
 
         self.assertIn(".venv\\Scripts\\python.exe", launcher)
-        self.assertIn("-m netprobe", launcher)
+        self.assertIn("-m netroach", launcher)
         self.assertIn("set PATH=%SCRIPT_DIR%;%PATH%", launcher)
         self.assertIn('pushd "%SCRIPT_DIR%.."', launcher)
         self.assertIn("py -3 -m venv", setup)
@@ -75,17 +79,17 @@ class PackageToolTests(unittest.TestCase):
         self.assertIn("bin\\setup.cmd", quick_start)
         self.assertIn("bin\\start-desktop.cmd", quick_start)
         self.assertIn("--screenshots", quick_start)
-        self.assertIn("Scaprobe Launcher", quick_start)
+        self.assertIn("Netroach Launcher", quick_start)
         self.assertIn("choice /C 12340", quick_start)
-        self.assertIn("[1] Start Scaprobe", quick_start)
-        self.assertIn("[3] Install or update Scaprobe only", quick_start)
+        self.assertIn("[1] Start Netroach", quick_start)
+        self.assertIn("[3] Install or update Netroach only", quick_start)
         self.assertIn("[4] Run diagnostics", quick_start)
         self.assertIn("--diagnostics", quick_start)
 
     def test_portable_payload_excludes_staged_desktop_executables(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            staged = root / "desktop" / "src-tauri" / "resources" / "bin" / "scaprobe-backend.exe"
+            staged = root / "desktop" / "src-tauri" / "resources" / "bin" / "netroach-backend.exe"
             staged.parent.mkdir(parents=True)
             staged.write_bytes(b"backend")
             browser = root / "desktop" / "src-tauri" / "resources" / "playwright" / "chromium-1" / "chrome.exe"
