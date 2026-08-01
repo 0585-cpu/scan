@@ -126,6 +126,16 @@ class DashboardPresetTests(unittest.TestCase):
         for name in ("빠른 점검", "웹 포트", "전체 정밀"):
             self.assertIn(name, html)
 
+    def test_quick_check_preset_means_top_100_ports_not_1_1024(self):
+        """Design spec section 2: '빠른 점검' is 상위 100포트 (top-ports), not a
+        1-1024 port expression - those aren't the same 100 ports."""
+        html = dashboard_html()
+
+        presets_block = html.split("const BUILTIN_SCAN_PRESETS = [", 1)[1].split("];", 1)[0]
+        quick_preset = presets_block.split("builtin-quick", 1)[1].split("},", 1)[0]
+        self.assertIn("top_ports: 100", quick_preset)
+        self.assertNotIn("1-1024", quick_preset)
+
     def test_authorization_is_never_part_of_a_preset(self):
         """A restored checkbox would silently defeat the authorization gate.
 
