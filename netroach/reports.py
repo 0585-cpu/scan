@@ -16,6 +16,28 @@ MAX_EMBEDDED_EVIDENCE_BYTES = 50 * 1024 * 1024
 COLLAPSIBLE_SECTION_OPEN_LIMIT = 5
 COLLAPSIBLE_TEXT_LIMIT = 160
 
+# The JSON report keeps machine-readable keys; these are display labels only.
+IDENTIFICATION_LABELS = {
+    "confirmed": "확인됨",
+    "inferred": "포트 추정",
+    "unverified": "미확인",
+}
+REVIEW_REASON_LABELS = {
+    "scan error": "스캔 오류",
+    "ambiguous state": "상태 불명확",
+    "service inferred from port": "서비스가 포트로만 추정됨",
+    "annotated": "주석 있음",
+    "error detail present": "오류 상세 있음",
+}
+
+
+def identification_label(value: Any) -> str:
+    return IDENTIFICATION_LABELS.get(str(value or ""), str(value or ""))
+
+
+def review_reason_labels(reasons: Any) -> str:
+    return ", ".join(REVIEW_REASON_LABELS.get(str(reason), str(reason)) for reason in reasons or [])
+
 
 def build_scan_report(
     job: dict[str, Any],
@@ -86,7 +108,7 @@ def build_scan_report(
         if result.get("service_name") or result.get("banner")
     ]
     return {
-        "title": title or f"Netroach Scan Report {job.get('id', '')}".strip(),
+        "title": title or f"Netroach 스캔 보고서 {job.get('id', '')}".strip(),
         "generated_at": generated_at,
         "job": job,
         "summary": summary,
@@ -192,38 +214,38 @@ def format_scan_report_markdown(report: dict[str, Any]) -> str:
     lines = [
         f"# {report['title']}",
         "",
-        f"- Generated: `{report['generated_at']}`",
-        f"- Scan ID: `{job.get('id')}`",
-        f"- Status: `{job.get('status')}`",
-        f"- Targets: `{job.get('targets')}`",
-        f"- Ports: `{job.get('ports')}`",
-        f"- Included results: {completeness['included_results']} / {completeness['total_stored_results']}",
+        f"- 생성 시각: `{report['generated_at']}`",
+        f"- 스캔 ID: `{job.get('id')}`",
+        f"- 상태: `{job.get('status')}`",
+        f"- 대상: `{job.get('targets')}`",
+        f"- 포트: `{job.get('ports')}`",
+        f"- 포함된 결과: {completeness['included_results']} / {completeness['total_stored_results']}",
         "",
     ]
     if completeness["truncated"]:
         lines.extend(
             [
-                f"> **Incomplete detail set:** {completeness['omitted_results']} stored result(s) are omitted by the report limit.",
-                "> Open, review, and annotated rows are prioritized before routine states.",
+                f"> **상세 결과 일부 생략:** 보고서 한도 때문에 저장된 결과 {completeness['omitted_results']}건이 빠졌습니다.",
+                "> open · 검토 대상 · 주석이 있는 행을 일반 상태보다 먼저 싣습니다.",
                 "",
             ]
         )
     lines.extend(
         [
-            "## Summary",
+            "## 요약",
             "",
-            f"- Total: {summary.get('total', 0)}",
-            f"- Open: {summary.get('open', 0)}",
-            f"- Closed: {summary.get('closed', 0)}",
-            f"- Open|Filtered: {summary.get('open_filtered', 0)}",
-            f"- Filtered: {summary.get('filtered', 0)}",
-            f"- Error: {summary.get('error', 0)}",
-            f"- Hosts with open ports: {report['counts']['hosts_with_open_ports']}",
+            f"- 전체: {summary.get('total', 0)}",
+            f"- open: {summary.get('open', 0)}",
+            f"- closed: {summary.get('closed', 0)}",
+            f"- open|filtered: {summary.get('open_filtered', 0)}",
+            f"- filtered: {summary.get('filtered', 0)}",
+            f"- error: {summary.get('error', 0)}",
+            f"- open 포트가 있는 호스트: {report['counts']['hosts_with_open_ports']}",
             "",
-            "State legend: `open` responded; `closed` refused; `filtered` timed out; "
-            "`open|filtered` is an ambiguous UDP result; `error` is a local or network failure.",
+            "상태 표기: `open` 응답함, `closed` 거부됨, `filtered` 시간 초과, "
+            "`open|filtered` 는 판단이 불가능한 UDP 결과, `error` 는 로컬 또는 네트워크 오류입니다.",
             "",
-            "## Scan Configuration",
+            "## 스캔 설정",
             "",
         ]
     )
@@ -232,9 +254,9 @@ def format_scan_report_markdown(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Host Summary",
+            "## 호스트별 요약",
             "",
-            "| Host | Total | Open | Closed | Open\\|Filtered | Filtered | Error |",
+            "| 호스트 | 전체 | open | closed | open\\|filtered | filtered | error |",
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
@@ -257,13 +279,13 @@ def format_scan_report_markdown(report: dict[str, Any]) -> str:
             + " |"
         )
     if not report["host_summaries"]:
-        lines.append("| _none_ | 0 | 0 | 0 | 0 | 0 | 0 |")
+        lines.append("| _없음_ | 0 | 0 | 0 | 0 | 0 | 0 |")
     lines.extend(
         [
             "",
-            "## Open Results",
+            "## open 결과",
             "",
-            "| Host | Port | Protocol | Service | Evidence | Tags | Note |",
+            "| 호스트 | 포트 | 프로토콜 | 서비스 | 증적 | 태그 | 메모 |",
             "| --- | ---: | --- | --- | --- | --- | --- |",
         ]
     )
@@ -285,11 +307,11 @@ def format_scan_report_markdown(report: dict[str, Any]) -> str:
             + " |"
         )
     if not report["open_results"]:
-        lines.append("| _none_ |  |  |  |  |  |  |")
-    lines.extend(["", "## Service Identification Details", ""])
+        lines.append("| _없음_ |  |  |  |  |  |  |")
+    lines.extend(["", "## 서비스 식별 상세", ""])
     lines.extend(
         [
-            "| Host | Port/Protocol | Service | Identification | Banner |",
+            "| 호스트 | 포트/프로토콜 | 서비스 | 식별 근거 | 배너 |",
             "| --- | --- | --- | --- | --- |",
         ]
     )
@@ -302,18 +324,18 @@ def format_scan_report_markdown(report: dict[str, Any]) -> str:
                     detail.get("host"),
                     f"{detail.get('port')}/{detail.get('protocol')}",
                     detail.get("service_name"),
-                    detail.get("identification"),
+                    identification_label(detail.get("identification")),
                     detail.get("banner"),
                 ]
             )
             + " |"
         )
     if not report["service_details"]:
-        lines.append("| _none_ |  |  |  |  |")
-    lines.extend(["", "## Needs Review", ""])
+        lines.append("| _없음_ |  |  |  |  |")
+    lines.extend(["", "## 검토 필요", ""])
     lines.extend(
         [
-            "| Host | Port/Protocol | State | Reason | Service | Detail |",
+            "| 호스트 | 포트/프로토콜 | 상태 | 사유 | 서비스 | 상세 |",
             "| --- | --- | --- | --- | --- | --- |",
         ]
     )
@@ -327,7 +349,7 @@ def format_scan_report_markdown(report: dict[str, Any]) -> str:
                     result.get("host"),
                     f"{result.get('port')}/{result.get('protocol')}",
                     result.get("state"),
-                    ", ".join(result.get("review_reasons") or []),
+                    review_reason_labels(result.get("review_reasons")),
                     result.get("service_name") or "",
                     detail,
                 ]
@@ -335,8 +357,8 @@ def format_scan_report_markdown(report: dict[str, Any]) -> str:
             + " |"
         )
     if not report["review_results"]:
-        lines.append("| _none_ |  |  |  |  |  |")
-    lines.extend(["", "## Evidence Gallery", ""])
+        lines.append("| _없음_ |  |  |  |  |  |")
+    lines.extend(["", "## 증적 이미지", ""])
     for item in report["evidence_items"]:
         evidence = item["evidence"]
         caption = (
@@ -345,12 +367,12 @@ def format_scan_report_markdown(report: dict[str, Any]) -> str:
         ).strip()
         lines.extend([f"### {caption}", "", format_markdown_evidence([evidence]), ""])
     if not report["evidence_items"]:
-        lines.append("- none")
-    lines.extend(["", "## Service Counts", ""])
+        lines.append("- 없음")
+    lines.extend(["", "## 서비스별 건수", ""])
     for service, count in report["counts"]["services"].items():
         lines.append(f"- `{service}`: {count}")
     if not report["counts"]["services"]:
-        lines.append("- none")
+        lines.append("- 없음")
     return "\n".join(lines) + "\n"
 
 
@@ -360,18 +382,18 @@ def format_scan_report_html(report: dict[str, Any]) -> str:
     completeness = report["completeness"]
     open_rows = "\n".join(format_html_result_row(result) for result in report["open_results"])
     if not open_rows:
-        open_rows = "<tr><td colspan=\"7\"><em>No open results</em></td></tr>"
+        open_rows = "<tr><td colspan=\"7\"><em>open 결과 없음</em></td></tr>"
     host_rows = "\n".join(format_html_host_summary(summary) for summary in report["host_summaries"])
     if not host_rows:
-        host_rows = '<tr><td colspan="7"><em>No host results</em></td></tr>'
+        host_rows = '<tr><td colspan="7"><em>호스트 결과 없음</em></td></tr>'
     service_detail_rows = "\n".join(
         format_html_service_detail(detail) for detail in report["service_details"]
     )
     if not service_detail_rows:
-        service_detail_rows = '<tr><td colspan="5"><em>No identified services</em></td></tr>'
+        service_detail_rows = '<tr><td colspan="5"><em>식별된 서비스 없음</em></td></tr>'
     review_rows = "\n".join(format_html_review_row(result) for result in report["review_results"])
     if not review_rows:
-        review_rows = '<tr><td colspan="6"><em>No included results require review</em></td></tr>'
+        review_rows = '<tr><td colspan="6"><em>검토가 필요한 결과 없음</em></td></tr>'
     configuration_rows = "\n".join(
         f"<div><span>{html.escape(label)}</span><code>{html.escape(str(value))}</code></div>"
         for label, value in scan_configuration(job)
@@ -380,40 +402,40 @@ def format_scan_report_html(report: dict[str, Any]) -> str:
         format_html_evidence_gallery_item(item) for item in report["evidence_items"]
     )
     if not evidence_gallery:
-        evidence_gallery = "<p><em>No image evidence in the included detail set.</em></p>"
+        evidence_gallery = "<p><em>포함된 결과에 증적 이미지가 없습니다.</em></p>"
     service_items = "\n".join(
         f"<li><code>{html.escape(str(service))}</code>: {count}</li>"
         for service, count in report["counts"]["services"].items()
     )
     if not service_items:
-        service_items = "<li>none</li>"
+        service_items = "<li>없음</li>"
     service_details_section = format_html_collapsible_section(
         section_id="service-identification",
-        title="Service Identification Details",
+        title="서비스 식별 상세",
         count=len(report["service_details"]),
         summary=summarize_service_details(report["service_details"]),
         content=(
             '<div class="table-scroll"><table>'
-            "<thead><tr><th>Host</th><th>Port/Protocol</th><th>Service</th>"
-            "<th>Identification</th><th>Banner</th></tr></thead>"
+            "<thead><tr><th>호스트</th><th>포트/프로토콜</th><th>서비스</th>"
+            "<th>식별 근거</th><th>배너</th></tr></thead>"
             f"<tbody>{service_detail_rows}</tbody></table></div>"
         ),
     )
     review_section = format_html_collapsible_section(
         section_id="needs-review",
-        title="Needs Review",
+        title="검토 필요",
         count=len(report["review_results"]),
         summary=summarize_review_results(report["review_results"]),
         content=(
             '<div class="table-scroll"><table>'
-            "<thead><tr><th>Host</th><th>Port/Protocol</th><th>State</th>"
-            "<th>Reason</th><th>Service</th><th>Detail</th></tr></thead>"
+            "<thead><tr><th>호스트</th><th>포트/프로토콜</th><th>상태</th>"
+            "<th>사유</th><th>서비스</th><th>상세</th></tr></thead>"
             f"<tbody>{review_rows}</tbody></table></div>"
         ),
     )
     evidence_section = format_html_collapsible_section(
         section_id="evidence-gallery",
-        title="Evidence Gallery",
+        title="증적 이미지",
         count=len(report["evidence_items"]),
         summary=summarize_evidence_items(report["evidence_items"]),
         content=f'<section class="evidence-gallery">{evidence_gallery}</section>',
@@ -421,19 +443,19 @@ def format_scan_report_html(report: dict[str, Any]) -> str:
     completeness_warning = ""
     if completeness["truncated"]:
         completeness_warning = (
-            '<aside class="warning"><strong>Incomplete detail set</strong>'
-            f'<span>{completeness["omitted_results"]} stored result(s) are omitted by the report limit. '
-            "Open, review, and annotated rows are prioritized before routine states.</span></aside>"
+            '<aside class="warning"><strong>상세 결과 일부 생략</strong>'
+            f'<span>보고서 한도 때문에 저장된 결과 {completeness["omitted_results"]}건이 빠졌습니다. '
+            "open · 검토 대상 · 주석이 있는 행을 일반 상태보다 먼저 싣습니다.</span></aside>"
         )
     return f"""<!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <title>{html.escape(str(report["title"]))}</title>
   <style>
     :root {{ color-scheme: light; --border: #d1d5db; --muted: #f3f4f6; --ink: #1f2937; --accent: #0f766e; }}
     * {{ box-sizing: border-box; }}
-    body {{ font-family: system-ui, -apple-system, Segoe UI, sans-serif; margin: 32px; color: var(--ink); line-height: 1.45; }}
+    body {{ font-family: "Malgun Gothic", "Segoe UI", system-ui, -apple-system, sans-serif; margin: 32px; color: var(--ink); line-height: 1.45; }}
     h1, h2, h3 {{ color: #111827; }}
     h2 {{ border-bottom: 2px solid #e5e7eb; padding-bottom: 6px; margin-top: 34px; }}
     .meta, .cards {{ display: grid; gap: 8px; }}
@@ -467,8 +489,8 @@ def format_scan_report_html(report: dict[str, Any]) -> str:
     details.inline-detail {{ max-width: 48rem; }}
     details.inline-detail > summary {{ cursor: pointer; color: #374151; list-style: none; }}
     details.inline-detail > summary::-webkit-details-marker {{ display: none; }}
-    details.inline-detail > summary::after {{ content: " Show full"; color: var(--accent); font-size: .82rem; white-space: nowrap; }}
-    details.inline-detail[open] > summary::after {{ content: " Hide"; }}
+    details.inline-detail > summary::after {{ content: " 전체 보기"; color: var(--accent); font-size: .82rem; white-space: nowrap; }}
+    details.inline-detail[open] > summary::after {{ content: " 접기"; }}
     details.inline-detail[open] .detail-preview {{ display: none; }}
     .full-detail {{ margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }}
     .evidence-image {{ width: 320px; height: 240px; object-fit: contain; background: #fff; border: 1px solid var(--border); border-radius: 4px; }}
@@ -497,40 +519,40 @@ def format_scan_report_html(report: dict[str, Any]) -> str:
 <body>
   <h1>{html.escape(str(report["title"]))}</h1>
   <section class="meta">
-    <div>Generated: <code>{html.escape(str(report["generated_at"]))}</code></div>
-    <div>Scan ID: <code>{html.escape(str(job.get("id")))}</code></div>
-    <div>Status: <code>{html.escape(str(job.get("status")))}</code></div>
-    <div>Targets: <code>{html.escape(str(job.get("targets")))}</code></div>
-    <div>Ports: <code>{html.escape(str(job.get("ports")))}</code></div>
-    <div>Included results: <code>{completeness["included_results"]} / {completeness["total_stored_results"]}</code></div>
+    <div>생성 시각: <code>{html.escape(str(report["generated_at"]))}</code></div>
+    <div>스캔 ID: <code>{html.escape(str(job.get("id")))}</code></div>
+    <div>상태: <code>{html.escape(str(job.get("status")))}</code></div>
+    <div>대상: <code>{html.escape(str(job.get("targets")))}</code></div>
+    <div>포트: <code>{html.escape(str(job.get("ports")))}</code></div>
+    <div>포함된 결과: <code>{completeness["included_results"]} / {completeness["total_stored_results"]}</code></div>
   </section>
   {completeness_warning}
   <section class="cards">
-    {summary_card("Total", summary.get("total", 0))}
-    {summary_card("Open", summary.get("open", 0))}
-    {summary_card("Closed", summary.get("closed", 0))}
-    {summary_card("Open|Filtered", summary.get("open_filtered", 0))}
-    {summary_card("Filtered", summary.get("filtered", 0))}
-    {summary_card("Error", summary.get("error", 0))}
-    {summary_card("Hosts With Open Ports", report["counts"]["hosts_with_open_ports"])}
+    {summary_card("전체", summary.get("total", 0))}
+    {summary_card("open", summary.get("open", 0))}
+    {summary_card("closed", summary.get("closed", 0))}
+    {summary_card("open|filtered", summary.get("open_filtered", 0))}
+    {summary_card("filtered", summary.get("filtered", 0))}
+    {summary_card("error", summary.get("error", 0))}
+    {summary_card("open 포트 보유 호스트", report["counts"]["hosts_with_open_ports"])}
   </section>
-  <p class="legend"><strong>State legend:</strong> <code>open</code> responded; <code>closed</code> refused;
-    <code>filtered</code> timed out; <code>open|filtered</code> is an ambiguous UDP result;
-    <code>error</code> is a local or network failure.</p>
-  <nav class="section-controls" aria-label="Report section controls">
-    <button type="button" data-report-toggle="expand">Expand all details</button>
-    <button type="button" data-report-toggle="collapse">Collapse all details</button>
+  <p class="legend"><strong>상태 표기:</strong> <code>open</code> 응답함, <code>closed</code> 거부됨,
+    <code>filtered</code> 시간 초과, <code>open|filtered</code> 는 판단이 불가능한 UDP 결과,
+    <code>error</code> 는 로컬 또는 네트워크 오류입니다.</p>
+  <nav class="section-controls" aria-label="보고서 섹션 제어">
+    <button type="button" data-report-toggle="expand">모두 펼치기</button>
+    <button type="button" data-report-toggle="collapse">모두 접기</button>
   </nav>
-  <h2>Scan Configuration</h2>
+  <h2>스캔 설정</h2>
   <section class="configuration">{configuration_rows}</section>
-  <h2>Host Summary</h2>
+  <h2>호스트별 요약</h2>
   <div class="table-scroll"><table>
-    <thead><tr><th>Host</th><th>Total</th><th>Open</th><th>Closed</th><th>Open|Filtered</th><th>Filtered</th><th>Error</th></tr></thead>
+    <thead><tr><th>호스트</th><th>전체</th><th>open</th><th>closed</th><th>open|filtered</th><th>filtered</th><th>error</th></tr></thead>
     <tbody>{host_rows}</tbody>
   </table></div>
-  <h2>Open Results</h2>
+  <h2>open 결과</h2>
   <div class="table-scroll"><table>
-    <thead><tr><th>Host</th><th>Port</th><th>Protocol</th><th>Service</th><th>Evidence</th><th>Tags</th><th>Note</th></tr></thead>
+    <thead><tr><th>호스트</th><th>포트</th><th>프로토콜</th><th>서비스</th><th>증적</th><th>태그</th><th>메모</th></tr></thead>
     <tbody>
       {open_rows}
     </tbody>
@@ -538,7 +560,7 @@ def format_scan_report_html(report: dict[str, Any]) -> str:
   {service_details_section}
   {review_section}
   {evidence_section}
-  <h2>Service Counts</h2>
+  <h2>서비스별 건수</h2>
   <ul>
     {service_items}
   </ul>
@@ -609,7 +631,7 @@ def format_html_service_detail(detail: dict[str, Any]) -> str:
         detail.get("host"),
         f"{detail.get('port')}/{detail.get('protocol')}",
         detail.get("service_name") or "",
-        detail.get("identification") or "",
+        identification_label(detail.get("identification")),
     ]
     cells = "".join(f"<td>{html.escape(str(value))}</td>" for value in values)
     cells += f'<td>{format_html_collapsible_text(detail.get("banner") or "", code=True)}</td>'
@@ -622,7 +644,7 @@ def format_html_review_row(result: dict[str, Any]) -> str:
         result.get("host"),
         f"{result.get('port')}/{result.get('protocol')}",
         result.get("state"),
-        ", ".join(result.get("review_reasons") or []),
+        review_reason_labels(result.get("review_reasons")),
         result.get("service_name") or "",
     ]
     cells = "".join(f"<td>{html.escape(str(value))}</td>" for value in values)
@@ -655,10 +677,10 @@ def summarize_service_details(details: list[dict[str, Any]]) -> str:
     counts = Counter(str(detail.get("identification") or "unverified") for detail in details)
     parts = [
         f"{label} {counts[key]}"
-        for key, label in [("confirmed", "Confirmed"), ("inferred", "Inferred"), ("unverified", "Unverified")]
+        for key, label in [("confirmed", "확인됨"), ("inferred", "포트 추정"), ("unverified", "미확인")]
         if counts[key]
     ]
-    return " | ".join(parts) if parts else "No identified services"
+    return " | ".join(parts) if parts else "식별된 서비스 없음"
 
 
 def summarize_review_results(results: list[dict[str, Any]]) -> str:
@@ -666,21 +688,21 @@ def summarize_review_results(results: list[dict[str, Any]]) -> str:
     parts = [
         f"{label} {reasons[key]}"
         for key, label in [
-            ("scan error", "Errors"),
-            ("ambiguous state", "Ambiguous"),
-            ("service inferred from port", "Inferred"),
-            ("annotated", "Annotated"),
-            ("error detail present", "Error details"),
+            ("scan error", "오류"),
+            ("ambiguous state", "불명확"),
+            ("service inferred from port", "포트 추정"),
+            ("annotated", "주석"),
+            ("error detail present", "오류 상세"),
         ]
         if reasons[key]
     ]
-    return " | ".join(parts) if parts else "No included results require review"
+    return " | ".join(parts) if parts else "검토가 필요한 결과 없음"
 
 
 def summarize_evidence_items(items: list[dict[str, Any]]) -> str:
     types = Counter(str((item.get("evidence") or {}).get("type") or "image") for item in items)
     parts = [f"{evidence_type} {count}" for evidence_type, count in sorted(types.items())]
-    return " | ".join(parts) if parts else "No image evidence"
+    return " | ".join(parts) if parts else "증적 이미지 없음"
 
 
 def format_html_evidence_gallery_item(item: dict[str, Any]) -> str:
@@ -694,7 +716,7 @@ def format_html_evidence_gallery_item(item: dict[str, Any]) -> str:
     return (
         '<article class="evidence-card">'
         f"<strong>{html.escape(caption)}</strong>"
-        f'<div class="muted">{html.escape(str(file_name))} - {html.escape(str(evidence_type))}</div>'
+        f'<div class="muted">{html.escape(str(file_name))} · {html.escape(str(evidence_type))}</div>'
         f"{format_html_evidence([evidence])}</article>"
     )
 
@@ -707,9 +729,9 @@ def format_html_evidence(evidence_files: list[dict[str, Any]]) -> str:
         if not url:
             continue
         items.append(
-            f'<a class="evidence-item" href="{url}" target="_blank" rel="noreferrer">'
+            f'<span class="evidence-item">'
             f'<img class="evidence-image" src="{url}" alt="{name}" width="320" height="240" '
-            f'loading="lazy"></a>'
+            f'loading="lazy"></span>'
         )
     return "".join(items) or ""
 
@@ -767,20 +789,20 @@ def service_identification(result: dict[str, Any]) -> str:
 def scan_configuration(job: dict[str, Any]) -> list[tuple[str, Any]]:
     params = job.get("params") or {}
     values = [
-        ("Authorized scope", ", ".join(str(value) for value in job.get("scope") or [])),
-        ("Created", job.get("created_at")),
-        ("Started", job.get("started_at")),
-        ("Completed", job.get("completed_at")),
-        ("Protocol", params.get("protocol")),
-        ("Port profile", params.get("port_profile")),
-        ("Top ports", params.get("top_ports")),
-        ("Excluded", ", ".join(str(value) for value in params.get("exclude") or [])),
-        ("Timeout ms", params.get("timeout_ms")),
-        ("Concurrency", params.get("concurrency")),
-        ("Rate/sec", params.get("rate_limit_per_sec")),
-        ("UDP retries", params.get("udp_retries")),
-        ("Service probe", params.get("service_probe")),
-        ("Capture evidence", params.get("capture_evidence", params.get("capture_screenshots"))),
+        ("승인 범위", ", ".join(str(value) for value in job.get("scope") or [])),
+        ("생성", job.get("created_at")),
+        ("시작", job.get("started_at")),
+        ("완료", job.get("completed_at")),
+        ("프로토콜", params.get("protocol")),
+        ("포트 프로필", params.get("port_profile")),
+        ("상위 포트 수", params.get("top_ports")),
+        ("제외 대상", ", ".join(str(value) for value in params.get("exclude") or [])),
+        ("타임아웃 ms", params.get("timeout_ms")),
+        ("동시 실행 수", params.get("concurrency")),
+        ("초당 속도", params.get("rate_limit_per_sec")),
+        ("UDP 재시도", params.get("udp_retries")),
+        ("서비스 탐지", params.get("service_probe")),
+        ("증적 수집", params.get("capture_evidence", params.get("capture_screenshots"))),
     ]
     return [(label, value) for label, value in values if value not in (None, "")]
 

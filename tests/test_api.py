@@ -704,7 +704,7 @@ rate_limit_per_sec = 13
             report_html = client.get(f"/v1/scans/{scan_id}/report", params={"format": "html"})
             self.assertEqual(report_html.status_code, 200)
             self.assertIn("text/html", report_html.headers["content-type"])
-            self.assertIn("Netroach Scan Report", report_html.text)
+            self.assertIn("Netroach 스캔 보고서", report_html.text)
             self.assertNotIn("<th>Latency</th>", report_html.text)
 
             cancelled = client.post(f"/v1/scans/{scan_id}/cancel")

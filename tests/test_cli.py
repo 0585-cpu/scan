@@ -625,7 +625,7 @@ paths = ["lab-plugin.json"]
             self.assertEqual(code, 0)
             self.assertEqual(stdout.getvalue(), "")
             text = output.read_text(encoding="utf-8")
-            self.assertIn("# Netroach Scan Report", text)
+            self.assertIn("# Netroach 스캔 보고서", text)
             self.assertIn("| 127.0.0.1 | 53 | udp | dns |", text)
             self.assertNotIn("Latency", text)
 

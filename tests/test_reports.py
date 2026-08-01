@@ -66,14 +66,14 @@ class ReportTests(unittest.TestCase):
         self.assertIn('width="320" height="240"', html)
         self.assertIn("![proof.png](/v1/evidence/evidence-1/content)", markdown)
         self.assertEqual(payload["open_results"][0]["evidence_files"][0]["type"], "manual")
-        self.assertIn("<h2>Host Summary</h2>", html)
+        self.assertIn("<h2>호스트별 요약</h2>", html)
         self.assertIn('data-report-section="needs-review" open', html)
         self.assertIn('data-report-section="evidence-gallery" open', html)
         self.assertIn('data-report-toggle="expand"', html)
         self.assertIn('data-report-toggle="collapse"', html)
         self.assertIn(
-            "<th>Host</th><th>Port</th><th>Protocol</th><th>Service</th>"
-            "<th>Evidence</th><th>Tags</th><th>Note</th>",
+            "<th>호스트</th><th>포트</th><th>프로토콜</th><th>서비스</th>"
+            "<th>증적</th><th>태그</th><th>메모</th>",
             html,
         )
 
@@ -123,9 +123,9 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(report["completeness"]["truncated"])
         self.assertEqual(report["completeness"]["omitted_results"], 4)
         self.assertEqual(report["review_results"][0]["review_reasons"], ["service inferred from port"])
-        self.assertIn("Incomplete detail set", html)
-        self.assertIn("Included results: <code>1 / 5</code>", html)
-        self.assertIn("**Incomplete detail set:** 4 stored result(s)", markdown)
+        self.assertIn("상세 결과 일부 생략", html)
+        self.assertIn("포함된 결과: <code>1 / 5</code>", html)
+        self.assertIn("**상세 결과 일부 생략:** 보고서 한도 때문에 저장된 결과 4건", markdown)
 
     def test_html_report_can_embed_evidence_for_offline_viewing(self):
         job = {"id": "scan-embed", "status": "completed", "targets": "127.0.0.1", "ports": "80"}
@@ -164,7 +164,7 @@ class ReportTests(unittest.TestCase):
         html = format_scan_report(report, "html")
         self.assertEqual(summary, {"embedded": 1, "skipped": 0, "bytes": 15})
         self.assertIn("data:image/png;base64,", html)
-        self.assertIn('href="data:image/png;base64,', html)
+        self.assertNotIn("target=\"_blank\"", html)
 
     def test_long_review_sections_and_text_default_to_collapsed(self):
         job = {"id": "scan-review", "status": "completed", "targets": "127.0.0.1", "ports": "1-6"}
@@ -189,9 +189,9 @@ class ReportTests(unittest.TestCase):
             html,
         )
         self.assertNotIn('data-report-section="needs-review" open', html)
-        self.assertIn('class="section-summary">Errors 6', html)
+        self.assertIn('class="section-summary">오류 6', html)
         self.assertIn('<details class="inline-detail">', html)
-        self.assertIn("Show full", html)
+        self.assertIn("전체 보기", html)
         self.assertIn("details.report-section &gt; .section-content", html.replace(">", "&gt;"))
 
     def test_filtered_timeout_is_not_treated_as_review_item(self):
