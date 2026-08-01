@@ -1397,7 +1397,9 @@
       try {
         const raw = JSON.parse(window.localStorage.getItem(SCAN_PRESET_STORAGE_KEY) || '[]');
         if (!Array.isArray(raw)) return [];
-        return raw.filter((item) => item && typeof item.name === 'string').slice(0, SCAN_PRESET_MAX_COUNT);
+        return raw
+          .filter((item) => item && typeof item.name === 'string' && typeof item.values === 'object' && item.values !== null)
+          .slice(0, SCAN_PRESET_MAX_COUNT);
       } catch (err) {
         return [];
       }
@@ -1427,12 +1429,14 @@
     }
 
     function applyScanPreset(preset) {
+      const values = preset.values || {};
       PRESET_FIELDS.forEach((name) => {
         const node = $('scanForm').elements[name];
         if (!node) return;
-        const value = preset.values[name];
+        const value = values[name];
         if (value === undefined) return;
-        if (node.type === 'checkbox') node.checked = Boolean(value);
+        if (name === 'ports') applyPortsToForm(value);
+        else if (node.type === 'checkbox') node.checked = Boolean(value);
         else node.value = value;
       });
       if (preset.targets) $('scanTargets').value = preset.targets;
@@ -2800,6 +2804,18 @@ ${health.db}` : '데이터베이스 없음';
     $('pluginsRefresh').addEventListener('click', refreshPlugins);
     $('diagnosticsRefresh').addEventListener('click', refreshHealth);
     $('packetTemplate').addEventListener('change', updatePacketFields);
+    $('scanPorts').addEventListener('input', () => {
+      if ($('scanPorts').value.trim()) {
+        $('scanTopPorts').value = '';
+        $('scanProfile').value = '';
+      }
+    });
+    $('scanTopPorts').addEventListener('input', () => {
+      if ($('scanTopPorts').value.trim()) {
+        $('scanPorts').value = '';
+        $('scanProfile').value = '';
+      }
+    });
     $('scanProfile').addEventListener('change', () => {
       if ($('scanProfile').value.trim()) {
         $('scanPorts').value = '';
