@@ -181,6 +181,33 @@
     .evidence-add input { display: none; }
     button.evidence-delete { min-height: 24px; padding: 2px 6px; color: var(--danger); font-size: 11px; }
 
+    /* Sits above the rail/app shell (z-index 5) but below the in-page viewer
+       overlay (z-index 20), which must still cover everything including this. */
+    .progress-strip {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 12px;
+      background: var(--accent-soft);
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .progress-strip[hidden] { display: none; }
+    .progress-strip.done { background: #e7f5ec; }
+    .progress-strip.failed { background: #fdeaea; }
+    .strip-bar { flex: 0 0 140px; height: 6px; background: #ffffff; border-radius: 4px; overflow: hidden; }
+    .strip-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 200ms ease; }
+    .strip-target { flex: 0 1 auto; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .strip-error { color: var(--state-error); }
+    .strip-elapsed { margin-left: auto; }
+    .progress-strip button { height: 24px; padding: 0 10px; font-size: 12px; }
+    @media (prefers-reduced-motion: reduce) { .strip-bar i { transition: none; } }
+
     .app {
       min-height: 100vh;
       display: grid;
@@ -713,6 +740,19 @@
   </style>
 </head>
 <body>
+  <div class="progress-strip" id="progressStrip" hidden>
+    <span class="strip-dot" id="stripDot">◉</span>
+    <span class="strip-target mono" id="stripTarget"></span>
+    <span class="strip-bar"><i id="stripBar"></i></span>
+    <span class="strip-percent" id="stripPercent">0%</span>
+    <span class="strip-counts mono" id="stripCounts"></span>
+    <span class="strip-open mono" id="stripOpen"></span>
+    <span class="strip-error mono" id="stripError" hidden></span>
+    <span class="strip-more" id="stripMore" hidden></span>
+    <span class="strip-elapsed mono" id="stripElapsed">00:00</span>
+    <button type="button" id="stripStop">중지</button>
+    <button type="button" id="stripOpenScan">열기</button>
+  </div>
   <div class="app">
     <aside class="rail">
       <div class="rail-brand" title="netroach">N</div>
@@ -1300,7 +1340,9 @@
       pcapId: null,
       audits: [],
       oastSessions: [],
-      oastId: null
+      oastId: null,
+      runningProgress: null,
+      stripClosedFor: null
     };
 
     const $ = (id) => document.getElementById(id);
@@ -1803,6 +1845,7 @@ ${health.db}` : '데이터베이스 없음';
           if (state.scanId) await Promise.allSettled([refreshScanProgress(), refreshScanResults()]);
           else renderScanResults();
         }
+        await refreshRunningProgress();
       } catch (err) {
         $('scanJobs').innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(err.message)}</td></tr>`;
       }
@@ -1961,6 +2004,92 @@ ${health.db}` : '데이터베이스 없음';
         metric('계획', progress.planned_total || 0),
         metric('open', states.open || 0)
       ].join('');
+    }
+
+    const RUNNING_STATUSES = new Set(['queued', 'running']);
+
+    function runningScanJobs() {
+      return state.scans.filter((job) => RUNNING_STATUSES.has(job.status));
+    }
+
+    // The strip reads the job list the dashboard already polls, then asks for
+    // the progress of the one job it displays. No new endpoint, one extra
+    // request only while something is actually running.
+    async function refreshRunningProgress() {
+      const jobs = runningScanJobs();
+      if (!jobs.length) {
+        const finished = state.runningProgress && state.scans.find((job) => job.id === state.runningProgress.scanId);
+        state.runningProgress = finished && state.stripClosedFor !== finished.id
+          ? {...state.runningProgress, status: finished.status, percent: 100}
+          : null;
+        renderProgressStrip();
+        return;
+      }
+      const job = jobs[0];
+      try {
+        const progress = await api(`/v1/scans/${encodeURIComponent(job.id)}/progress`);
+        const states = progress.states || {};
+        state.runningProgress = {
+          scanId: job.id,
+          status: progress.status,
+          label: `${job.targets} · ${job.ports}`,
+          percent: progress.percent || 0,
+          completed: progress.completed_results || 0,
+          planned: progress.planned_total || 0,
+          open: states.open || 0,
+          error: states.error || 0,
+          startedAt: progress.started_at || progress.created_at,
+          extra: jobs.length - 1
+        };
+      } catch (err) {
+        state.runningProgress = null;
+      }
+      renderProgressStrip();
+    }
+
+    function elapsedLabel(startedAt) {
+      if (!startedAt) return '00:00';
+      const source = text(startedAt);
+      const started = new Date(source.includes('T') ? source : `${source.replace(' ', 'T')}Z`);
+      if (Number.isNaN(started.getTime())) return '00:00';
+      const seconds = Math.max(0, Math.floor((Date.now() - started.getTime()) / 1000));
+      return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+    }
+
+    function renderProgressStrip() {
+      const strip = $('progressStrip');
+      const progress = state.runningProgress;
+      if (!progress) {
+        strip.hidden = true;
+        return;
+      }
+      const done = !RUNNING_STATUSES.has(progress.status);
+      strip.hidden = false;
+      strip.classList.toggle('done', done && progress.status === 'completed');
+      strip.classList.toggle('failed', done && progress.status !== 'completed');
+      $('stripTarget').textContent = progress.label;
+      $('stripBar').style.width = `${progress.percent}%`;
+      $('stripPercent').textContent = `${progress.percent}%`;
+      $('stripCounts').textContent = `${progress.completed.toLocaleString()}/${progress.planned.toLocaleString()}`;
+      $('stripOpen').textContent = `open ${progress.open}`;
+      $('stripError').hidden = !progress.error;
+      $('stripError').textContent = `err ${progress.error}`;
+      $('stripMore').hidden = !progress.extra;
+      $('stripMore').textContent = `+${progress.extra}`;
+      $('stripElapsed').textContent = done ? '완료' : elapsedLabel(progress.startedAt);
+      $('stripStop').hidden = done;
+      // A completed scan clears itself; a failed one stays until dismissed so a
+      // failure is never missed by someone who looked away.
+      if (done && progress.status === 'completed') {
+        const scanId = progress.scanId;
+        setTimeout(() => {
+          if (state.runningProgress && state.runningProgress.scanId === scanId) {
+            state.stripClosedFor = scanId;
+            state.runningProgress = null;
+            renderProgressStrip();
+          }
+        }, 3000);
+      }
     }
 
     async function refreshScanResults() {
@@ -2708,6 +2837,26 @@ ${health.db}` : '데이터베이스 없음';
     });
 
     bindScanLinkActions();
+    $('progressStrip').addEventListener('click', (event) => {
+      if (event.target.id === 'stripStop') return;
+      const progress = state.runningProgress;
+      if (!progress) return;
+      if (!RUNNING_STATUSES.has(progress.status) && progress.status !== 'completed') {
+        state.stripClosedFor = progress.scanId;
+        state.runningProgress = null;
+        renderProgressStrip();
+        return;
+      }
+      showView('scans');
+      selectScan(progress.scanId);
+    });
+    $('stripStop').addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const progress = state.runningProgress;
+      if (!progress) return;
+      await api(`/v1/scans/${encodeURIComponent(progress.scanId)}/cancel`, {method: 'POST'}).catch(() => {});
+      await refreshScans();
+    });
     $('viewerClose').addEventListener('click', closeViewer);
     $('viewerSave').addEventListener('click', () => {
       if (viewerSaveTarget) downloadFile(viewerSaveTarget.url, viewerSaveTarget.name, 'viewerStatus');
