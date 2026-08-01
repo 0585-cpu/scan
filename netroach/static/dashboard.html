@@ -1385,10 +1385,10 @@
     const SCAN_PRESET_MAX_COUNT = 12;
     // The authorization checkbox is deliberately absent: a restored tick would
     // defeat the gate that makes every scan a deliberate act.
-    const PRESET_FIELDS = ['ports', 'protocol', 'concurrency', 'timeout_ms', 'udp_retries', 'service_probe', 'capture_screenshots'];
+    const PRESET_FIELDS = ['ports', 'top_ports', 'protocol', 'concurrency', 'timeout_ms', 'udp_retries', 'service_probe', 'capture_screenshots'];
 
     const BUILTIN_SCAN_PRESETS = [
-      {id: 'builtin-quick', name: '빠른 점검', builtin: true, values: {ports: '1-1024', protocol: 'tcp', service_probe: true}},
+      {id: 'builtin-quick', name: '빠른 점검', builtin: true, values: {top_ports: 100, protocol: 'tcp', service_probe: true}},
       {id: 'builtin-web', name: '웹 포트', builtin: true, values: {ports: '80,443,8000-8090,8443', protocol: 'tcp', service_probe: true}},
       {id: 'builtin-full', name: '전체 정밀', builtin: true, values: {ports: '1-65535', protocol: 'tcp', service_probe: true, timeout_ms: 3000, concurrency: 128}}
     ];
@@ -1436,6 +1436,7 @@
         const value = values[name];
         if (value === undefined) return;
         if (name === 'ports') applyPortsToForm(value);
+        else if (name === 'top_ports') applyTopPortsToForm(value);
         else if (node.type === 'checkbox') node.checked = Boolean(value);
         else node.value = value;
       });
@@ -1717,6 +1718,13 @@
     function applyPortsToForm(expression) {
       $('scanPorts').value = expression;
       $('scanTopPorts').value = '';
+      $('scanProfile').value = '';
+      renderScanEstimate();
+    }
+
+    function applyTopPortsToForm(count) {
+      $('scanTopPorts').value = count;
+      $('scanPorts').value = '';
       $('scanProfile').value = '';
       renderScanEstimate();
     }
