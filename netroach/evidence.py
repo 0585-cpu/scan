@@ -105,7 +105,8 @@ def web_screenshot_candidates(
         host = str(result.get("host") or "")
         protocol = str(result.get("protocol") or "tcp").lower()
         try:
-            port = int(result.get("port"))
+            raw_port: Any = result.get("port")
+            port = int(raw_port)
         except (TypeError, ValueError):
             continue
         key = (host, port, protocol)
@@ -137,7 +138,8 @@ def automatic_evidence_candidates(
         host = str(result.get("host") or "")
         protocol = str(result.get("protocol") or "tcp").lower()
         try:
-            port = int(result.get("port"))
+            raw_port: Any = result.get("port")
+            port = int(raw_port)
         except (TypeError, ValueError):
             continue
         key = (host, port, protocol)
@@ -150,10 +152,16 @@ def automatic_evidence_candidates(
     return candidates
 
 
+def result_port(result: Mapping[str, Any]) -> int:
+    """Port of a stored result; raises like int() did when it is missing."""
+    value: Any = result.get("port")
+    return int(value)
+
+
 def is_web_result(result: Mapping[str, Any]) -> bool:
     service = str(result.get("service_name") or "").lower()
     try:
-        port = int(result.get("port"))
+        port = result_port(result)
     except (TypeError, ValueError):
         return False
     return service.startswith("http") or service in {"https", "tls"} or port in _WEB_PORTS
@@ -161,7 +169,7 @@ def is_web_result(result: Mapping[str, Any]) -> bool:
 
 def web_result_url(result: Mapping[str, Any]) -> str:
     host = str(result.get("host") or "")
-    port = int(result.get("port"))
+    port = result_port(result)
     service = str(result.get("service_name") or "").lower()
     scheme = "https" if "https" in service or service == "tls" or port in _HTTPS_PORTS else "http"
     display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
@@ -263,7 +271,7 @@ def run_powershell_diagnostic(
         raise ValueError("terminal diagnostic timeout must be between 1000 and 30000 milliseconds")
 
     host = _clean_terminal_value(result.get("host"), maximum=512)
-    port = int(result.get("port"))
+    port = result_port(result)
     protocol = _clean_terminal_value(result.get("protocol") or "tcp", maximum=16).lower()
     preauth_mode = preauth_mode_for_result(result)
     command = _powershell_display_command(host, port, protocol, timeout_ms, preauth_mode)
@@ -515,7 +523,7 @@ def capture_automatic_evidence(
 def _result_key(result: Mapping[str, Any]) -> tuple[str, int, str]:
     return (
         str(result.get("host") or ""),
-        int(result.get("port")),
+        result_port(result),
         str(result.get("protocol") or "tcp"),
     )
 
@@ -534,7 +542,7 @@ def preauth_mode_for_result(result: Mapping[str, Any]) -> str:
     if protocol != "tcp":
         return "none"
     try:
-        port = int(result.get("port"))
+        port = result_port(result)
     except (TypeError, ValueError):
         return "none"
     if port in _PREAUTH_PORT_MODES:

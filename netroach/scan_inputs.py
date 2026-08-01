@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sized
 from pathlib import Path
 
 from .ports import parse_ports
-from .scope import ScopeError, iter_target_tokens, parse_target_expr
+from .scope import IPAddress, ScopeError, iter_target_tokens, parse_target_expr
 
 ABSOLUTE_MAX_SCAN_ATTEMPTS = 100_000_000
 MAX_ADDRESSES_PER_NAME = 16
@@ -190,7 +190,7 @@ def resolve_targets(
     targets_file: str | None = None,
     exclude: Iterable[str] | None = None,
     max_hosts: int = 65536,
-) -> tuple[list[ipaddress._BaseAddress], str]:
+) -> tuple[list[IPAddress], str]:
     target_expr = resolve_host_names(
         combine_expressions(
             direct=targets,
@@ -242,14 +242,14 @@ def resolve_ports(
 
 
 def validate_scan_workload(
-    targets: Iterable[object],
-    ports: Iterable[int],
+    targets: Sized | Iterable[object],
+    ports: Sized | Iterable[int],
     *,
     max_attempts: int,
     confirm_large_scan: bool = False,
 ) -> dict[str, int]:
-    host_count = len(targets) if hasattr(targets, "__len__") else sum(1 for _ in targets)
-    port_count = len(ports) if hasattr(ports, "__len__") else sum(1 for _ in ports)
+    host_count = len(targets) if isinstance(targets, Sized) else sum(1 for _ in targets)
+    port_count = len(ports) if isinstance(ports, Sized) else sum(1 for _ in ports)
     attempts = host_count * port_count
     if attempts > ABSOLUTE_MAX_SCAN_ATTEMPTS:
         raise ValueError(
@@ -291,11 +291,11 @@ def read_expression_file(file_path: str, label: str) -> str:
     return ",".join(parts)
 
 
-def parse_exclude_networks(exclude: Iterable[str] | None) -> tuple[ipaddress._BaseNetwork, ...]:
+def parse_exclude_networks(exclude: Iterable[str] | None) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
     return tuple(ipaddress.ip_network(value.strip(), strict=False) for value in exclude or () if value and value.strip())
 
 
-def normalize_targets_expr(targets: Iterable[ipaddress._BaseAddress]) -> str:
+def normalize_targets_expr(targets: Iterable[IPAddress]) -> str:
     return ",".join(str(target) for target in targets)
 
 

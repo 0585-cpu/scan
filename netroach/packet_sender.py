@@ -333,7 +333,7 @@ def _send(
     *,
     count: int,
     interval: float,
-    scapy: object,
+    scapy: Any,
     details: dict[str, Any] | None = None,
 ) -> SendResult:
     _validate_count_interval(count, interval)
@@ -354,7 +354,7 @@ def _validate_count_interval(count: int, interval: float) -> None:
         raise ValueError(f"interval must be at least {MIN_INTERVAL_MS} ms")
 
 
-def _load_scapy() -> object:
+def _load_scapy() -> Any:
     try:
         import scapy.all as scapy
     except ImportError as exc:
@@ -392,7 +392,7 @@ def _summarize_http_response(response: bytes) -> dict[str, Any]:
     }
 
 
-def _summarize_dns_response(response: object, scapy: object) -> dict[str, Any]:
+def _summarize_dns_response(response: Any, scapy: Any) -> dict[str, Any]:
     if response is None:
         return {"response_received": False}
     try:
@@ -401,7 +401,7 @@ def _summarize_dns_response(response: object, scapy: object) -> dict[str, Any]:
         return {"response_received": True, "dns": False}
     answers: list[str] = []
     ancount = int(getattr(dns, "ancount", 0) or 0)
-    answer_layer = getattr(dns, "an", None)
+    answer_layer: Any = getattr(dns, "an", None)
     if ancount == 0 and answer_layer is not None and answer_layer.__class__.__name__ != "NoneType":
         ancount = 1
     for index in range(ancount):

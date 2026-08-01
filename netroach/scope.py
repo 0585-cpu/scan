@@ -4,6 +4,10 @@ import ipaddress
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
+# ipaddress._BaseAddress is private and too wide for the stdlib signatures;
+# these are the two types the module actually produces.
+IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
+IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 PRIVATE_DEFAULTS = (
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
@@ -22,7 +26,7 @@ class ScopeError(ValueError):
 
 @dataclass(frozen=True)
 class ScopeGuard:
-    networks: tuple[ipaddress._BaseNetwork, ...]
+    networks: tuple[IPNetwork, ...]
     allow_private_default: bool = True
 
     @classmethod
@@ -32,18 +36,18 @@ class ScopeGuard:
             return cls(networks=parsed, allow_private_default=False)
         return cls(networks=PRIVATE_DEFAULTS, allow_private_default=True)
 
-    def contains_ip(self, value: str | ipaddress._BaseAddress) -> bool:
+    def contains_ip(self, value: str | IPAddress) -> bool:
         address = ipaddress.ip_address(value)
         return any(address.version == network.version and address in network for network in self.networks)
 
-    def require_ip(self, value: str | ipaddress._BaseAddress) -> ipaddress._BaseAddress:
+    def require_ip(self, value: str | IPAddress) -> IPAddress:
         address = ipaddress.ip_address(value)
         if not self.contains_ip(address):
             allowed = ", ".join(str(network) for network in self.networks)
             raise ScopeError(f"{address} is outside authorized scope: {allowed}")
         return address
 
-    def require_targets(self, targets: Iterable[ipaddress._BaseAddress]) -> None:
+    def require_targets(self, targets: Iterable[IPAddress]) -> None:
         for target in targets:
             self.require_ip(target)
 
@@ -57,17 +61,17 @@ def iter_target_tokens(expr: str) -> Iterator[str]:
                 yield part
 
 
-def parse_target_expr(expr: str, max_hosts: int = 4096) -> list[ipaddress._BaseAddress]:
+def parse_target_expr(expr: str, max_hosts: int = 4096) -> list[IPAddress]:
     """Parse comma/newline-separated IP/CIDR targets into individual addresses."""
     if max_hosts < 1:
         raise ScopeError("max_hosts must be at least 1")
-    targets: list[ipaddress._BaseAddress] = []
-    seen: set[ipaddress._BaseAddress] = set()
+    targets: list[IPAddress] = []
+    seen: set[IPAddress] = set()
 
     for part in iter_target_tokens(expr):
         if "/" in part:
             network = ipaddress.ip_network(part, strict=False)
-            host_iter = network.hosts()
+            host_iter: Iterator[IPAddress] = network.hosts()
             if network.num_addresses <= 2:
                 host_iter = iter(network)
             for address in host_iter:

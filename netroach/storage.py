@@ -8,7 +8,7 @@ import platform
 import shutil
 import sqlite3
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -125,7 +125,7 @@ class SQLiteRepository:
         return self.path.parent / f"{self.path.stem}-artifacts"
 
     @contextmanager
-    def session(self) -> Iterable[sqlite3.Connection]:
+    def session(self) -> Iterator[sqlite3.Connection]:
         conn = self.connect()
         try:
             yield conn
@@ -1568,7 +1568,7 @@ class SQLiteRepository:
         return data
 
 
-def _count_targets(expr: str, max_hosts: object = None) -> int:
+def _count_targets(expr: str, max_hosts: Any = None) -> int:
     try:
         limit = int(max_hosts) if max_hosts is not None else 1_000_000
         return len(parse_target_expr(expr, max_hosts=limit))

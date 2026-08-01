@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hmac
 import threading
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
@@ -39,7 +41,7 @@ from .exporters import (
 )
 from .live_capture import LiveCaptureRequest as LiveCaptureTask
 from .live_capture import execute_live_capture
-from .models import EngineSettings, PacketRequest, public_result_dict, public_result_dicts
+from .models import EngineSettings, PacketRequest, PortResult, public_result_dict, public_result_dicts
 from .oast import OastSessionRequest, build_callback_url, build_interaction_payload, validate_oast_session_request
 from .packet_sender import execute_packet_request
 from .pcap import analyze_pcap
@@ -54,7 +56,7 @@ from .scan_inputs import (
     resolve_targets,
     validate_scan_workload,
 )
-from .scope import scope_values_from_targets
+from .scope import IPAddress, scope_values_from_targets
 from .storage import SQLiteRepository
 from .version import __version__
 
@@ -737,7 +739,7 @@ def create_app(
         return repo.export_database()
 
     @app.post("/v1/db/import")
-    def import_database(request: DatabaseImportRequest) -> dict[str, object]:
+    def import_database(request: DatabaseImportRequest) -> dict[str, int]:
         try:
             return repo.import_database(request.data, replace=request.replace)
         except Exception as exc:  # noqa: BLE001
@@ -794,9 +796,9 @@ def _token_matches(supplied: str | None, api_token: str) -> bool:
 
 
 def _run_scan_job(
-    db_path: str,
+    db_path: str | Path,
     scan_id: str,
-    targets: list[object],
+    targets: list[IPAddress],
     ports: list[int],
     settings: EngineSettings,
     capture_screenshots: bool = False,
@@ -805,7 +807,7 @@ def _run_scan_job(
     recovery_token: str | None = None,
 ) -> None:
     repo = SQLiteRepository(db_path)
-    pending_results = []
+    pending_results: list[PortResult] = []
 
     def flush_results() -> None:
         if not pending_results:
@@ -868,7 +870,7 @@ def _run_scan_job(
                 )
 
                 def store_screenshot(
-                    result: dict[str, Any],
+                    result: Mapping[str, Any],
                     data: bytes,
                     file_name: str,
                     source_url: str | None,
@@ -946,12 +948,12 @@ def _scan_params(request: ScanCreateRequest, options: dict[str, Any]) -> dict[st
 
 
 def _group_pending_scan_work(
-    targets: list[object],
+    targets: list[IPAddress],
     ports: list[int],
     completed_keys: set[tuple[str, int]],
-) -> list[tuple[list[int], list[object]]]:
+) -> list[tuple[list[int], list[IPAddress]]]:
     ordered_ports = list(dict.fromkeys(int(port) for port in ports))
-    groups: dict[tuple[int, ...], list[object]] = {}
+    groups: dict[tuple[int, ...], list[IPAddress]] = {}
     for target in targets:
         host = str(target)
         missing = tuple(port for port in ordered_ports if (host, port) not in completed_keys)

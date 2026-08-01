@@ -74,5 +74,12 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_optional = true
 
+# scapy builds its protocol classes at import time, so a static checker sees
+# none of them. The same goes for the optional desktop/report extras.
+[[tool.mypy.overrides]]
+module = ["scapy.*", "playwright.*", "openpyxl.*", "PIL.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
+
 [tool.setuptools.dynamic]
 version = {attr = "netroach.version.__version__"}

@@ -62,18 +62,19 @@ def build_scan_report(
         for result in results
         if result.get("tags") or result.get("note") or result.get("evidence_files")
     ]
-    observed_counts = {
+    observed_counts: dict[str, Any] = {
         "states": dict(Counter(str(result.get("state") or "unknown") for result in results)),
         "protocols": dict(Counter(str(result.get("protocol") or "unknown") for result in results)),
         "services": top_counter(result.get("service_name") or "unknown" for result in open_results),
         "hosts_with_open_ports": len({result.get("host") for result in open_results}),
     }
+    supplied: dict[str, Any] = counts or {}
     report_counts = {
-        "states": dict((counts or {}).get("states") or observed_counts["states"]),
-        "protocols": dict((counts or {}).get("protocols") or observed_counts["protocols"]),
-        "services": dict((counts or {}).get("services") or observed_counts["services"]),
+        "states": dict(supplied.get("states") or observed_counts["states"]),
+        "protocols": dict(supplied.get("protocols") or observed_counts["protocols"]),
+        "services": dict(supplied.get("services") or observed_counts["services"]),
         "hosts_with_open_ports": int(
-            (counts or {}).get("hosts_with_open_ports", observed_counts["hosts_with_open_ports"])
+            supplied.get("hosts_with_open_ports", observed_counts["hosts_with_open_ports"])
         ),
     }
     included_count = len(results)
@@ -812,7 +813,7 @@ def markdown_cell(value: Any) -> str:
 
 
 def top_counter(values: Any, *, limit: int = 10) -> dict[str, int]:
-    grouped = defaultdict(int)
+    grouped: defaultdict[str, int] = defaultdict(int)
     for value in values:
         grouped[str(value)] += 1
     ordered = sorted(grouped.items(), key=lambda item: (-item[1], item[0]))[:limit]

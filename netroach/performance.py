@@ -98,7 +98,7 @@ class StreamingScanMetrics:
         self.result_count += 1
         state = str(event.get("state", "error"))
         self.states[state] = self.states.get(state, 0) + 1
-        latency = event.get("latency_ms")
+        latency: Any = event.get("latency_ms")
         if latency is not None and len(self.latencies_ms) < self.latency_limit:
             self.latencies_ms.append(float(latency))
         if len(self.sample_results) < self.sample_limit:

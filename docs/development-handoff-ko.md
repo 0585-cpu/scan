@@ -257,6 +257,8 @@ netroach scan `
 일반 변경 후 최소 검증은 다음과 같다.
 
 ```powershell
+python -m ruff check .
+python -m mypy
 python -m unittest discover -s tests
 cargo fmt --check
 cargo test -p netroach-engine

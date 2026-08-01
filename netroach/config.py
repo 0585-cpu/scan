@@ -10,7 +10,7 @@ from typing import Any
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - exercised only on Python 3.10.
-    import tomli as tomllib  # type: ignore[no-redef]
+    import tomli as tomllib
 
 from .ports import parse_ports
 

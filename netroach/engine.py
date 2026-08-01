@@ -10,7 +10,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from .config import MAX_CONCURRENCY, MAX_RATE_LIMIT_PER_SEC, MAX_TIMEOUT_MS
 from .models import EngineSettings, PortResult, ScanSummary
@@ -343,7 +343,7 @@ def _terminate_process(process: subprocess.Popen[str]) -> None:
         process.wait(timeout=2)
 
 
-def _port_result_from_event(event: dict[str, object]) -> PortResult:
+def _port_result_from_event(event: dict[str, Any]) -> PortResult:
     return PortResult(
         scan_id=_string_or_none(event.get("scan_id")),
         host=str(event["host"]),
@@ -359,14 +359,14 @@ def _port_result_from_event(event: dict[str, object]) -> PortResult:
     )
 
 
-def _string_or_none(value: object) -> str | None:
+def _string_or_none(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value)
     return text if text else None
 
 
-def _float_or_none(value: object) -> float | None:
+def _float_or_none(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)

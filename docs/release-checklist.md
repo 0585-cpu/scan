@@ -16,6 +16,7 @@ Use this checklist before publishing a Netroach artifact.
 
 ```powershell
 py -3 -m ruff check .
+py -3 -m mypy
 py -3 -m json.tool postman\netroach.postman_collection.json > $null
 py -3 -c "from netroach.config import load_config; load_config('docs/netroach.example.toml')"
 py -3 -m compileall netroach tests tools

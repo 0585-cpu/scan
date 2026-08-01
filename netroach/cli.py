@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -378,7 +379,7 @@ def _capture_scan_evidence(
     stored_results = repo.get_automatic_evidence_candidates(scan_id, limit=args.screenshot_max)
 
     def store_screenshot(
-        result: dict[str, Any],
+        result: Mapping[str, Any],
         data: bytes,
         file_name: str,
         source_url: str | None,
