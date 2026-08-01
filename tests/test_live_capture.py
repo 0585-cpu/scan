@@ -104,6 +104,7 @@ class LiveCaptureTests(unittest.TestCase):
                         confirm_authorized=True,
                         count=5,
                         analyze=False,
+                        backend="scapy",
                     )
                 )
 

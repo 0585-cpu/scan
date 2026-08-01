@@ -26,7 +26,7 @@ from .exporters import (
     format_results_ndjson,
     format_results_xlsx,
 )
-from .live_capture import LiveCaptureRequest, execute_live_capture
+from .live_capture import CAPTURE_BACKENDS, LiveCaptureRequest, execute_live_capture
 from .models import EngineSettings, PacketRequest, public_result_dicts
 from .packet_sender import execute_packet_request
 from .pcap import analyze_pcap
@@ -115,6 +115,12 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--count", type=int, help="maximum packet count")
     capture.add_argument("--iface", "--interface", dest="iface", help="capture interface name")
     capture.add_argument("--filter", dest="bpf_filter", help="optional BPF capture filter")
+    capture.add_argument(
+        "--backend",
+        choices=CAPTURE_BACKENDS,
+        default="auto",
+        help="capture backend; auto prefers the built-in Windows pktmon over Npcap",
+    )
     capture.add_argument("--top", type=int, default=10, help="number of top pcap analysis entries")
     capture.add_argument("--no-analyze", action="store_true", help="skip automatic pcap analysis")
     capture.add_argument(
@@ -470,6 +476,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
         bpf_filter=args.bpf_filter,
         analyze=not args.no_analyze,
         top=args.top,
+        backend=args.backend,
     )
     result = execute_live_capture(request)
     analysis_id = None

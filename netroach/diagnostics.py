@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .engine import resolve_engine_path
+from .pktmon import check_pktmon
 from .storage import default_db_path
 from .version import __version__
 
@@ -36,6 +37,8 @@ class DiagnosticReport:
     elevated: bool | None
     raw_socket_privileged: bool
     packet_driver_note: str
+    pktmon_available: bool
+    pktmon_note: str
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -44,6 +47,8 @@ class DiagnosticReport:
 def collect_diagnostics() -> DiagnosticReport:
     system = platform.system()
     packet = collect_packet_capability(system)
+    # Capture without a third-party driver is possible when this is available.
+    pktmon = check_pktmon(elevated=packet.elevated)
     rust_engine = resolve_engine_path()
     return DiagnosticReport(
         app_version=__version__,
@@ -59,6 +64,8 @@ def collect_diagnostics() -> DiagnosticReport:
         elevated=packet.elevated,
         raw_socket_privileged=packet.raw_socket_privileged,
         packet_driver_note=packet.note,
+        pktmon_available=pktmon.available,
+        pktmon_note=pktmon.reason,
     )
 
 

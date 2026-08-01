@@ -99,6 +99,7 @@ class LiveCaptureRequest(BaseModel):
     confirm_authorized: bool = False
     analyze: bool = True
     top: int = 10
+    backend: str = "auto"
 
 
 class PacketSendRequest(BaseModel):

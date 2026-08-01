@@ -112,7 +112,15 @@ netroach capture --output .\capture.pcap --duration-s 10 --confirm-authorized
 netroach capture --output .\sample.pcap --count 100 --iface "Ethernet" --confirm-authorized --json
 ```
 
-Windows usually requires Npcap and an elevated terminal. macOS/Linux may require root or packet capture privileges.
+On Windows the capture runs through **pktmon**, the packet monitor built into Windows 10 1809 and later, so no third-party driver has to be installed - only an elevated terminal. Npcap remains available and is still used when a full BPF filter or a specific interface is requested, because pktmon captures every adapter and understands only `host <address>` and `port <number>`, optionally joined by `and`.
+
+```powershell
+netroach capture --output .\capture.pcap --duration-s 10 --confirm-authorized
+netroach capture --output .\capture.pcap --duration-s 10 --filter "host 10.0.0.5 and port 443" --confirm-authorized
+netroach capture --output .\capture.pcap --duration-s 10 --backend scapy --filter "tcp and not port 22" --confirm-authorized
+```
+
+`--backend auto` (the default) prefers pktmon on Windows and falls back to scapy; `scapy` and `pktmon` force one. `netroach diagnostics` reports `pktmon_available` and why. macOS/Linux always use the scapy path and may require root or packet capture privileges.
 
 ## 7. Send Template Packets
 
