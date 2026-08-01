@@ -555,6 +555,8 @@
       overflow-wrap: anywhere;
     }
     .scan-preview.warn { border-left-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+    .scan-estimate { font-size: 12px; color: var(--muted); margin: 4px 0 8px; min-height: 16px; }
+    .scan-estimate.bad { color: var(--state-error); }
     .check-row {
       display: flex;
       align-items: center;
@@ -937,6 +939,7 @@
                     </div>
                   </details>
                   <div class="scan-preview" id="scanPreview">대상을 하나 이상 입력하면 예상 작업량을 보여줍니다.</div>
+                  <p class="scan-estimate" id="scanEstimate"></p>
                   <div class="view-actions">
                     <button class="primary" id="scanSubmit" type="submit">스캔 시작</button>
                     <button id="scanReset" type="button">초기화</button>
@@ -1597,6 +1600,87 @@
       return 0;
     }
 
+    // A /8 has 16 million addresses; counting them exactly would freeze the
+    // page and the scanner refuses ranges that size anyway.
+    const TARGET_COUNT_CEILING = 65536;
+    // Measured against the default concurrency on the machine this was built
+    // for. It is a rough guide, not a promise.
+    const PROBES_PER_SECOND = 640;
+
+    function expandTargetCount(expression) {
+      const item = text(expression).trim();
+      if (!item) return 0;
+      const slash = item.indexOf('/');
+      if (slash < 0) return 1;
+      const prefix = Number(item.slice(slash + 1));
+      if (!Number.isFinite(prefix)) throw new Error(`잘못된 CIDR: ${item}`);
+      const width = item.includes(':') ? 128 : 32;
+      if (prefix < 0 || prefix > width) throw new Error(`잘못된 CIDR: ${item}`);
+      const bits = width - prefix;
+      return bits >= 32 ? TARGET_COUNT_CEILING : Math.min(TARGET_COUNT_CEILING, 2 ** bits);
+    }
+
+    function scanEngineAvailable() {
+      return Boolean(state.health?.rust_engine_available ?? state.health?.diagnostics?.rust_engine_available);
+    }
+
+    // Reads only the form's current values - no network calls, no side effects.
+    function estimateScanScale() {
+      const targets = asList($('scanTargets').value);
+      if (!targets.length) return {error: '대상을 입력하세요'};
+      let hosts = 0;
+      try {
+        targets.forEach((item) => { hosts += expandTargetCount(item); });
+      } catch (err) {
+        return {error: err.message};
+      }
+      const portsValue = text($('scanPorts').value).trim();
+      const topPortsValue = text($('scanTopPorts').value).trim();
+      const profileValue = text($('scanProfile').value).trim();
+      let ports = null;
+      if (portsValue) {
+        try {
+          ports = parsePortExpression(portsValue).ports.length;
+        } catch (err) {
+          return {error: `포트: ${err.message}`};
+        }
+      } else if (topPortsValue) {
+        const count = Number(topPortsValue);
+        if (!Number.isFinite(count) || count <= 0) return {error: '포트 수를 확인하세요'};
+        ports = count;
+      } else if (profileValue) {
+        // A named profile's port count lives server-side; only show it when
+        // health already told us, otherwise say so rather than guessing.
+        const known = state.health?.plugins?.port_profiles?.[profileValue];
+        ports = Array.isArray(known) ? known.length : null;
+      }
+      // No port field filled in is a valid choice too (server default applies).
+      if (ports === null) return {hosts, ports: null};
+      const probes = hosts * ports;
+      return {hosts, ports, probes, seconds: Math.max(1, Math.round(probes / PROBES_PER_SECOND))};
+    }
+
+    // Renders #scanEstimate and is the sole owner of the start button's
+    // disabled state: locked unless the target parses, the ports parse (or
+    // are intentionally left to a server default/profile), the Rust engine
+    // is available, and authorization is ticked.
+    function renderScanEstimate() {
+      const node = $('scanEstimate');
+      const submit = $('scanSubmit');
+      const estimate = estimateScanScale();
+      if (estimate.error) {
+        node.textContent = estimate.error;
+        node.classList.add('bad');
+        submit.disabled = true;
+        return;
+      }
+      node.classList.remove('bad');
+      node.textContent = estimate.ports === null
+        ? `호스트 ${estimate.hosts.toLocaleString()}개 · 포트 수 알 수 없음 (서버 기본값/프로필에 따름)`
+        : `호스트 ${estimate.hosts.toLocaleString()}개 · 포트 ${estimate.ports.toLocaleString()}개 = 약 ${estimate.probes.toLocaleString()} 프로브 · 예상 ${estimate.seconds}초 (추정치)`;
+      submit.disabled = !scanEngineAvailable() || !$('scanAuthorized').checked;
+    }
+
     function formatBigInt(value) {
       try { return new Intl.NumberFormat().format(value); } catch (_) { return value.toString(); }
     }
@@ -2045,13 +2129,16 @@ ${health.db}` : '데이터베이스 없음';
     function updateScanActionState() {
       const job = selectedScanJob();
       const active = Boolean(job && ['queued', 'running', 'recovering', 'cancel_requested'].includes(job.status));
-      const engineAvailable = Boolean(state.health?.rust_engine_available ?? state.health?.diagnostics?.rust_engine_available);
-      $('scanSubmit').disabled = !engineAvailable;
+      const engineAvailable = scanEngineAvailable();
       $('scanSubmit').textContent = engineAvailable ? '스캔 시작' : 'Rust 엔진 없음';
       $('scanCancel').disabled = !job || !active || job.status === 'cancel_requested';
       $('scanDelete').disabled = !job || active;
       $('scanResultSearch').disabled = !job;
       $('scanResultPageSize').disabled = !job;
+      // renderScanEstimate() owns scanSubmit.disabled - it factors in engine
+      // availability, target/port validity, and authorization together so no
+      // caller of updateScanActionState() can accidentally unlock the button.
+      renderScanEstimate();
       updateScanLinks();
     }
 
@@ -2809,12 +2896,14 @@ ${health.db}` : '데이터베이스 없음';
         $('scanTopPorts').value = '';
         $('scanProfile').value = '';
       }
+      renderScanEstimate();
     });
     $('scanTopPorts').addEventListener('input', () => {
       if ($('scanTopPorts').value.trim()) {
         $('scanPorts').value = '';
         $('scanProfile').value = '';
       }
+      renderScanEstimate();
     });
     $('scanProfile').addEventListener('change', () => {
       if ($('scanProfile').value.trim()) {
@@ -2822,7 +2911,10 @@ ${health.db}` : '데이터베이스 없음';
         $('scanTopPorts').value = '';
         setStatus('scanProfileStatus', `${$('scanProfile').value} 프로필 선택됨`);
       }
+      renderScanEstimate();
     });
+    $('scanTargets').addEventListener('blur', renderScanEstimate);
+    $('scanAuthorized').addEventListener('change', renderScanEstimate);
     $('scanPortProfileFile').addEventListener('change', async (event) => {
       const input = event.currentTarget;
       const file = input.files?.[0];
