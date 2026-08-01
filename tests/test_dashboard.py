@@ -247,5 +247,21 @@ class DashboardShortcutTests(unittest.TestCase):
         self.assertIn("isTypingTarget(", body)
 
 
+class DashboardSelfContainmentTests(unittest.TestCase):
+    def test_nothing_is_loaded_from_outside(self):
+        """A strict desktop shell and an offline operator both need this."""
+        html = dashboard_html()
+
+        self.assertNotRegex(html, r'(?:src|href)\s*=\s*"https?://')
+        self.assertNotIn("@import", html)
+        self.assertNotIn("fonts.googleapis", html)
+
+    def test_values_are_monospaced_and_motion_is_optional(self):
+        html = dashboard_html()
+
+        self.assertIn("ui-monospace", html)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", html)
+
+
 if __name__ == "__main__":
     unittest.main()
