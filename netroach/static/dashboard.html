@@ -2567,6 +2567,7 @@ ${health.db}` : '데이터베이스 없음';
         setStatus('scanStatus', `${shortId(created.scan_id)} 시작됨`);
         formElement.elements.confirm_authorized.checked = false;
         await refreshScans();
+        schedulePoll();
         await selectScan(created.scan_id);
       } catch (err) {
         setStatus('scanStatus', err.message, true);
@@ -2876,17 +2877,28 @@ ${health.db}` : '데이터베이스 없음';
     updateScanActionState();
     renderScanResults();
     refreshOverview();
-    // Poll only while the window is actually being looked at: a hidden window
-    // otherwise keeps a weak machine busy for nothing. Becoming visible again
-    // refreshes immediately, so the view is never stale on return.
+    // Poll fast while a scan is actually moving, slowly while the window is
+    // hidden, and not at all when there is nothing to watch: an idle
+    // dashboard should cost a weak machine nothing.
+    const POLL_ACTIVE_MS = 700;
+    const POLL_HIDDEN_MS = 5000;
+    let pollTimer = null;
+
     function pollOnce() {
       refreshHealth().catch(() => {});
-      refreshScans().catch(() => {});
+      refreshScans().catch(() => {}).finally(schedulePoll);
     }
 
-    setInterval(() => {
-      if (!document.hidden) pollOnce();
-    }, 5000);
+    function schedulePoll() {
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+      if (!runningScanJobs().length && !state.runningProgress) return;
+      pollTimer = setTimeout(pollOnce, document.hidden ? POLL_HIDDEN_MS : POLL_ACTIVE_MS);
+    }
+
+    pollOnce();
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) pollOnce();
     });

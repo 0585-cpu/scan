@@ -96,5 +96,21 @@ class DashboardProgressStripTests(unittest.TestCase):
             self.assertNotIn(route, html)
 
 
+class DashboardPollingTests(unittest.TestCase):
+    def test_poll_cadence_matches_the_three_documented_states(self):
+        html = dashboard_html()
+
+        self.assertIn("const POLL_ACTIVE_MS = 700;", html)
+        self.assertIn("const POLL_HIDDEN_MS = 5000;", html)
+        self.assertIn("function schedulePoll(", html)
+        self.assertIn("document.hidden", html)
+
+    def test_the_old_fixed_interval_is_gone(self):
+        html = dashboard_html()
+
+        # A weak machine must not keep polling with nothing running.
+        self.assertNotIn("setInterval(", html)
+
+
 if __name__ == "__main__":
     unittest.main()
