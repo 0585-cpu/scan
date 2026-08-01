@@ -394,8 +394,43 @@
       gap: 16px;
       align-items: start;
     }
-    .scan-layout { grid-template-columns: minmax(380px, 470px) minmax(0, 1fr); }
     .layout-wide { display: grid; gap: 16px; align-items: start; }
+    .scan-shell { display: flex; gap: 12px; align-items: flex-start; }
+    .command-pane { flex: 0 0 380px; max-width: 380px; display: flex; flex-direction: column; gap: 16px; }
+    .result-pane {
+      flex: 1 1 auto;
+      min-width: 0;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .result-tabs { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+    .result-tabs button { height: 28px; border: 0; background: transparent; color: var(--muted); }
+    .result-tabs button.active { color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+    .result-progress { margin-left: auto; font-size: 12px; color: var(--muted); }
+    .host-rows { max-height: 62vh; overflow-y: auto; }
+    .host-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 30px;
+      padding: 0 12px;
+      font-size: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .host-row .host-name { flex: 0 0 180px; font-family: ui-monospace, monospace; }
+    .host-row .host-open { flex: 1 1 auto; font-family: ui-monospace, monospace; color: var(--state-open); }
+    .host-row .host-state { flex: 0 0 90px; text-align: right; color: var(--muted); }
+    .host-row.fresh { animation: rowFresh 600ms ease; }
+    @keyframes rowFresh { from { background: var(--accent-soft); } to { background: transparent; } }
+    .new-results { position: sticky; top: 0; z-index: 2; width: 100%; height: 26px; font-size: 12px; }
+    @media (prefers-reduced-motion: reduce) { .host-row.fresh { animation: none; } }
+    @media (max-width: 1100px) {
+      .scan-shell { flex-direction: column; }
+      .command-pane { flex: 1 1 auto; max-width: none; width: 100%; }
+    }
     .band {
       background: var(--surface);
       border: 1px solid var(--line);
@@ -738,7 +773,6 @@
       .sidebar-foot { display: none; }
       .shell { min-height: auto; }
       .layout-two { grid-template-columns: 1fr; }
-      .scan-layout { grid-template-columns: 1fr; }
       .metrics { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
     }
     @media (max-width: 680px) {
@@ -843,7 +877,8 @@
               <button type="button" id="scanRefresh">새로고침</button>
             </div>
           </div>
-          <div class="layout-two scan-layout">
+          <div class="scan-shell">
+            <div class="command-pane">
             <section class="band">
               <div class="band-head"><h3>새 스캔</h3></div>
               <div class="band-body">
@@ -995,22 +1030,31 @@
                 </table>
               </div>
             </section>
-          </div>
-          <section class="band" style="margin-top:16px">
-            <div class="band-head">
-              <h3>결과</h3>
-              <div class="band-head-tools">
-                <input class="compact-input" id="scanResultSearch" aria-label="결과 검색" placeholder="호스트 · 서비스 · 배너 검색">
-                <select class="compact-select" id="scanResultPageSize" aria-label="페이지당 행 수" disabled>
-                  <option value="25">25행</option>
-                  <option value="50" selected>50행</option>
-                  <option value="100">100행</option>
-                  <option value="250">250행</option>
-                  <option value="500">500행</option>
-                </select>
-                <span class="status" id="resultCount"></span>
-              </div>
             </div>
+            <section class="result-pane">
+              <div class="band-head">
+                <h3>결과</h3>
+                <div class="band-head-tools">
+                  <input class="compact-input" id="scanResultSearch" aria-label="결과 검색" placeholder="호스트 · 서비스 · 배너 검색">
+                  <select class="compact-select" id="scanResultPageSize" aria-label="페이지당 행 수" disabled>
+                    <option value="25">25행</option>
+                    <option value="50" selected>50행</option>
+                    <option value="100">100행</option>
+                    <option value="250">250행</option>
+                    <option value="500">500행</option>
+                  </select>
+                  <span class="status" id="resultCount"></span>
+                </div>
+              </div>
+              <div class="result-tabs">
+                <button type="button" data-result-tab="hosts" class="active">호스트</button>
+                <button type="button" data-result-tab="ports">열린 포트</button>
+                <button type="button" data-result-tab="log">로그</button>
+                <span class="result-progress" id="scanResultMetrics"></span>
+              </div>
+              <button type="button" class="new-results" id="scanNewResults" hidden>새 결과 ↓</button>
+              <div class="host-rows" id="scanHostRows"></div>
+              <div id="scanPortsTab" hidden>
             <div class="result-navigator">
               <div class="result-host-tabs" id="scanHostTabs" role="tablist" aria-label="결과 호스트"></div>
               <div class="result-state-tabs" id="scanStateTabs" role="tablist" aria-label="결과 상태"></div>
@@ -1024,7 +1068,12 @@
               </table>
             </div>
             <div class="result-pagination" id="scanResultPagination"></div>
-          </section>
+              </div>
+              <div class="host-rows" id="scanLogTab" hidden>
+                <p class="empty">선택한 작업의 원시 로그는 아직 제공되지 않습니다.</p>
+              </div>
+            </section>
+          </div>
         </section>
 
         <section class="view" id="view-pcap">
@@ -1354,6 +1403,8 @@
       scanResultPageSize: 50,
       scanResultSearchTimer: null,
       scanResultPayload: {results: [], total: 0, hosts: []},
+      resultTab: 'hosts',
+      autoScroll: true,
       scanPresets: [],
       activePresetId: null,
       presetDirty: false,
@@ -2243,15 +2294,23 @@ ${health.db}` : '데이터베이스 없음';
       }
     }
 
+    // The hosts tab needs more than one page of rows to fill in live as a
+    // scan runs; the ports tab keeps the exact page size the operator
+    // picked. Capped so a huge scan can't bloat every poll response -
+    // renderHostRows() labels the count as partial when total exceeds this.
+    const HOST_VIEW_RESULT_LIMIT = 500;
+
     async function refreshScanResults() {
       if (!state.scanId) {
         state.scanResultPayload = {results: [], total: 0, hosts: []};
         renderScanResults();
         return;
       }
-      const offset = (state.scanResultPage - 1) * state.scanResultPageSize;
+      const usingHostView = state.resultTab === 'hosts';
+      const limit = usingHostView ? HOST_VIEW_RESULT_LIMIT : state.scanResultPageSize;
+      const offset = usingHostView ? 0 : (state.scanResultPage - 1) * state.scanResultPageSize;
       const params = new URLSearchParams({
-        limit: String(state.scanResultPageSize),
+        limit: String(limit),
         offset: String(offset)
       });
       if (state.scanResultHost) params.set('host', state.scanResultHost);
@@ -2266,11 +2325,13 @@ ${health.db}` : '데이터베이스 없음';
           await refreshScanResults();
           return;
         }
-        const totalPages = Math.max(1, Math.ceil(Number(payload.total || 0) / state.scanResultPageSize));
-        if (state.scanResultPage > totalPages) {
-          state.scanResultPage = totalPages;
-          await refreshScanResults();
-          return;
+        if (!usingHostView) {
+          const totalPages = Math.max(1, Math.ceil(Number(payload.total || 0) / state.scanResultPageSize));
+          if (state.scanResultPage > totalPages) {
+            state.scanResultPage = totalPages;
+            await refreshScanResults();
+            return;
+          }
         }
         state.scanResultPayload = payload;
         renderScanResults();
@@ -2395,7 +2456,115 @@ ${health.db}` : '데이터베이스 없음';
       });
     }
 
+    // Rendering every row of a /16 would stall a weak machine; the operator
+    // only ever reads the top of the list, and open hosts are sorted there.
+    const HOST_ROW_RENDER_LIMIT = 200;
+
+    // Sanitizing a host into a DOM id can collide two distinct hosts down to
+    // the same id (e.g. "192.168.0.1" and "192-168-0-1" both strip to
+    // "192-168-0-1"). Track ids by the raw host string instead so two hosts
+    // never overwrite the same row.
+    const hostRowIds = new Map();
+    let hostRowIdSeq = 0;
+    function hostRowId(host) {
+      if (!hostRowIds.has(host)) hostRowIds.set(host, `host-row-${hostRowIdSeq++}`);
+      return hostRowIds.get(host);
+    }
+
+    function groupResultsByHost(results) {
+      const byHost = new Map();
+      (results || []).forEach((row) => {
+        const entry = byHost.get(row.host) || {host: row.host, open: [], total: 0, error: 0};
+        entry.total += 1;
+        if (row.state === 'open') entry.open.push(row.port);
+        if (row.state === 'error') entry.error += 1;
+        byHost.set(row.host, entry);
+      });
+      const rows = [...byHost.values()];
+      rows.forEach((entry) => entry.open.sort((a, b) => a - b));
+      // Open hosts first: in a 254-address sweep the three that matter should
+      // never be below the fold.
+      return rows.sort((a, b) => (b.open.length ? 1 : 0) - (a.open.length ? 1 : 0));
+    }
+
+    function renderHostRows() {
+      const container = $('scanHostRows');
+      const payload = state.scanResultPayload || {results: [], total: 0, hosts: []};
+      const loaded = (payload.results || []).length;
+      const total = Number(payload.total || 0);
+      $('scanResultMetrics').textContent = total > loaded
+        ? `${loaded.toLocaleString()} / ${total.toLocaleString()}행 로드됨`
+        : `${total.toLocaleString()}행`;
+      const rows = groupResultsByHost(payload.results).slice(0, HOST_ROW_RENDER_LIMIT);
+      const seen = new Set();
+      rows.forEach((entry) => {
+        seen.add(entry.host);
+        const id = hostRowId(entry.host);
+        const openText = entry.open.length ? `open ${entry.open.join(',')}` : '';
+        const stateText = entry.error ? '오류' : '완료';
+        let node = document.getElementById(id);
+        if (!node) {
+          node = document.createElement('div');
+          node.id = id;
+          node.className = 'host-row';
+          container.appendChild(node);
+        }
+        const html = `<span class="host-name">${escapeHtml(entry.host)}</span><span class="host-open">${escapeHtml(openText)}</span><span class="host-state">${escapeHtml(stateText)}</span>`;
+        // Replace only what changed: a full redraw at 700ms would fight the
+        // scroll position and burn CPU on a machine that has none to spare.
+        // Rows also never reposition once created (only newly-discovered
+        // hosts get appended) - a host that later opens a port keeps its
+        // spot instead of jumping under the operator's cursor while reading.
+        if (node.innerHTML !== html) {
+          const gainedOpen = entry.open.length && !node.dataset.open;
+          node.innerHTML = html;
+          node.dataset.open = entry.open.length ? '1' : '';
+          if (gainedOpen) {
+            node.classList.remove('fresh');
+            void node.offsetWidth;
+            node.classList.add('fresh');
+          }
+        }
+      });
+      // One pass over the current children, O(n): direct child lookup
+      // instead of querySelector, and Element.remove() doesn't shift
+      // siblings, so this stays linear even for a large host list.
+      [...container.children].forEach((node) => {
+        if (!seen.has(node.firstElementChild?.textContent)) node.remove();
+      });
+      if (state.autoScroll) container.scrollTop = container.scrollHeight;
+      $('scanNewResults').hidden = state.autoScroll;
+    }
+
+    $('scanHostRows').addEventListener('scroll', (event) => {
+      const node = event.currentTarget;
+      state.autoScroll = node.scrollHeight - node.scrollTop - node.clientHeight < 24;
+      $('scanNewResults').hidden = state.autoScroll;
+    });
+    $('scanNewResults').addEventListener('click', () => {
+      state.autoScroll = true;
+      $('scanHostRows').scrollTop = $('scanHostRows').scrollHeight;
+      $('scanNewResults').hidden = true;
+    });
+
+    document.querySelectorAll('[data-result-tab]').forEach((node) => {
+      node.addEventListener('click', async () => {
+        state.resultTab = node.dataset.resultTab;
+        document.querySelectorAll('[data-result-tab]').forEach((tab) => tab.classList.toggle('active', tab === node));
+        await refreshScanResults();
+      });
+    });
+
     function renderScanResults() {
+      $('scanHostRows').hidden = state.resultTab !== 'hosts';
+      $('scanNewResults').hidden = state.resultTab !== 'hosts' || state.autoScroll;
+      $('scanPortsTab').hidden = state.resultTab !== 'ports';
+      $('scanLogTab').hidden = state.resultTab !== 'log';
+      if (state.resultTab === 'hosts') {
+        renderHostRows();
+        return;
+      }
+      if (state.resultTab === 'log') return;
       if (!state.scanId) {
         $('scanResults').innerHTML = `<tr><td colspan="9" class="empty">스캔 작업을 선택하면 결과가 표시됩니다</td></tr>`;
         $('scanHostTabs').innerHTML = '';
