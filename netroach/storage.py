@@ -366,6 +366,25 @@ class SQLiteRepository:
                 (json.dumps(summary.to_dict()), scan_id),
             )
 
+    def park_scan_for_later_recovery(self, scan_id: str, reason: str) -> bool:
+        """Park a job that cannot be resumed right now but is not lost.
+
+        Leaving it in 'running' would be a lie a reader acts on: the dashboard
+        treats a running job as live work and holds its progress strip and fast
+        poll open for as long as the row says so. 'recovering' is already a
+        recoverable status, so a later start that can resume it still will.
+        """
+        with self.session() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE scan_jobs
+                SET status='recovering', worker_token=NULL, summary_json=?
+                WHERE id=? AND status IN ('queued', 'running')
+                """,
+                (json.dumps({"interrupted": reason}), scan_id),
+            )
+        return cursor.rowcount > 0
+
     def fail_scan(self, scan_id: str, error: str) -> None:
         with self.session() as conn:
             conn.execute(

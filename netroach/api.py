@@ -964,9 +964,18 @@ def _group_pending_scan_work(
 
 
 def _start_scan_recovery(db_path) -> list[threading.Thread]:
-    if resolve_engine_path() is None:
-        return []
     repo = SQLiteRepository(db_path)
+    if resolve_engine_path() is None:
+        # Keep the jobs - the engine may be back on the next start - but stop
+        # them claiming to be running, which no later event would correct.
+        # Limitation: with no heartbeat column there is no way to tell a dead
+        # job from one a second instance is running against the same database,
+        # so a concurrent instance that does have an engine would see its live
+        # job relabelled until it completes. Nothing is lost, and only a start
+        # without an engine can trigger it.
+        for job in repo.list_recoverable_scan_jobs():
+            repo.park_scan_for_later_recovery(str(job["id"]), "the scan engine was not found at startup")
+        return []
     threads: list[threading.Thread] = []
     for job in repo.list_recoverable_scan_jobs():
         scan_id = str(job["id"])
