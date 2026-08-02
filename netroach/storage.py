@@ -1522,7 +1522,8 @@ class SQLiteRepository:
         rows = conn.execute(
             """
             SELECT id, scan_id, host, port, protocol, evidence_type, file_name,
-                   stored_path, mime_type, size_bytes, sha256, source_url, created_at
+                   stored_path, mime_type, size_bytes, sha256, source_url, capture_agent,
+                   created_at
             FROM result_evidence_files
             WHERE scan_id=?
             ORDER BY created_at, id
