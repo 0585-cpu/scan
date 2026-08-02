@@ -538,6 +538,33 @@ class EvidenceCaptureAgentTests(unittest.TestCase):
             stored = repo.get_evidence_file(evidence["id"])
             self.assertEqual(stored["capture_agent"], "chromium 151.0.7922.34 800x600")
 
+    def test_every_read_path_exposes_the_agent(self):
+        """Storing it is useless if the API's read paths drop the column.
+
+        The result listing builds evidence through a separate query from
+        get_evidence_file, and that one was missed the first time.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo_with_result(tmp)
+            agent = "chromium 151.0.7922.34 800x600"
+            repo.add_result_evidence(
+                scan_id,
+                host="127.0.0.1",
+                port=80,
+                data=PNG_BYTES,
+                file_name="shot.png",
+                evidence_type="web_screenshot",
+                capture_agent=agent,
+            )
+
+            listed = repo.list_result_evidence(scan_id, host="127.0.0.1", port=80)
+            result = repo.get_result(scan_id, host="127.0.0.1", port=80)
+            report = repo.get_report_results(scan_id)
+
+            self.assertEqual(listed[0]["capture_agent"], agent)
+            self.assertEqual(result["evidence_files"][0]["capture_agent"], agent)
+            self.assertEqual(report[0]["evidence_files"][0]["capture_agent"], agent)
+
     def test_evidence_without_an_agent_is_still_accepted(self):
         """Manual uploads have no capturing tool, and old rows predate the column."""
         with tempfile.TemporaryDirectory() as tmp:
