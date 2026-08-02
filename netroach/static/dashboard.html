@@ -71,7 +71,7 @@
       font-weight: 600;
       transition: background-color .12s ease, border-color .12s ease, color .12s ease;
     }
-    button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    button:hover { border-color: var(--line-strong); color: var(--text); background: var(--surface-sunken); }
     button:active { background: #dfeafa; }
     button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible,
     summary:focus-visible, a:focus-visible {
@@ -116,7 +116,7 @@
       font-weight: 600;
       cursor: pointer;
     }
-    a.action:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    a.action:hover { border-color: var(--line-strong); color: var(--text); background: var(--surface-sunken); }
     a.action.disabled { background: var(--surface-alt); }
 
     /* In-app preview: the desktop shell is a webview that blocks new windows,
@@ -192,15 +192,15 @@
       align-items: center;
       gap: 12px;
       padding: 0 12px;
-      background: var(--accent-soft);
-      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+      border-bottom: 1px solid var(--line-strong);
       font-size: 12px;
       cursor: pointer;
     }
     .progress-strip[hidden] { display: none; }
     .progress-strip.done { background: var(--ok-soft); }
     .progress-strip.failed { background: var(--danger-soft); }
-    .strip-bar { flex: 0 0 140px; height: 6px; background: var(--surface); border-radius: 4px; overflow: hidden; }
+    .strip-bar { flex: 0 0 140px; height: 6px; background: var(--surface-sunken); border-radius: 4px; overflow: hidden; }
     .strip-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 200ms ease; }
     .strip-target { flex: 0 1 auto; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .strip-error { color: var(--state-error); }
@@ -258,8 +258,8 @@
       text-align: center;
       font-size: 14px;
     }
-    .rail .nav button:hover { background: var(--accent-soft); color: var(--accent); }
-    .rail .nav button.active { background: var(--accent-soft); color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+    .rail .nav button:hover { background: var(--surface-sunken); color: var(--text); }
+    .rail .nav button.active { background: var(--surface-sunken); color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
     .rail-label { opacity: 0; transition: opacity 120ms ease; }
     .rail:hover .rail-label, .rail:focus-within .rail-label { opacity: 1; }
     @media (prefers-reduced-motion: reduce) {
@@ -438,7 +438,7 @@
     .preset-row button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
     .preset-row button.active {
       border-color: var(--accent);
-      background: var(--accent-soft);
+      background: var(--surface);
       color: var(--accent-dark);
       font-weight: 700;
     }
@@ -455,7 +455,7 @@
       background: var(--surface);
       color: var(--muted);
     }
-    .preset-chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .preset-chip.active { border-color: var(--accent); color: var(--accent); background: var(--surface); }
     .preset-chip-apply {
       all: unset;
       display: inline-flex;
@@ -491,7 +491,7 @@
       font-weight: 600;
       white-space: nowrap;
     }
-    .port-file-action:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .port-file-action:hover { border-color: var(--line-strong); color: var(--text); background: var(--surface-sunken); }
     .port-file-action input { display: none; }
     details.advanced-panel {
       border: 1px solid var(--line);
@@ -545,22 +545,33 @@
     }
     .pill {
       min-height: 22px;
-      border: 1px solid var(--line-strong);
+      border: 1px solid var(--line);
       border-radius: 999px;
       padding: 0 8px;
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      color: var(--muted);
+      gap: 6px;
+      color: var(--text-soft);
       background: var(--surface-alt);
       font-size: 11px;
       font-weight: 700;
       white-space: nowrap;
       max-width: 100%;
+      --dot: var(--muted);
     }
-    .pill.ok, .pill.state-open, .pill.state-completed { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
-    .pill.warn, .pill.state-running, .pill.state-queued, .pill.state-recovering, .pill.state-open-filtered { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
-    .pill.bad, .pill.state-failed, .pill.state-cancelled, .pill.state-cancel-requested, .pill.state-error { color: var(--danger); border-color: var(--danger-line); background: var(--danger-soft); }
+    /* State reads from the dot, not from a filled pastel shape: the colour
+       still carries the meaning but stops covering the table in tint. */
+    .pill::before {
+      content: "";
+      flex: 0 0 6px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--dot);
+    }
+    .pill.ok, .pill.state-open, .pill.state-completed { --dot: var(--ok); }
+    .pill.warn, .pill.state-running, .pill.state-queued, .pill.state-recovering, .pill.state-open-filtered { --dot: var(--warn); }
+    .pill.bad, .pill.state-failed, .pill.state-cancelled, .pill.state-cancel-requested, .pill.state-error { --dot: var(--danger); }
     .metrics {
       display: grid;
       grid-template-columns: repeat(4, minmax(120px, 1fr));
@@ -676,7 +687,7 @@
       padding: 4px;
       overflow-wrap: anywhere;
     }
-    tr.selected td { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+    tr.selected td { background: var(--surface-sunken); box-shadow: inset 3px 0 0 var(--accent); }
     tr.clickable { cursor: pointer; }
     tr.clickable:hover td { background: var(--surface-sunken); }
     .kv {
@@ -2222,32 +2233,48 @@ ${health.db}` : '데이터베이스 없음';
     // The strip reads the job list the dashboard already polls, then asks for
     // the progress of the one job it displays. No new endpoint, one extra
     // request only while something is actually running.
+    async function progressSnapshot(job, extra) {
+      const progress = await api(`/v1/scans/${encodeURIComponent(job.id)}/progress`);
+      const states = progress.states || {};
+      return {
+        scanId: job.id,
+        status: progress.status,
+        label: `${job.targets} · ${job.ports}`,
+        percent: progress.percent || 0,
+        completed: progress.completed_results || 0,
+        planned: progress.planned_total || 0,
+        open: states.open || 0,
+        error: states.error || 0,
+        startedAt: progress.started_at || progress.created_at,
+        extra
+      };
+    }
+
     async function refreshRunningProgress() {
       const jobs = runningScanJobs();
       if (!jobs.length) {
         const finished = state.runningProgress && state.scans.find((job) => job.id === state.runningProgress.scanId);
-        state.runningProgress = finished && state.stripClosedFor !== finished.id
-          ? {...state.runningProgress, status: finished.status, percent: 100}
-          : null;
+        if (!finished || state.stripClosedFor === finished.id) {
+          state.runningProgress = null;
+          renderProgressStrip();
+          return;
+        }
+        // Fetch once more on the way out. A scan that finishes between two
+        // polls would otherwise freeze the strip on the last numbers seen
+        // mid-flight - a scan shorter than one poll interval showed 0/94 at
+        // 100%. Polling has already stopped, so nothing else corrects it.
+        if (RUNNING_STATUSES.has(state.runningProgress.status)) {
+          try {
+            state.runningProgress = await progressSnapshot(finished, 0);
+          } catch (err) {
+            state.runningProgress = {...state.runningProgress, status: finished.status, percent: 100};
+          }
+        }
         renderProgressStrip();
         return;
       }
-      const job = jobs[0];
       try {
-        const progress = await api(`/v1/scans/${encodeURIComponent(job.id)}/progress`);
-        const states = progress.states || {};
-        state.runningProgress = {
-          scanId: job.id,
-          status: progress.status,
-          label: `${job.targets} · ${job.ports}`,
-          percent: progress.percent || 0,
-          completed: progress.completed_results || 0,
-          planned: progress.planned_total || 0,
-          open: states.open || 0,
-          error: states.error || 0,
-          startedAt: progress.started_at || progress.created_at,
-          extra: jobs.length - 1
-        };
+        state.runningProgress = await progressSnapshot(jobs[0], jobs.length - 1);
       } catch (err) {
         state.runningProgress = null;
       }
