@@ -501,6 +501,71 @@ class StorageTests(unittest.TestCase):
                 repo.complete_scan(scan_id, summary)
 
 
+PNG_BYTES = bytes.fromhex("89504e470d0a1a0a") + b"evidence"
+
+
+class EvidenceCaptureAgentTests(unittest.TestCase):
+    def _repo_with_result(self, tmp):
+        from netroach.storage import PortResult, SQLiteRepository
+
+        repo = SQLiteRepository(Path(tmp) / "netroach.db")
+        scan_id = repo.create_scan_job(targets="127.0.0.1", ports="80", scope=["127.0.0.1/32"], params={})
+        repo.add_port_result(
+            PortResult(scan_id=scan_id, host="127.0.0.1", port=80, state="open", latency_ms=1.0)
+        )
+        return repo, scan_id
+
+    def test_evidence_records_what_captured_it(self):
+        """Evidence that cannot say how it was produced is weaker evidence.
+
+        The bundled browser is pinned so a screenshot stays reproducible; that
+        only pays off if the record names the renderer and the viewport it used.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo_with_result(tmp)
+
+            evidence = repo.add_result_evidence(
+                scan_id,
+                host="127.0.0.1",
+                port=80,
+                data=PNG_BYTES,
+                file_name="shot.png",
+                evidence_type="web_screenshot",
+                capture_agent="chromium 151.0.7922.34 800x600",
+            )
+
+            self.assertEqual(evidence["capture_agent"], "chromium 151.0.7922.34 800x600")
+            stored = repo.get_evidence_file(evidence["id"])
+            self.assertEqual(stored["capture_agent"], "chromium 151.0.7922.34 800x600")
+
+    def test_evidence_without_an_agent_is_still_accepted(self):
+        """Manual uploads have no capturing tool, and old rows predate the column."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo_with_result(tmp)
+
+            evidence = repo.add_result_evidence(
+                scan_id, host="127.0.0.1", port=80, data=PNG_BYTES, file_name="m.png"
+            )
+
+            self.assertIsNone(evidence["capture_agent"])
+
+    def test_a_database_without_the_column_gains_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "netroach.db"
+            repo, scan_id = self._repo_with_result(tmp)
+            repo.add_result_evidence(
+                scan_id, host="127.0.0.1", port=80, data=PNG_BYTES, file_name="old.png"
+            )
+            # sqlite3's context manager commits but does not close, and an open
+            # handle stops Windows removing the temporary directory.
+            conn = sqlite3.connect(path)
+            try:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(result_evidence_files)")}
+            finally:
+                conn.close()
+            self.assertIn("capture_agent", columns)
+
+
 class LegacyDataMigrationTests(unittest.TestCase):
     def test_pre_rename_database_and_artifacts_are_moved_once(self):
         from netroach.storage import migrate_legacy_data

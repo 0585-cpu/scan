@@ -178,10 +178,31 @@ def web_result_url(result: Mapping[str, Any]) -> str:
     return f"{scheme}://{display_host}{port_suffix}/"
 
 
+def host_route_filter(allowed_host: str) -> Callable[[Any], None]:
+    """Build the request filter that confines a capture to one host.
+
+    The handler takes exactly one argument. Playwright inspects its arity and
+    passes the Request as a second argument to anything that accepts one, so a
+    `allowed_host=host` default parameter is silently overwritten with a Request
+    object - every comparison then fails and the navigation itself is aborted.
+    A closure is the only binding Playwright cannot shadow.
+    """
+
+    def route_request(route: Any) -> None:
+        request_url = urlparse(route.request.url)
+        request_host = (request_url.hostname or "").lower()
+        if request_url.scheme in {"about", "blob", "data"} or request_host == allowed_host:
+            route.continue_()
+        else:
+            route.abort()
+
+    return route_request
+
+
 def capture_web_screenshots(
     results: Iterable[Mapping[str, Any]],
     *,
-    store: Callable[[Mapping[str, Any], bytes, str, str], object],
+    store: Callable[[Mapping[str, Any], bytes, str, str, str | None], object],
     timeout_ms: int = DEFAULT_SCREENSHOT_TIMEOUT_MS,
     maximum: int = DEFAULT_SCREENSHOT_MAX,
     should_stop: Callable[[], bool] | None = None,
@@ -211,6 +232,9 @@ def capture_web_screenshots(
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
+            # Recorded with every screenshot: a pinned browser only buys
+            # reproducible evidence if the evidence says which one rendered it.
+            capture_agent = f"chromium {browser.version} {SCREENSHOT_WIDTH}x{SCREENSHOT_HEIGHT}"
             try:
                 for result in candidates:
                     if should_stop and should_stop():
@@ -222,18 +246,7 @@ def capture_web_screenshots(
                         viewport={"width": SCREENSHOT_WIDTH, "height": SCREENSHOT_HEIGHT},
                     )
                     try:
-                        # allowed_host is bound at definition time on purpose:
-                        # this handler is the confinement to the scanned host,
-                        # and it must not follow a later loop iteration.
-                        def route_request(route: Any, allowed_host: str = host) -> None:
-                            request_url = urlparse(route.request.url)
-                            request_host = (request_url.hostname or "").lower()
-                            if request_url.scheme in {"about", "blob", "data"} or request_host == allowed_host:
-                                route.continue_()
-                            else:
-                                route.abort()
-
-                        context.route("**/*", route_request)
+                        context.route("**/*", host_route_filter(host))
                         page = context.new_page()
                         page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
                         page.add_style_tag(
@@ -241,7 +254,7 @@ def capture_web_screenshots(
                         )
                         image = page.screenshot(type="png", full_page=False)
                         filename_host = re.sub(r"[^A-Za-z0-9_.-]+", "_", host)
-                        store(result, image, f"{filename_host}_{result['port']}.png", url)
+                        store(result, image, f"{filename_host}_{result['port']}.png", url, capture_agent)
                         captured += 1
                     except Exception as exc:  # noqa: BLE001 - one failed web service must not stop other captures.
                         errors.append(f"{url}: {str(exc)[:240]}")
@@ -420,7 +433,7 @@ def render_terminal_transcript(
 def capture_terminal_transcripts(
     results: Iterable[Mapping[str, Any]],
     *,
-    store: Callable[[Mapping[str, Any], bytes, str, str | None], object],
+    store: Callable[[Mapping[str, Any], bytes, str, str | None, str | None], object],
     timeout_ms: int = DEFAULT_SCREENSHOT_TIMEOUT_MS,
     maximum: int = DEFAULT_SCREENSHOT_MAX,
     should_stop: Callable[[], bool] | None = None,
@@ -442,6 +455,7 @@ def capture_terminal_transcripts(
                 image,
                 f"{filename_host}_{result.get('port')}_{result.get('protocol', 'tcp')}_powershell.png",
                 source_url,
+                f"netroach transcript renderer {SCREENSHOT_WIDTH}x{SCREENSHOT_HEIGHT}",
             )
             captured += 1
         except Exception as exc:  # noqa: BLE001 - one malformed result must not stop other transcripts.
@@ -458,7 +472,7 @@ def capture_terminal_transcripts(
 def capture_automatic_evidence(
     results: Iterable[Mapping[str, Any]],
     *,
-    store: Callable[[Mapping[str, Any], bytes, str, str | None, str], object],
+    store: Callable[[Mapping[str, Any], bytes, str, str | None, str, str | None], object],
     timeout_ms: int = DEFAULT_SCREENSHOT_TIMEOUT_MS,
     maximum: int = DEFAULT_SCREENSHOT_MAX,
     should_stop: Callable[[], bool] | None = None,
@@ -474,8 +488,9 @@ def capture_automatic_evidence(
         data: bytes,
         file_name: str,
         source_url: str,
+        capture_agent: str | None = None,
     ) -> object:
-        stored = store(result, data, file_name, source_url, "web_screenshot")
+        stored = store(result, data, file_name, source_url, "web_screenshot", capture_agent)
         captured_keys.add(_result_key(result))
         return stored
 
@@ -493,8 +508,9 @@ def capture_automatic_evidence(
         data: bytes,
         file_name: str,
         source_url: str | None,
+        capture_agent: str | None = None,
     ) -> object:
-        stored = store(result, data, file_name, source_url, "terminal_transcript")
+        stored = store(result, data, file_name, source_url, "terminal_transcript", capture_agent)
         captured_keys.add(_result_key(result))
         return stored
 

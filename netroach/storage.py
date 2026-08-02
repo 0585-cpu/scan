@@ -192,6 +192,7 @@ class SQLiteRepository:
                     size_bytes INTEGER NOT NULL,
                     sha256 TEXT NOT NULL,
                     source_url TEXT,
+                    capture_agent TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(scan_id) REFERENCES scan_jobs(id) ON DELETE CASCADE
                 );
@@ -245,6 +246,13 @@ class SQLiteRepository:
         job_columns = {row["name"] for row in conn.execute("PRAGMA table_info(scan_jobs)").fetchall()}
         if "worker_token" not in job_columns:
             conn.execute("ALTER TABLE scan_jobs ADD COLUMN worker_token TEXT")
+        evidence_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(result_evidence_files)").fetchall()
+        }
+        if "capture_agent" not in evidence_columns:
+            # Rows written before this column exist and stay readable; they
+            # simply cannot say what produced them.
+            conn.execute("ALTER TABLE result_evidence_files ADD COLUMN capture_agent TEXT")
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(port_results)").fetchall()}
         if "evidence" not in columns:
             conn.execute("ALTER TABLE port_results ADD COLUMN evidence TEXT")
@@ -510,6 +518,7 @@ class SQLiteRepository:
         file_name: str | None = None,
         evidence_type: str = "manual",
         source_url: str | None = None,
+        capture_agent: str | None = None,
     ) -> dict[str, Any]:
         if evidence_type not in {"manual", "web_screenshot", "protocol_snapshot", "terminal_transcript"}:
             raise ValueError(
@@ -535,9 +544,10 @@ class SQLiteRepository:
                     """
                     INSERT INTO result_evidence_files(
                         id, scan_id, host, port, protocol, evidence_type, file_name,
-                        stored_path, mime_type, size_bytes, sha256, source_url
+                        stored_path, mime_type, size_bytes, sha256, source_url,
+                        capture_agent
                     )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         evidence_id,
@@ -552,6 +562,7 @@ class SQLiteRepository:
                         len(data),
                         digest,
                         source_url,
+                        capture_agent,
                     ),
                 )
         except Exception:
@@ -574,7 +585,8 @@ class SQLiteRepository:
             rows = conn.execute(
                 """
                 SELECT id, scan_id, host, port, protocol, evidence_type, file_name,
-                       stored_path, mime_type, size_bytes, sha256, source_url, created_at
+                       stored_path, mime_type, size_bytes, sha256, source_url, capture_agent,
+                       created_at
                 FROM result_evidence_files
                 WHERE scan_id=? AND host=? AND port=? AND protocol=?
                 ORDER BY created_at, id
@@ -588,7 +600,8 @@ class SQLiteRepository:
             row = conn.execute(
                 """
                 SELECT id, scan_id, host, port, protocol, evidence_type, file_name,
-                       stored_path, mime_type, size_bytes, sha256, source_url, created_at
+                       stored_path, mime_type, size_bytes, sha256, source_url, capture_agent,
+                       created_at
                 FROM result_evidence_files
                 WHERE id=?
                 """,
@@ -601,7 +614,8 @@ class SQLiteRepository:
             row = conn.execute(
                 """
                 SELECT id, scan_id, host, port, protocol, evidence_type, file_name,
-                       stored_path, mime_type, size_bytes, sha256, source_url, created_at
+                       stored_path, mime_type, size_bytes, sha256, source_url, capture_agent,
+                       created_at
                 FROM result_evidence_files
                 WHERE id=?
                 """,
@@ -1215,7 +1229,8 @@ class SQLiteRepository:
             evidence_rows = conn.execute(
                 """
                 SELECT id, scan_id, host, port, protocol, evidence_type, file_name,
-                       stored_path, mime_type, size_bytes, sha256, source_url, created_at
+                       stored_path, mime_type, size_bytes, sha256, source_url, capture_agent,
+                       created_at
                 FROM result_evidence_files
                 ORDER BY created_at, id
                 """
@@ -1388,9 +1403,10 @@ class SQLiteRepository:
                         """
                         INSERT OR REPLACE INTO result_evidence_files(
                             id, scan_id, host, port, protocol, evidence_type, file_name,
-                            stored_path, mime_type, size_bytes, sha256, source_url, created_at
+                            stored_path, mime_type, size_bytes, sha256, source_url, capture_agent,
+                            created_at
                         )
-                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             evidence_id,
@@ -1405,6 +1421,7 @@ class SQLiteRepository:
                             len(content),
                             actual_hash,
                             evidence.get("source_url"),
+                            evidence.get("capture_agent"),
                             evidence.get("created_at") or _now_sql(),
                         ),
                     )

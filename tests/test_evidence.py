@@ -13,6 +13,7 @@ from netroach.evidence import (
     automatic_evidence_candidates,
     capture_automatic_evidence,
     detect_image_media_type,
+    host_route_filter,
     preauth_mode_for_result,
     render_terminal_transcript,
     run_powershell_diagnostic,
@@ -135,12 +136,12 @@ class EvidenceTests(unittest.TestCase):
             {"host": "127.0.0.1", "port": 80, "protocol": "tcp", "state": "open", "service_name": "http"},
             {"host": "127.0.0.1", "port": 22, "protocol": "tcp", "state": "open", "service_name": "ssh"},
         ]
-        stored: list[tuple[int, str, tuple[int, int]]] = []
+        stored: list[tuple[int, str, tuple[int, int], str | None]] = []
 
-        def store(result, data, file_name, source_url, evidence_type):
+        def store(result, data, file_name, source_url, evidence_type, capture_agent=None):
             self.assertTrue(file_name.endswith(".png"))
             with Image.open(io.BytesIO(data)) as image:
-                stored.append((result["port"], evidence_type, image.size))
+                stored.append((result["port"], evidence_type, image.size, capture_agent))
 
         failed_web = ScreenshotCaptureSummary(
             candidates=1,
@@ -158,9 +159,15 @@ class EvidenceTests(unittest.TestCase):
             with patch("netroach.evidence.run_powershell_diagnostic", return_value=transcript):
                 summary = capture_automatic_evidence(results, store=store)
 
+        # The renderer identifies itself so a transcript can say what drew it,
+        # the same way a screenshot names the browser that rendered it.
+        agent = "netroach transcript renderer 800x600"
         self.assertEqual(
             stored,
-            [(80, "terminal_transcript", (800, 600)), (22, "terminal_transcript", (800, 600))],
+            [
+                (80, "terminal_transcript", (800, 600), agent),
+                (22, "terminal_transcript", (800, 600), agent),
+            ],
         )
         self.assertEqual(summary.candidates, 2)
         self.assertEqual(summary.captured, 2)
@@ -169,6 +176,57 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(summary.protocol_snapshots, 0)
         self.assertEqual(summary.terminal_transcripts, 2)
         self.assertIn("browser unavailable", summary.errors)
+
+
+class HostRouteFilterTests(unittest.TestCase):
+    """The filter that confines a capture to the scanned host.
+
+    It once used an `allowed_host=host` default parameter. Playwright passes the
+    Request as a second argument to any handler that accepts one, so the default
+    was replaced by a Request, every comparison failed, and the navigation
+    itself was aborted - automatic screenshots failed for every target while the
+    per-target `except` reported it only as a capture error.
+    """
+
+    def _route(self, url: str):
+        calls: list[str] = []
+        route = SimpleNamespace(
+            request=SimpleNamespace(url=url),
+            continue_=lambda: calls.append("continue"),
+            abort=lambda: calls.append("abort"),
+        )
+        return route, calls
+
+    def test_handler_takes_exactly_one_argument(self):
+        import inspect
+
+        parameters = inspect.signature(host_route_filter("127.0.0.1")).parameters
+        self.assertEqual(len(parameters), 1)
+
+    def test_the_scanned_host_is_allowed(self):
+        handler = host_route_filter("127.0.0.1")
+        route, calls = self._route("http://127.0.0.1:8080/app.css")
+
+        handler(route)
+
+        self.assertEqual(calls, ["continue"])
+
+    def test_another_host_is_blocked(self):
+        handler = host_route_filter("127.0.0.1")
+        route, calls = self._route("http://example.com/tracker.js")
+
+        handler(route)
+
+        self.assertEqual(calls, ["abort"])
+
+    def test_inline_schemes_are_allowed(self):
+        handler = host_route_filter("127.0.0.1")
+        for url in ("data:text/css,body{}", "blob:http://127.0.0.1/x", "about:blank"):
+            route, calls = self._route(url)
+
+            handler(route)
+
+            self.assertEqual(calls, ["continue"], url)
 
 
 if __name__ == "__main__":

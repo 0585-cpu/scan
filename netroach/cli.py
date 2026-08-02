@@ -390,6 +390,7 @@ def _capture_scan_evidence(
         file_name: str,
         source_url: str | None,
         evidence_type: str,
+        capture_agent: str | None = None,
     ) -> None:
         repo.add_result_evidence(
             scan_id,
@@ -400,6 +401,7 @@ def _capture_scan_evidence(
             file_name=file_name,
             evidence_type=evidence_type,
             source_url=source_url,
+            capture_agent=capture_agent,
         )
 
     summary = capture_automatic_evidence(
