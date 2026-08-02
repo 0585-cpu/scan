@@ -197,7 +197,13 @@ class ApiTests(unittest.TestCase):
                 with TestClient(create_app(str(db_path))) as client:
                     self.assertEqual(client.get("/v1/scans").status_code, 200)
 
-            self.assertEqual(repo.get_job(scan_id)["status"], "running")
+            # The job is kept for a later start that has an engine, but it must
+            # not keep claiming to be running: the dashboard reads that as live
+            # work and holds its progress strip and fast poll open forever.
+            job = repo.get_job(scan_id)
+            self.assertEqual(job["status"], "recovering")
+            self.assertIn("engine", job["summary"]["interrupted"])
+            self.assertIn(scan_id, [str(item["id"]) for item in repo.list_recoverable_scan_jobs()])
 
     def test_dashboard_routes(self):
         from fastapi.testclient import TestClient
@@ -241,7 +247,9 @@ class ApiTests(unittest.TestCase):
             self.assertNotIn('id="scanOpenOnly"', root.text)
             self.assertIn('id="scanAdvanced"', root.text)
             self.assertIn('id="scanPortProfileFile"', root.text)
-            self.assertIn('id="scanCustomProfiles"', root.text)
+            # The imported-profile list was replaced by the preset chips; the
+            # TXT import control it fed still applies straight into the form.
+            self.assertIn('id="scanPresetChips"', root.text)
             self.assertIn("compactPortsHtml(job.ports", root.text)
             self.assertIn("const formElement = event.currentTarget", root.text)
             self.assertIn("formElement.elements.confirm_authorized.checked = false", root.text)
