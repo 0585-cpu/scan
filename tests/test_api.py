@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import ipaddress
 import json
 import tempfile
 import time
@@ -204,6 +205,44 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(job["status"], "recovering")
             self.assertIn("engine", job["summary"]["interrupted"])
             self.assertIn(scan_id, [str(item["id"]) for item in repo.list_recoverable_scan_jobs()])
+
+    def test_a_failing_final_flush_still_marks_the_job(self):
+        """A dying scan thread must never leave the job reading 'running'.
+
+        The error handler used to flush before marking the job. When that flush
+        raised - which it did, because a failed batch was left in the pending
+        list and retried - the thread died with the job still 'running', and the
+        dashboard treated the corpse as live work indefinitely.
+        """
+        from netroach.api import _run_scan_job
+        from netroach.engine import EngineSettings
+        from netroach.storage import SQLiteRepository
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db_path)
+            scan_id = repo.create_scan_job(
+                targets="127.0.0.1", ports="80", scope=["127.0.0.1/32"], params={"protocol": "tcp"}
+            )
+
+            def explode(*_args, **_kwargs):
+                raise RuntimeError("engine exploded")
+
+            with (
+                patch("netroach.api.run_scan", side_effect=explode),
+                patch.object(SQLiteRepository, "add_port_results", side_effect=OSError("disk gone")),
+            ):
+                _run_scan_job(
+                    str(db_path),
+                    scan_id,
+                    [ipaddress.ip_address("127.0.0.1")],
+                    [80],
+                    EngineSettings(protocol="tcp"),
+                )
+
+            job = repo.get_job(scan_id)
+            self.assertEqual(job["status"], "failed")
+            self.assertIn("engine exploded", job["summary"]["error"])
 
     def test_dashboard_routes(self):
         from fastapi.testclient import TestClient

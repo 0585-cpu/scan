@@ -21,12 +21,24 @@ from .ports import parse_ports
 from .scope import parse_target_expr
 
 SCHEMA_VERSION = 8
+# A resumed scan re-runs the work it believes is missing, and that belief can be
+# stale, so writing a port twice has to be ordinary rather than fatal. The fresh
+# observation replaces the old one; the tags and note a person attached to the
+# row are theirs and are left alone.
 PORT_RESULT_INSERT_SQL = """
     INSERT INTO port_results(
         scan_id, host, port, protocol, state, latency_ms,
         service_name, service_confidence, banner, evidence, error, tags_json, note
     )
     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(scan_id, host, port, protocol) DO UPDATE SET
+        state=excluded.state,
+        latency_ms=excluded.latency_ms,
+        service_name=excluded.service_name,
+        service_confidence=excluded.service_confidence,
+        banner=excluded.banner,
+        evidence=excluded.evidence,
+        error=excluded.error
 """
 
 

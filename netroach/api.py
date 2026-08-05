@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hmac
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -813,8 +813,12 @@ def _run_scan_job(
     def flush_results() -> None:
         if not pending_results:
             return
-        repo.add_port_results(pending_results)
+        # Clear even when the write fails. The cleanup path flushes again on the
+        # way out, and a batch left in place made that second flush re-raise the
+        # same error, hiding the original failure behind its own echo.
+        batch = list(pending_results)
         pending_results.clear()
+        repo.add_port_results(batch)
 
     started = (
         repo.mark_recovered_scan_started(scan_id, recovery_token)
@@ -902,11 +906,21 @@ def _run_scan_job(
             else:
                 repo.complete_scan(scan_id, repo.summarize_scan_results(scan_id))
     except ScanCancelled as exc:
-        flush_results()
+        _flush_quietly(flush_results)
         repo.mark_scan_cancelled(scan_id, str(exc))
     except Exception as exc:  # noqa: BLE001
-        flush_results()
+        # The final flush must never decide whether the job gets marked. When it
+        # raised here the thread died with the job still reading 'running', and
+        # nothing afterwards could correct it.
+        _flush_quietly(flush_results)
         repo.fail_scan(scan_id, str(exc))
+
+
+def _flush_quietly(flush: Callable[[], None]) -> None:
+    try:
+        flush()
+    except Exception:  # noqa: BLE001 - losing a last batch beats losing the job's status.
+        pass
 
 
 def _model_dump(model: BaseModel) -> dict[str, Any]:
