@@ -466,7 +466,14 @@ class StorageTests(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(repo.get_result(scan_id, host="127.0.0.1", port=80)["evidence_files"], [])
 
-    def test_duplicate_port_results_are_rejected(self):
+    def test_a_port_never_gets_a_second_row(self):
+        """One row per (scan, host, port, protocol), and the latest reading wins.
+
+        This used to raise IntegrityError on the second write. The invariant
+        worth keeping is the single row - raising was only the mechanism, and it
+        was the wrong one: a resumed scan legitimately re-observes ports it
+        already stored, and the exception killed the recovery thread.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "netroach.db")
             scan_id = repo.create_scan_job(
@@ -478,10 +485,14 @@ class StorageTests(unittest.TestCase):
             result = PortResult(scan_id=scan_id, host="127.0.0.1", port=80, protocol="tcp", state="open", latency_ms=1.0)
 
             repo.add_port_result(result)
-            with self.assertRaises(sqlite3.IntegrityError):
-                repo.add_port_result(result)
+            repo.add_port_result(
+                PortResult(
+                    scan_id=scan_id, host="127.0.0.1", port=80, protocol="tcp", state="closed", latency_ms=9.0
+                )
+            )
 
             self.assertEqual(repo.count_results(scan_id), 1)
+            self.assertEqual(repo.get_result(scan_id, host="127.0.0.1", port=80)["state"], "closed")
 
     def test_complete_scan_rejects_summary_count_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -502,6 +513,74 @@ class StorageTests(unittest.TestCase):
 
 
 PNG_BYTES = bytes.fromhex("89504e470d0a1a0a") + b"evidence"
+
+
+class ResumedScanIdempotenceTests(unittest.TestCase):
+    """Re-observing a port must not kill the scan writing it.
+
+    Recovery re-runs the work it believes is missing, and that belief can be
+    stale - another worker, a batch that failed after a partial write, a crash
+    between insert and commit. A resumed 65,535-port scan died on
+    `UNIQUE constraint failed: port_results...`, leaving the job stuck in
+    'running' with no thread behind it.
+    """
+
+    def _repo(self, tmp):
+        from netroach.storage import SQLiteRepository
+
+        return SQLiteRepository(Path(tmp) / "netroach.db")
+
+    def _result(self, scan_id, **overrides):
+        from netroach.storage import PortResult
+
+        values = {
+            "scan_id": scan_id,
+            "host": "127.0.0.1",
+            "port": 80,
+            "state": "open",
+            "latency_ms": 1.0,
+            "service_name": "http",
+        }
+        values.update(overrides)
+        return PortResult(**values)
+
+    def test_rescanning_a_port_updates_it_instead_of_failing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            scan_id = repo.create_scan_job(targets="127.0.0.1", ports="80", scope=["127.0.0.1/32"], params={})
+            repo.add_port_results([self._result(scan_id, state="filtered", service_name=None)])
+
+            repo.add_port_results([self._result(scan_id, state="open", service_name="http", latency_ms=2.5)])
+
+            stored = repo.get_result(scan_id, host="127.0.0.1", port=80)
+            self.assertEqual(stored["state"], "open")
+            self.assertEqual(stored["service_name"], "http")
+            self.assertEqual(repo.count_results(scan_id), 1)
+
+    def test_a_batch_containing_a_repeat_still_writes_the_rest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            scan_id = repo.create_scan_job(targets="127.0.0.1", ports="80,81", scope=["127.0.0.1/32"], params={})
+            repo.add_port_results([self._result(scan_id, port=80)])
+
+            repo.add_port_results([self._result(scan_id, port=80), self._result(scan_id, port=81)])
+
+            self.assertEqual(repo.count_results(scan_id), 2)
+
+    def test_operator_annotations_survive_a_rescan(self):
+        """A re-observation replaces what was measured, never what a person wrote."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo(tmp)
+            scan_id = repo.create_scan_job(targets="127.0.0.1", ports="80", scope=["127.0.0.1/32"], params={})
+            repo.add_port_results([self._result(scan_id)])
+            repo.update_result_metadata(scan_id, host="127.0.0.1", port=80, tags=["reviewed"], note="checked by hand")
+
+            repo.add_port_results([self._result(scan_id, state="closed")])
+
+            stored = repo.get_result(scan_id, host="127.0.0.1", port=80)
+            self.assertEqual(stored["state"], "closed")
+            self.assertEqual(stored["tags"], ["reviewed"])
+            self.assertEqual(stored["note"], "checked by hand")
 
 
 class EvidenceCaptureAgentTests(unittest.TestCase):
