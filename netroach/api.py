@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import threading
+import time
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -59,6 +60,12 @@ from .scan_inputs import (
 from .scope import IPAddress, scope_values_from_targets
 from .storage import SQLiteRepository
 from .version import __version__
+
+# A worker stamps the job it is running so recovery can tell a live peer from a
+# dead process. The interval is well under the staleness window, so a busy scan
+# is always inside it and the extra write is one small UPDATE per minute.
+SCAN_HEARTBEAT_INTERVAL_S = 20.0
+SCAN_HEARTBEAT_STALE_S = 120.0
 
 
 class ScanCreateRequest(BaseModel):
@@ -819,6 +826,7 @@ def _run_scan_job(
         batch = list(pending_results)
         pending_results.clear()
         repo.add_port_results(batch)
+        repo.record_scan_heartbeat(scan_id)
 
     started = (
         repo.mark_recovered_scan_started(scan_id, recovery_token)
@@ -832,10 +840,18 @@ def _run_scan_job(
     if repo.is_scan_cancel_requested(scan_id):
         repo.mark_scan_cancelled(scan_id, "cancelled before scan started")
         return
+    repo.record_scan_heartbeat(scan_id)
+
+    last_heartbeat = [time.monotonic()]
 
     def on_event(event: dict[str, object]) -> None:
         if repo.is_scan_cancel_requested(scan_id):
             raise ScanCancelled(f"scan cancelled: {scan_id}")
+        # A slow sweep can go minutes between flushes; without this the job
+        # would look abandoned to a second instance while it is still working.
+        if time.monotonic() - last_heartbeat[0] >= SCAN_HEARTBEAT_INTERVAL_S:
+            last_heartbeat[0] = time.monotonic()
+            repo.record_scan_heartbeat(scan_id)
         if event.get("event") != "port":
             return
         from .engine import _port_result_from_event
@@ -984,17 +1000,19 @@ def _start_scan_recovery(db_path) -> list[threading.Thread]:
     if resolve_engine_path() is None:
         # Keep the jobs - the engine may be back on the next start - but stop
         # them claiming to be running, which no later event would correct.
-        # Limitation: with no heartbeat column there is no way to tell a dead
-        # job from one a second instance is running against the same database,
-        # so a concurrent instance that does have an engine would see its live
-        # job relabelled until it completes. Nothing is lost, and only a start
-        # without an engine can trigger it.
         for job in repo.list_recoverable_scan_jobs():
+            if repo.scan_looks_alive(str(job["id"]), stale_after_s=SCAN_HEARTBEAT_STALE_S):
+                continue
             repo.park_scan_for_later_recovery(str(job["id"]), "the scan engine was not found at startup")
         return []
     threads: list[threading.Thread] = []
     for job in repo.list_recoverable_scan_jobs():
         scan_id = str(job["id"])
+        # Another instance sharing this database may be working on it right now.
+        # worker_token cannot say - a normal run leaves it NULL - so the
+        # heartbeat is what distinguishes a live peer from a dead process.
+        if repo.scan_looks_alive(scan_id, stale_after_s=SCAN_HEARTBEAT_STALE_S):
+            continue
         if job["status"] == "cancel_requested":
             repo.mark_scan_cancelled(scan_id, "cancelled during application restart")
             continue
