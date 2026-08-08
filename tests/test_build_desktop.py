@@ -112,6 +112,50 @@ class BrowserPruningTests(unittest.TestCase):
             # Only browser directories are considered; the helper tools stay.
             self.assertTrue((root / "ffmpeg-1011").is_dir())
 
+    def test_the_newest_revision_of_each_family_is_kept(self):
+        """The revision in use must never be the one deleted.
+
+        Asking Playwright which one it uses returned a `chromium-<rev>` path that
+        does not exist on disk when only the headless shell is installed, so the
+        real `chromium_headless_shell-<rev>` directory looked stale and the build
+        deleted the browser it had just installed.
+        """
+        import tempfile
+
+        from tools.build_desktop import newest_browser_revisions, prune_stale_browser_revisions
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._tree(
+                tmp,
+                "chromium_headless_shell-1228",
+                "chromium_headless_shell-1234",
+                "chromium-1200",
+                "ffmpeg-1011",
+            )
+
+            keep = newest_browser_revisions(root)
+            removed = prune_stale_browser_revisions(root, keep=keep)
+
+            self.assertEqual(keep, {"chromium_headless_shell-1234", "chromium-1200"})
+            self.assertEqual(removed, ["chromium_headless_shell-1228"])
+            # Each family keeps its own newest, so the two prefixes cannot delete
+            # each other, and non-browser tools are never considered.
+            self.assertTrue((root / "chromium-1200").is_dir())
+            self.assertTrue((root / "ffmpeg-1011").is_dir())
+
+    def test_a_lone_revision_is_never_deleted(self):
+        import tempfile
+
+        from tools.build_desktop import newest_browser_revisions, prune_stale_browser_revisions
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._tree(tmp, "chromium_headless_shell-1234")
+
+            removed = prune_stale_browser_revisions(root, keep=newest_browser_revisions(root))
+
+            self.assertEqual(removed, [])
+            self.assertTrue((root / "chromium_headless_shell-1234").is_dir())
+
     def test_nothing_is_removed_when_the_kept_revision_is_unknown(self):
         import tempfile
 

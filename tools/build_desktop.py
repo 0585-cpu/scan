@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -212,39 +213,33 @@ def prune_stale_browser_revisions(path: Path, *, keep: set[str]) -> list[str]:
     return removed
 
 
-def current_browser_revisions(python: str, browsers_path: Path) -> set[str]:
-    """Ask Playwright which browser directories the installed version uses.
+def newest_browser_revisions(path: Path) -> set[str]:
+    """Pick the highest-numbered directory in each browser family.
 
-    Returns an empty set when that cannot be determined, and the caller then
-    prunes nothing - shipping a duplicate is a wasted 80MB, but deleting the
-    revision in use breaks evidence capture entirely.
+    Asking Playwright which revision it uses looked more precise and was worse:
+    with only the headless shell installed, `chromium.executable_path` reports a
+    `chromium-<rev>` path that does not exist on disk, so the real
+    `chromium_headless_shell-<rev>` directory looked stale and was deleted. An
+    answer that is confidently wrong defeats a "prune nothing when unsure"
+    guard, so nothing is asked: `playwright install` has just run, and the
+    revision it wants is the highest one present.
     """
-    script = (
-        "import json, os;"
-        "from playwright.sync_api import sync_playwright;"
-        "p=sync_playwright().start();"
-        "names=set();"
-        "b=p.chromium.launch(headless=True);"
-        "names.add(os.path.basename(os.path.dirname(os.path.dirname(p.chromium.executable_path))));"
-        "b.close(); p.stop();"
-        "print(json.dumps(sorted(names)))"
-    )
-    environment = os.environ.copy()
-    environment["PLAYWRIGHT_BROWSERS_PATH"] = os.fspath(browsers_path)
-    environment["PLAYWRIGHT_SKIP_BROWSER_GC"] = "1"
-    try:
-        completed = subprocess.run(
-            [python, "-c", script],
-            cwd=ROOT,
-            env=environment,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        names = {str(name) for name in json.loads(completed.stdout.strip().splitlines()[-1])}
-    except Exception:  # noqa: BLE001 - an unknown answer must prune nothing.
+    families: dict[str, tuple[int, str]] = {}
+    if not path.is_dir():
         return set()
-    return {name for name in names if name.startswith(BROWSER_DIRECTORY_PREFIXES)}
+    for candidate in sorted(path.iterdir()):
+        if not candidate.is_dir() or not candidate.name.startswith(BROWSER_DIRECTORY_PREFIXES):
+            continue
+        match = re.fullmatch(r"(.+?)-(\d+)", candidate.name)
+        if not match:
+            # Unparseable, so it cannot be compared - keep it.
+            families[candidate.name] = (-1, candidate.name)
+            continue
+        family, revision = match.group(1), int(match.group(2))
+        current = families.get(family)
+        if current is None or revision > current[0]:
+            families[family] = (revision, candidate.name)
+    return {name for _, name in families.values()}
 
 
 def _require_playwright_browsers(path: Path) -> Path:
@@ -272,10 +267,10 @@ def build_playwright_browsers(args: argparse.Namespace) -> Path:
     browsers = _require_playwright_browsers(destination)
     # Playwright's own GC is disabled above, so prune what this install left
     # behind before the directory is copied into the bundle.
-    keep = current_browser_revisions(args.python, destination)
-    if keep:
-        for name in prune_stale_browser_revisions(browsers, keep=keep):
-            print(f"pruned stale browser revision {name}", flush=True)
+    for name in prune_stale_browser_revisions(browsers, keep=newest_browser_revisions(browsers)):
+        print(f"pruned stale browser revision {name}", flush=True)
+    # After pruning, not before: if the wrong directory was removed the build
+    # fails here instead of shipping an installer whose evidence capture is dead.
     _run(playwright_smoke_command(args.python), environment=environment)
     return browsers
 
