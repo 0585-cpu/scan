@@ -164,7 +164,8 @@ class SQLiteRepository:
                     started_at TEXT,
                     completed_at TEXT,
                     summary_json TEXT,
-                    worker_token TEXT
+                    worker_token TEXT,
+                    heartbeat_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS port_results (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -261,6 +262,10 @@ class SQLiteRepository:
         evidence_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(result_evidence_files)").fetchall()
         }
+        if "heartbeat_at" not in job_columns:
+            # Lets recovery tell a dead worker from a live peer; rows without one
+            # count as dead, which is how every existing row behaves today.
+            conn.execute("ALTER TABLE scan_jobs ADD COLUMN heartbeat_at TEXT")
         if "capture_agent" not in evidence_columns:
             # Rows written before this column exist and stay readable; they
             # simply cannot say what produced them.
@@ -300,6 +305,40 @@ class SQLiteRepository:
                 (scan_id, targets, ports, json.dumps(scope), json.dumps(params)),
             )
         return scan_id
+
+    def record_scan_heartbeat(self, scan_id: str) -> None:
+        """Stamp a job as still being worked on by a live process.
+
+        `worker_token` cannot answer this: a normal run leaves it NULL, so
+        recovery had no way to tell a job whose process died from one another
+        instance is running against the same database.
+        """
+        with self.session() as conn:
+            conn.execute(
+                "UPDATE scan_jobs SET heartbeat_at=CURRENT_TIMESTAMP WHERE id=?",
+                (scan_id,),
+            )
+
+    def scan_looks_alive(self, scan_id: str, *, stale_after_s: float) -> bool:
+        """Whether some process claimed this job recently enough to still own it.
+
+        A job that never recorded a heartbeat - every row written before this
+        column existed - counts as dead, which keeps those jobs recoverable.
+        """
+        with self.session() as conn:
+            row = conn.execute(
+                """
+                SELECT CAST(
+                    (julianday(CURRENT_TIMESTAMP) - julianday(heartbeat_at)) * 86400.0 AS REAL
+                ) AS age
+                FROM scan_jobs
+                WHERE id=? AND heartbeat_at IS NOT NULL
+                """,
+                (scan_id,),
+            ).fetchone()
+        if row is None or row["age"] is None:
+            return False
+        return float(row["age"]) <= stale_after_s
 
     def mark_scan_started(self, scan_id: str) -> bool:
         with self.session() as conn:

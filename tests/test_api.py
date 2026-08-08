@@ -2,6 +2,7 @@ import importlib.util
 import io
 import ipaddress
 import json
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -205,6 +206,64 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(job["status"], "recovering")
             self.assertIn("engine", job["summary"]["interrupted"])
             self.assertIn(scan_id, [str(item["id"]) for item in repo.list_recoverable_scan_jobs()])
+
+    def test_recovery_leaves_a_job_another_instance_is_running(self):
+        """Two instances can share the default database.
+
+        `worker_token` is NULL during a normal run, so it cannot tell a corpse
+        from a peer - both instances used to resume the same scan and collide.
+        A recent heartbeat now means "someone else owns this".
+        """
+        from netroach.api import _start_scan_recovery
+        from netroach.storage import SQLiteRepository
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db_path)
+            scan_id = repo.create_scan_job(
+                targets="127.0.0.1", ports="80", scope=["127.0.0.1/32"], params={"resumable": True}
+            )
+            repo.mark_scan_started(scan_id)
+            repo.record_scan_heartbeat(scan_id)
+
+            with patch("netroach.api.run_scan") as run:
+                threads = _start_scan_recovery(str(db_path))
+
+            for thread in threads:
+                thread.join(timeout=3)
+            self.assertEqual(threads, [])
+            run.assert_not_called()
+            self.assertEqual(repo.get_job(scan_id)["status"], "running")
+
+    def test_recovery_takes_over_a_job_whose_worker_stopped_beating(self):
+        from netroach.api import _start_scan_recovery
+        from netroach.storage import SQLiteRepository
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db_path)
+            scan_id = repo.create_scan_job(
+                targets="127.0.0.1", ports="80", scope=["127.0.0.1/32"], params={"resumable": True, "max_hosts": 4}
+            )
+            repo.mark_scan_started(scan_id)
+            repo.record_scan_heartbeat(scan_id)
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    "UPDATE scan_jobs SET heartbeat_at=datetime(CURRENT_TIMESTAMP, '-600 seconds') WHERE id=?",
+                    (scan_id,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            with patch("netroach.api.run_scan") as run:
+                threads = _start_scan_recovery(str(db_path))
+                for thread in threads:
+                    thread.join(timeout=5)
+
+            self.assertEqual(len(threads), 1)
+            run.assert_called()
 
     def test_a_failing_final_flush_still_marks_the_job(self):
         """A dying scan thread must never leave the job reading 'running'.

@@ -515,6 +515,70 @@ class StorageTests(unittest.TestCase):
 PNG_BYTES = bytes.fromhex("89504e470d0a1a0a") + b"evidence"
 
 
+class ScanHeartbeatTests(unittest.TestCase):
+    """Distinguishing a dead worker from a live one in another process.
+
+    Recovery claims any job that still reads 'running', and `worker_token`
+    cannot tell a corpse from a peer: a normal run leaves it NULL. Two
+    instances sharing the default database therefore both resumed the same
+    scan. A heartbeat gives recovery something to check.
+    """
+
+    def _repo_with_running_job(self, tmp):
+        from netroach.storage import SQLiteRepository
+
+        repo = SQLiteRepository(Path(tmp) / "netroach.db")
+        scan_id = repo.create_scan_job(
+            targets="127.0.0.1", ports="80", scope=["127.0.0.1/32"], params={"resumable": True}
+        )
+        repo.mark_scan_started(scan_id)
+        return repo, scan_id
+
+    def test_a_database_without_the_column_gains_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._repo_with_running_job(tmp)
+            conn = sqlite3.connect(Path(tmp) / "netroach.db")
+            try:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(scan_jobs)")}
+            finally:
+                conn.close()
+            self.assertIn("heartbeat_at", columns)
+
+    def test_a_fresh_heartbeat_marks_the_job_as_claimed_elsewhere(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo_with_running_job(tmp)
+
+            repo.record_scan_heartbeat(scan_id)
+
+            self.assertTrue(repo.scan_looks_alive(scan_id, stale_after_s=60))
+
+    def test_an_old_heartbeat_means_the_worker_is_gone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo_with_running_job(tmp)
+            repo.record_scan_heartbeat(scan_id)
+            # Backdated rather than slept for: CURRENT_TIMESTAMP has one-second
+            # resolution, so a real wait would make this test slow and flaky.
+            conn = sqlite3.connect(Path(tmp) / "netroach.db")
+            try:
+                conn.execute(
+                    "UPDATE scan_jobs SET heartbeat_at=datetime(CURRENT_TIMESTAMP, '-600 seconds') WHERE id=?",
+                    (scan_id,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            self.assertFalse(repo.scan_looks_alive(scan_id, stale_after_s=120))
+            self.assertTrue(repo.scan_looks_alive(scan_id, stale_after_s=1200))
+
+    def test_a_job_that_never_beat_is_treated_as_dead(self):
+        """Rows written before this column existed must stay recoverable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo_with_running_job(tmp)
+
+            self.assertFalse(repo.scan_looks_alive(scan_id, stale_after_s=3600))
+
+
 class ResumedScanIdempotenceTests(unittest.TestCase):
     """Re-observing a port must not kill the scan writing it.
 
