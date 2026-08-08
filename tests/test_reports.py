@@ -25,7 +25,14 @@ class ReportTests(unittest.TestCase):
                         "type": "manual",
                         "file_name": "proof.png",
                         "download_url": "/v1/evidence/evidence-1/content",
-                    }
+                    },
+                    {
+                        "id": "evidence-2",
+                        "type": "web_screenshot",
+                        "file_name": "shot.png",
+                        "download_url": "/v1/evidence/evidence-2/content",
+                        "capture_agent": "chromium 151.0.7922.34 800x600",
+                    },
                 ],
                 "tags": ["prod"],
                 "note": "<script>alert(1)</script>",
@@ -65,6 +72,12 @@ class ReportTests(unittest.TestCase):
         self.assertIn("object-fit: contain", html)
         self.assertIn('width="320" height="240"', html)
         self.assertIn("![proof.png](/v1/evidence/evidence-1/content)", markdown)
+        # An exported report has to carry what produced each image; the file
+        # alone cannot answer that once it leaves the app.
+        self.assertIn("chromium 151.0.7922.34 800x600", html)
+        self.assertIn("chromium 151.0.7922.34 800x600", markdown)
+        # Manual uploads have no capturing tool and must not gain a blank caption.
+        self.assertNotIn("수집 도구: <", html)
         self.assertEqual(payload["open_results"][0]["evidence_files"][0]["type"], "manual")
         self.assertIn("<h2>호스트별 요약</h2>", html)
         self.assertIn('data-report-section="needs-review" open', html)

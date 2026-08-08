@@ -84,5 +84,50 @@ class DesktopBuildToolTests(unittest.TestCase):
         self.assertIn("chromium.launch(headless=True)", command[2])
 
 
+class BrowserPruningTests(unittest.TestCase):
+    """Playwright's own GC is disabled for this cache, so the build prunes it.
+
+    Two Chromium revisions once shipped side by side in one installer: 270MB on
+    disk and about 80MB in the bundle, for a copy nothing could use.
+    """
+
+    def _tree(self, tmp, *names):
+        root = Path(tmp) / "browsers"
+        for name in names:
+            (root / name).mkdir(parents=True)
+        return root
+
+    def test_superseded_revisions_are_removed(self):
+        import tempfile
+
+        from tools.build_desktop import prune_stale_browser_revisions
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._tree(tmp, "chromium_headless_shell-1228", "chromium_headless_shell-1234", "ffmpeg-1011")
+
+            removed = prune_stale_browser_revisions(root, keep={"chromium_headless_shell-1234"})
+
+            self.assertEqual(removed, ["chromium_headless_shell-1228"])
+            self.assertTrue((root / "chromium_headless_shell-1234").is_dir())
+            # Only browser directories are considered; the helper tools stay.
+            self.assertTrue((root / "ffmpeg-1011").is_dir())
+
+    def test_nothing_is_removed_when_the_kept_revision_is_unknown(self):
+        import tempfile
+
+        from tools.build_desktop import prune_stale_browser_revisions
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._tree(tmp, "chromium_headless_shell-1228", "chromium_headless_shell-1234")
+
+            removed = prune_stale_browser_revisions(root, keep=set())
+
+            # An empty keep set means "we could not tell" - deleting the revision
+            # in use would break evidence capture, which costs more than 80MB.
+            self.assertEqual(removed, [])
+            self.assertTrue((root / "chromium_headless_shell-1228").is_dir())
+            self.assertTrue((root / "chromium_headless_shell-1234").is_dir())
+
+
 if __name__ == "__main__":
     unittest.main()
