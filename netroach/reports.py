@@ -495,7 +495,8 @@ def format_scan_report_html(report: dict[str, Any]) -> str:
     details.inline-detail[open] .detail-preview {{ display: none; }}
     .full-detail {{ margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }}
     .evidence-image {{ width: 320px; height: 240px; object-fit: contain; background: #fff; border: 1px solid var(--border); border-radius: 4px; }}
-    .evidence-item {{ display: inline-block; margin: 0 6px 6px 0; }}
+    .evidence-item {{ display: inline-block; margin: 0 6px 6px 0; vertical-align: top; }}
+    .evidence-agent {{ display: block; max-width: 320px; margin-top: 4px; font-size: 11px; color: #6b7280; word-break: break-word; }}
     .evidence-gallery {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }}
     .evidence-card {{ border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: #f9fafb; break-inside: avoid; }}
     .evidence-card .evidence-image {{ width: 100%; max-width: 320px; display: block; margin-top: 8px; }}
@@ -729,10 +730,16 @@ def format_html_evidence(evidence_files: list[dict[str, Any]]) -> str:
         name = html.escape(str(evidence.get("file_name") or "evidence"), quote=True)
         if not url:
             continue
+        agent = str(evidence.get("capture_agent") or "")
+        # Named so the exported report can answer "what rendered this" on its
+        # own. Manual uploads have no capturing tool, so they get no caption.
+        caption = (
+            f'<span class="evidence-agent">수집 도구: {html.escape(agent)}</span>' if agent else ""
+        )
         items.append(
             f'<span class="evidence-item">'
             f'<img class="evidence-image" src="{url}" alt="{name}" width="320" height="240" '
-            f'loading="lazy"></span>'
+            f'loading="lazy">{caption}</span>'
         )
     return "".join(items) or ""
 
@@ -742,8 +749,9 @@ def format_markdown_evidence(evidence_files: list[dict[str, Any]]) -> str:
     for evidence in evidence_files:
         url = str(evidence.get("download_url") or "").replace(" ", "%20")
         name = str(evidence.get("file_name") or "evidence").replace("]", "\\]")
+        agent = str(evidence.get("capture_agent") or "")
         if url:
-            items.append(f"![{name}]({url})")
+            items.append(f"![{name}]({url})" + (f" (수집 도구: {agent})" if agent else ""))
     return "<br>".join(items)
 
 

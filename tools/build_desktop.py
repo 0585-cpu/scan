@@ -19,6 +19,7 @@ RESOURCE_PLAYWRIGHT = TAURI / "resources" / "playwright"
 RESOURCE_RUNTIME = TAURI / "resources" / "runtime"
 BACKEND_BUILD = ROOT / "target" / "desktop-backend"
 PLAYWRIGHT_CACHE = ROOT / "target" / "desktop-playwright"
+BROWSER_DIRECTORY_PREFIXES = ("chromium-", "chromium_headless_shell-")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -187,6 +188,65 @@ def _stage_binary(source: Path, name: str) -> Path:
     return destination
 
 
+def prune_stale_browser_revisions(path: Path, *, keep: set[str]) -> list[str]:
+    """Delete browser revisions the current Playwright no longer uses.
+
+    `PLAYWRIGHT_SKIP_BROWSER_GC=1` keeps this build's cache from touching a
+    developer's own Playwright install, but it also means Playwright never
+    removes what it superseded. Two Chromium revisions were shipped side by side
+    in one installer before this existed - 270MB on disk, ~80MB in the bundle.
+    """
+    removed: list[str] = []
+    # An empty keep set means the caller could not determine which revision is in
+    # use. Deleting the one being used breaks evidence capture outright, which
+    # costs far more than shipping a duplicate, so prune nothing.
+    if not keep or not path.is_dir():
+        return removed
+    for candidate in sorted(path.iterdir()):
+        if not candidate.is_dir() or not candidate.name.startswith(BROWSER_DIRECTORY_PREFIXES):
+            continue
+        if candidate.name in keep:
+            continue
+        shutil.rmtree(candidate, ignore_errors=True)
+        removed.append(candidate.name)
+    return removed
+
+
+def current_browser_revisions(python: str, browsers_path: Path) -> set[str]:
+    """Ask Playwright which browser directories the installed version uses.
+
+    Returns an empty set when that cannot be determined, and the caller then
+    prunes nothing - shipping a duplicate is a wasted 80MB, but deleting the
+    revision in use breaks evidence capture entirely.
+    """
+    script = (
+        "import json, os;"
+        "from playwright.sync_api import sync_playwright;"
+        "p=sync_playwright().start();"
+        "names=set();"
+        "b=p.chromium.launch(headless=True);"
+        "names.add(os.path.basename(os.path.dirname(os.path.dirname(p.chromium.executable_path))));"
+        "b.close(); p.stop();"
+        "print(json.dumps(sorted(names)))"
+    )
+    environment = os.environ.copy()
+    environment["PLAYWRIGHT_BROWSERS_PATH"] = os.fspath(browsers_path)
+    environment["PLAYWRIGHT_SKIP_BROWSER_GC"] = "1"
+    try:
+        completed = subprocess.run(
+            [python, "-c", script],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        names = {str(name) for name in json.loads(completed.stdout.strip().splitlines()[-1])}
+    except Exception:  # noqa: BLE001 - an unknown answer must prune nothing.
+        return set()
+    return {name for name in names if name.startswith(BROWSER_DIRECTORY_PREFIXES)}
+
+
 def _require_playwright_browsers(path: Path) -> Path:
     resolved = path.resolve()
     if not resolved.is_dir():
@@ -194,7 +254,7 @@ def _require_playwright_browsers(path: Path) -> Path:
     browser_directories = [
         candidate
         for candidate in resolved.iterdir()
-        if candidate.is_dir() and candidate.name.startswith(("chromium-", "chromium_headless_shell-"))
+        if candidate.is_dir() and candidate.name.startswith(BROWSER_DIRECTORY_PREFIXES)
     ]
     if not browser_directories:
         raise SystemExit(f"Playwright Chromium was not found under: {resolved}")
@@ -210,6 +270,12 @@ def build_playwright_browsers(args: argparse.Namespace) -> Path:
         destination.mkdir(parents=True, exist_ok=True)
         _run(playwright_install_command(args.python), environment=environment)
     browsers = _require_playwright_browsers(destination)
+    # Playwright's own GC is disabled above, so prune what this install left
+    # behind before the directory is copied into the bundle.
+    keep = current_browser_revisions(args.python, destination)
+    if keep:
+        for name in prune_stale_browser_revisions(browsers, keep=keep):
+            print(f"pruned stale browser revision {name}", flush=True)
     _run(playwright_smoke_command(args.python), environment=environment)
     return browsers
 

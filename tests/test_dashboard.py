@@ -257,9 +257,44 @@ class DashboardResultPaneTests(unittest.TestCase):
         self.assertIn("state.autoScroll", html)
 
     def test_offscreen_rows_are_not_rendered_for_large_scans(self):
+        """The limit has to be applied, not merely defined.
+
+        This once asserted only that the name appeared somewhere, which a bare
+        constant declaration satisfied.
+        """
         html = dashboard_html()
 
-        self.assertIn("HOST_ROW_RENDER_LIMIT", html)
+        self.assertRegex(html, r"const HOST_ROW_RENDER_LIMIT = \d+;")
+        self.assertRegex(html, r"\.slice\(0,\s*HOST_ROW_RENDER_LIMIT\)")
+
+    def test_host_row_ids_do_not_accumulate_across_scans(self):
+        """The id map is per scan; a session sweeping several /16s would else grow."""
+        html = dashboard_html()
+
+        self.assertIn("hostRowIdScan", html)
+        self.assertIn("hostRowIds.clear()", html)
+
+    def test_the_replaced_port_profile_storage_key_is_cleared(self):
+        html = dashboard_html()
+
+        self.assertIn("removeItem('netroach.customPortProfiles.v1')", html)
+
+    def test_a_clamped_host_count_is_not_presented_as_exact(self):
+        html = dashboard_html()
+
+        self.assertIn("hostsClamped", html)
+        self.assertIn("' 이상'", html)
+
+    def test_the_save_row_controls_do_not_mark_a_preset_edited(self):
+        html = dashboard_html()
+
+        self.assertIn("event.target.id === 'scanPresetIncludeTargets'", html)
+
+    def test_preset_ids_are_unique_within_a_millisecond(self):
+        html = dashboard_html()
+
+        self.assertIn("function newPresetId(", html)
+        self.assertNotIn("id: `user-${Date.now()}`", html)
 
     def test_new_results_button_lives_inside_the_scroll_container(self):
         """position: sticky is inert unless the button is a descendant of the
