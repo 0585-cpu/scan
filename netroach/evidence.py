@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -178,6 +179,30 @@ def web_result_url(result: Mapping[str, Any]) -> str:
     return f"{scheme}://{display_host}{port_suffix}/"
 
 
+SCREENSHOT_RETRY_DELAY_S = 0.4
+
+
+def _screenshot_with_one_retry(page: Any) -> bytes:
+    """Take the screenshot, allowing the renderer one more chance.
+
+    `Protocol error (Page.captureScreenshot): Unable to capture screenshot` has
+    been seen on a page that had already loaded and resolved its fonts: the
+    navigation worked and only the compositing step failed. Falling straight
+    back to a terminal transcript quietly downgrades the evidence, and the
+    failure did not repeat on a later attempt, so one retry is worth the
+    fraction of a second it costs.
+
+    Only this step is retried. A navigation failure is deterministic - an
+    unreachable host stays unreachable - and retrying it would spend a second
+    full timeout for nothing.
+    """
+    try:
+        return bytes(page.screenshot(type="png", full_page=False))
+    except Exception:  # noqa: BLE001 - the retry is the handling; a second failure propagates.
+        time.sleep(SCREENSHOT_RETRY_DELAY_S)
+        return bytes(page.screenshot(type="png", full_page=False))
+
+
 def host_route_filter(allowed_host: str) -> Callable[[Any], None]:
     """Build the request filter that confines a capture to one host.
 
@@ -252,7 +277,7 @@ def capture_web_screenshots(
                         page.add_style_tag(
                             content="*,*::before,*::after{animation:none!important;transition:none!important}"
                         )
-                        image = page.screenshot(type="png", full_page=False)
+                        image = _screenshot_with_one_retry(page)
                         filename_host = re.sub(r"[^A-Za-z0-9_.-]+", "_", host)
                         store(result, image, f"{filename_host}_{result['port']}.png", url, capture_agent)
                         captured += 1

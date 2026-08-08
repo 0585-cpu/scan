@@ -178,6 +178,118 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn("browser unavailable", summary.errors)
 
 
+class FakePage:
+    def __init__(self, screenshot_failures: int, goto_failures: int = 0):
+        self.screenshot_failures = screenshot_failures
+        self.goto_failures = goto_failures
+        self.goto_calls = 0
+        self.screenshot_calls = 0
+
+    def goto(self, *_args, **_kwargs):
+        self.goto_calls += 1
+        if self.goto_calls <= self.goto_failures:
+            raise RuntimeError("net::ERR_CONNECTION_REFUSED")
+
+    def add_style_tag(self, **_kwargs):
+        pass
+
+    def screenshot(self, **_kwargs):
+        self.screenshot_calls += 1
+        if self.screenshot_calls <= self.screenshot_failures:
+            raise RuntimeError("Protocol error (Page.captureScreenshot): Unable to capture screenshot")
+        return b"\x89PNG\r\n\x1a\nimage"
+
+
+class FakeContext:
+    def __init__(self, page):
+        self._page = page
+
+    def route(self, *_args, **_kwargs):
+        pass
+
+    def new_page(self):
+        return self._page
+
+    def close(self):
+        pass
+
+
+class FakeBrowser:
+    version = "151.0.0.0"
+
+    def __init__(self, page):
+        self._page = page
+
+    def new_context(self, **_kwargs):
+        return FakeContext(self._page)
+
+    def close(self):
+        pass
+
+
+class FakePlaywright:
+    def __init__(self, page):
+        self.chromium = SimpleNamespace(launch=lambda **_kwargs: FakeBrowser(page))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+class ScreenshotRetryTests(unittest.TestCase):
+    """One retry of the capture step, and only of the capture step.
+
+    `Protocol error (Page.captureScreenshot): Unable to capture screenshot`
+    was observed on a loaded page whose fonts had already resolved - the
+    renderer failed to composite, not the navigation. Falling straight back to
+    a terminal transcript silently downgrades the evidence, so the capture is
+    worth one more attempt. Navigation failures are not retried: an unreachable
+    host is deterministic and a second attempt only burns another full timeout.
+    """
+
+    def _capture(self, page):
+        from netroach.evidence import capture_web_screenshots
+
+        stored = []
+        with patch("playwright.sync_api.sync_playwright", return_value=FakePlaywright(page)):
+            summary = capture_web_screenshots(
+                [{"host": "127.0.0.1", "port": 80, "protocol": "tcp", "state": "open", "service_name": "http"}],
+                store=lambda *args: stored.append(args),
+            )
+        return summary, stored
+
+    def test_a_transient_capture_failure_is_retried(self):
+        page = FakePage(screenshot_failures=1)
+
+        summary, stored = self._capture(page)
+
+        self.assertEqual(summary.captured, 1)
+        self.assertEqual(summary.failed, 0)
+        self.assertEqual(page.screenshot_calls, 2)
+        self.assertEqual(len(stored), 1)
+
+    def test_a_capture_that_keeps_failing_is_reported(self):
+        page = FakePage(screenshot_failures=5)
+
+        summary, _ = self._capture(page)
+
+        self.assertEqual(summary.captured, 0)
+        self.assertEqual(summary.failed, 1)
+        self.assertEqual(page.screenshot_calls, 2)
+        self.assertIn("captureScreenshot", summary.errors[0])
+
+    def test_navigation_failures_are_not_retried(self):
+        page = FakePage(screenshot_failures=0, goto_failures=5)
+
+        summary, _ = self._capture(page)
+
+        self.assertEqual(summary.failed, 1)
+        self.assertEqual(page.goto_calls, 1)
+        self.assertEqual(page.screenshot_calls, 0)
+
+
 class HostRouteFilterTests(unittest.TestCase):
     """The filter that confines a capture to the scanned host.
 
