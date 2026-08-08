@@ -425,6 +425,32 @@ class SQLiteRepository:
                 (json.dumps(summary.to_dict()), scan_id),
             )
 
+    def record_evidence_capture_failures(self, scan_id: str, *, failed: int, errors: Iterable[str]) -> None:
+        """Attach why evidence could not be captured to the finished job.
+
+        Without this a failed screenshot leaves no trace at all: the API path
+        discarded the capture summary, so the operator saw a scan carrying less
+        evidence than they asked for and nothing anywhere said why.
+        """
+        reasons = [str(error) for error in errors][:20]
+        if failed <= 0 and not reasons:
+            return
+        with self.session() as conn:
+            row = conn.execute("SELECT summary_json FROM scan_jobs WHERE id=?", (scan_id,)).fetchone()
+            if row is None:
+                return
+            try:
+                summary = json.loads(row["summary_json"]) if row["summary_json"] else {}
+            except json.JSONDecodeError:
+                summary = {}
+            if not isinstance(summary, dict):
+                summary = {}
+            summary["evidence"] = {"failed": int(failed), "errors": reasons}
+            conn.execute(
+                "UPDATE scan_jobs SET summary_json=? WHERE id=?",
+                (json.dumps(summary), scan_id),
+            )
+
     def park_scan_for_later_recovery(self, scan_id: str, reason: str) -> bool:
         """Park a job that cannot be resumed right now but is not lost.
 
