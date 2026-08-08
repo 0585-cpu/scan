@@ -31,6 +31,7 @@ from .evidence import (
     DEFAULT_SCREENSHOT_MAX,
     DEFAULT_SCREENSHOT_TIMEOUT_MS,
     MAX_EVIDENCE_BYTES,
+    ScreenshotCaptureSummary,
     capture_automatic_evidence,
 )
 from .exporters import (
@@ -816,6 +817,7 @@ def _run_scan_job(
 ) -> None:
     repo = SQLiteRepository(db_path)
     pending_results: list[PortResult] = []
+    evidence_summary: ScreenshotCaptureSummary | None = None
 
     def flush_results() -> None:
         if not pending_results:
@@ -910,7 +912,7 @@ def _run_scan_job(
                         capture_agent=capture_agent,
                     )
 
-                capture_automatic_evidence(
+                evidence_summary = capture_automatic_evidence(
                     stored_results,
                     store=store_screenshot,
                     timeout_ms=screenshot_timeout_ms,
@@ -921,6 +923,13 @@ def _run_scan_job(
                 repo.mark_scan_cancelled(scan_id)
             else:
                 repo.complete_scan(scan_id, repo.summarize_scan_results(scan_id))
+                # After completing, because complete_scan rewrites summary_json.
+                if evidence_summary is not None:
+                    repo.record_evidence_capture_failures(
+                        scan_id,
+                        failed=evidence_summary.failed,
+                        errors=evidence_summary.errors,
+                    )
     except ScanCancelled as exc:
         _flush_quietly(flush_results)
         repo.mark_scan_cancelled(scan_id, str(exc))

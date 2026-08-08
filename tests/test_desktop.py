@@ -26,6 +26,25 @@ class DesktopTests(unittest.TestCase):
             "",
         )
 
+    def test_the_installer_clears_bundled_browsers_before_writing(self):
+        """NSIS overlays an upgrade, so a superseded browser revision survives.
+
+        Each one is about 270MB and nothing ever removes it, so an installed
+        copy grew a directory the current build never shipped.
+        """
+        root = Path(__file__).resolve().parents[1] / "desktop" / "src-tauri"
+        config = json.loads((root / "tauri.conf.json").read_text(encoding="utf-8"))
+        hooks_name = config["bundle"]["windows"]["nsis"]["installerHooks"]
+        hooks = (root / hooks_name).read_text(encoding="utf-8")
+
+        self.assertTrue((root / hooks_name).is_file())
+        self.assertIn("!macro NSIS_HOOK_PREINSTALL", hooks)
+        self.assertIn(r'RMDir /r "$INSTDIR\resources\playwright"', hooks)
+        # Only the browser directory: the binaries beside it are overwritten by
+        # the install itself, and the user's database lives elsewhere entirely.
+        self.assertNotIn(r'RMDir /r "$INSTDIR"', hooks)
+        self.assertNotIn(r'RMDir /r "$INSTDIR\resources\bin"', hooks)
+
     def test_build_desktop_url_normalizes_path(self):
         self.assertEqual(build_desktop_url("127.0.0.1", 8765), "http://127.0.0.1:8765/dashboard")
         self.assertEqual(build_desktop_url("localhost", 9000, "dashboard"), "http://localhost:9000/dashboard")
