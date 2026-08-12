@@ -425,15 +425,29 @@ class SQLiteRepository:
                 (json.dumps(summary.to_dict()), scan_id),
             )
 
-    def record_evidence_capture_failures(self, scan_id: str, *, failed: int, errors: Iterable[str]) -> None:
-        """Attach why evidence could not be captured to the finished job.
+    def record_evidence_capture_failures(
+        self,
+        scan_id: str,
+        *,
+        candidates: int,
+        captured: int,
+        without_evidence: int,
+        errors: Iterable[str],
+    ) -> None:
+        """Attach what happened during evidence capture to the finished job.
 
         Without this a failed screenshot leaves no trace at all: the API path
         discarded the capture summary, so the operator saw a scan carrying less
         evidence than they asked for and nothing anywhere said why.
+
+        `without_evidence` counts candidates that ended up with nothing, which
+        is not the same as the number of errors: a web screenshot can fail and
+        still leave a terminal transcript behind. Storing that count as
+        `failed` produced a summary reading `failed: 0` beside a populated
+        error list, which is accurate and looks like a contradiction.
         """
         reasons = [str(error) for error in errors][:20]
-        if failed <= 0 and not reasons:
+        if without_evidence <= 0 and not reasons:
             return
         with self.session() as conn:
             row = conn.execute("SELECT summary_json FROM scan_jobs WHERE id=?", (scan_id,)).fetchone()
@@ -445,7 +459,12 @@ class SQLiteRepository:
                 summary = {}
             if not isinstance(summary, dict):
                 summary = {}
-            summary["evidence"] = {"failed": int(failed), "errors": reasons}
+            summary["evidence"] = {
+                "candidates": int(candidates),
+                "captured": int(captured),
+                "without_evidence": int(without_evidence),
+                "errors": reasons,
+            }
             conn.execute(
                 "UPDATE scan_jobs SET summary_json=? WHERE id=?",
                 (json.dumps(summary), scan_id),

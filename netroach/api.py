@@ -927,7 +927,9 @@ def _run_scan_job(
                 if evidence_summary is not None:
                     repo.record_evidence_capture_failures(
                         scan_id,
-                        failed=evidence_summary.failed,
+                        candidates=evidence_summary.candidates,
+                        captured=evidence_summary.captured,
+                        without_evidence=evidence_summary.failed,
                         errors=evidence_summary.errors,
                     )
     except ScanCancelled as exc:

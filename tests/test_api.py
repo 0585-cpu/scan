@@ -261,10 +261,73 @@ class ApiTests(unittest.TestCase):
 
             summary = repo.get_job(scan_id)["summary"]
             self.assertEqual(repo.get_job(scan_id)["status"], "completed")
-            self.assertEqual(summary["evidence"]["failed"], 1)
-            self.assertIn("net::ERR_FAILED", summary["evidence"]["errors"][0])
-            # A clean capture must not litter the summary with an empty section.
-            self.assertNotIn("total", summary["evidence"])
+            evidence = summary["evidence"]
+            self.assertEqual(evidence["candidates"], 1)
+            self.assertEqual(evidence["captured"], 0)
+            self.assertEqual(evidence["without_evidence"], 1)
+            self.assertIn("net::ERR_FAILED", evidence["errors"][0])
+            self.assertNotIn("failed", evidence)
+
+    def test_a_recovered_capture_reads_as_recovered_not_failed(self):
+        """A web screenshot that failed but fell back to a transcript.
+
+        The stored count was `failed: 0` beside a populated `errors` list,
+        because the candidate did end up with evidence - correct, and it read
+        as a contradiction. The number now says what it counts: candidates
+        left with no evidence at all.
+        """
+        from netroach.api import _run_scan_job
+        from netroach.engine import EngineSettings
+        from netroach.evidence import ScreenshotCaptureSummary
+        from netroach.models import ScanSummary
+        from netroach.storage import SQLiteRepository
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db_path)
+            scan_id = repo.create_scan_job(
+                targets="127.0.0.1", ports="80", scope=["127.0.0.1/32"], params={"protocol": "tcp"}
+            )
+
+            def fake_run_scan(**kwargs):
+                kwargs["on_event"](
+                    {
+                        "event": "port",
+                        "scan_id": scan_id,
+                        "host": "127.0.0.1",
+                        "port": 80,
+                        "protocol": "tcp",
+                        "state": "open",
+                        "latency_ms": 1.0,
+                        "service_name": "http",
+                    }
+                )
+                return [], ScanSummary(scan_id=scan_id, total=1)
+
+            recovered = ScreenshotCaptureSummary(
+                candidates=1,
+                captured=1,
+                failed=0,
+                terminal_transcripts=1,
+                errors=("http://127.0.0.1/: Protocol error (Page.captureScreenshot)",),
+            )
+            with (
+                patch("netroach.api.run_scan", side_effect=fake_run_scan),
+                patch("netroach.api.capture_automatic_evidence", return_value=recovered),
+            ):
+                _run_scan_job(
+                    str(db_path),
+                    scan_id,
+                    [ipaddress.ip_address("127.0.0.1")],
+                    [80],
+                    EngineSettings(protocol="tcp"),
+                    True,
+                )
+
+            evidence = repo.get_job(scan_id)["summary"]["evidence"]
+            self.assertEqual(evidence["captured"], 1)
+            self.assertEqual(evidence["without_evidence"], 0)
+            self.assertIn("captureScreenshot", evidence["errors"][0])
 
     def test_a_clean_capture_records_no_failures(self):
         from netroach.api import _run_scan_job

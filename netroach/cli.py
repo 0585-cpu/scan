@@ -414,7 +414,13 @@ def _capture_scan_evidence(
         print(f"warning: automatic evidence: {error}", file=sys.stderr)
     # Recorded as well as printed: the reason has to survive the terminal that
     # showed it, the same way the API path stores it.
-    repo.record_evidence_capture_failures(scan_id, failed=summary.failed, errors=summary.errors)
+    repo.record_evidence_capture_failures(
+        scan_id,
+        candidates=summary.candidates,
+        captured=summary.captured,
+        without_evidence=summary.failed,
+        errors=summary.errors,
+    )
     return summary
 
 
