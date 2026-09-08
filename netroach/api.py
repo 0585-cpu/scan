@@ -67,6 +67,35 @@ from .version import __version__
 # is always inside it and the extra write is one small UPDATE per minute.
 SCAN_HEARTBEAT_INTERVAL_S = 20.0
 SCAN_HEARTBEAT_STALE_S = 120.0
+# Asking the database whether a scan was cancelled costs a fresh connection,
+# three PRAGMAs and a query - about 1.24ms, against 0.004ms for the same query
+# on a live connection. Three of those sat in front of every probe, which
+# capped a scan at a few hundred ports per second whatever the concurrency,
+# timeout and rate limit were set to. Polling on an interval instead is still
+# immediate to a person and costs nothing per probe.
+CANCEL_POLL_INTERVAL_S = 0.2
+
+
+def _cancel_watcher(repo: SQLiteRepository, scan_id: str) -> Callable[[], bool]:
+    """Answer "was this cancelled?" without querying once per probe.
+
+    The first call always asks. After that the answer is reused for
+    CANCEL_POLL_INTERVAL_S. A cancellation once seen is remembered, so the
+    scan never queries again on its way out.
+    """
+    state = {"checked_at": 0.0, "cancelled": False}
+
+    def cancel_requested() -> bool:
+        if state["cancelled"]:
+            return True
+        now = time.monotonic()
+        if state["checked_at"] and now - state["checked_at"] < CANCEL_POLL_INTERVAL_S:
+            return False
+        state["checked_at"] = now
+        state["cancelled"] = repo.is_scan_cancel_requested(scan_id)
+        return bool(state["cancelled"])
+
+    return cancel_requested
 
 
 class ScanCreateRequest(BaseModel):
@@ -844,10 +873,11 @@ def _run_scan_job(
         return
     repo.record_scan_heartbeat(scan_id)
 
+    cancel_requested = _cancel_watcher(repo, scan_id)
     last_heartbeat = [time.monotonic()]
 
     def on_event(event: dict[str, object]) -> None:
-        if repo.is_scan_cancel_requested(scan_id):
+        if cancel_requested():
             raise ScanCancelled(f"scan cancelled: {scan_id}")
         # A slow sweep can go minutes between flushes; without this the job
         # would look abandoned to a second instance while it is still working.
@@ -861,7 +891,7 @@ def _run_scan_job(
         pending_results.append(_port_result_from_event(event))
         if len(pending_results) >= 250:
             flush_results()
-        if repo.is_scan_cancel_requested(scan_id):
+        if cancel_requested():
             flush_results()
             raise ScanCancelled(f"scan cancelled: {scan_id}")
 
@@ -869,7 +899,7 @@ def _run_scan_job(
         completed_keys = repo.get_result_keys(scan_id, protocol=settings.protocol)
         pending_groups = _group_pending_scan_work(targets, ports, completed_keys)
         for pending_ports, pending_targets in pending_groups:
-            if repo.is_scan_cancel_requested(scan_id):
+            if cancel_requested():
                 raise ScanCancelled(f"scan cancelled: {scan_id}")
             run_scan(
                 scan_id=scan_id,
@@ -880,7 +910,7 @@ def _run_scan_job(
                 settings=settings,
                 on_event=on_event,
                 collect_results=False,
-                should_stop=lambda: repo.is_scan_cancel_requested(scan_id),
+                should_stop=cancel_requested,
             )
         flush_results()
         if repo.is_scan_cancel_requested(scan_id):
@@ -917,7 +947,7 @@ def _run_scan_job(
                     store=store_screenshot,
                     timeout_ms=screenshot_timeout_ms,
                     maximum=screenshot_max,
-                    should_stop=lambda: repo.is_scan_cancel_requested(scan_id),
+                    should_stop=cancel_requested,
                 )
             if repo.is_scan_cancel_requested(scan_id):
                 repo.mark_scan_cancelled(scan_id)

@@ -431,6 +431,113 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(len(threads), 1)
             run.assert_called()
 
+    def test_the_cancel_check_does_not_run_once_per_probe(self):
+        """Checking for cancellation opened a SQLite connection per probe.
+
+        `session()` opens a connection, runs three PRAGMAs, queries and closes
+        - about 1.24ms, against 0.004ms for the same query on a live
+        connection. It ran once in on_event and once per engine read loop
+        iteration, so two of them sat in front of every single probe and
+        capped a scan at a few hundred ports per second no matter what
+        concurrency, timeout or rate limit were set to.
+        """
+        from netroach.api import _run_scan_job
+        from netroach.engine import EngineSettings
+        from netroach.models import ScanSummary
+        from netroach.storage import SQLiteRepository
+
+        probes = 2000
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db_path)
+            scan_id = repo.create_scan_job(
+                targets="127.0.0.1",
+                ports=f"1-{probes}",
+                scope=["127.0.0.1/32"],
+                params={"protocol": "tcp"},
+            )
+            calls = {"count": 0}
+            real_check = SQLiteRepository.is_scan_cancel_requested
+
+            def counting_check(self, sid):
+                calls["count"] += 1
+                return real_check(self, sid)
+
+            def fake_run_scan(**kwargs):
+                stop = kwargs.get("should_stop")
+                for port in range(1, probes + 1):
+                    if stop is not None:
+                        stop()
+                    kwargs["on_event"](
+                        {
+                            "event": "port",
+                            "scan_id": scan_id,
+                            "host": "127.0.0.1",
+                            "port": port,
+                            "protocol": "tcp",
+                            "state": "filtered",
+                            "latency_ms": 1.0,
+                        }
+                    )
+                return [], ScanSummary(scan_id=scan_id, total=probes)
+
+            with (
+                patch("netroach.api.run_scan", side_effect=fake_run_scan),
+                patch.object(SQLiteRepository, "is_scan_cancel_requested", counting_check),
+            ):
+                _run_scan_job(
+                    str(db_path),
+                    scan_id,
+                    [ipaddress.ip_address("127.0.0.1")],
+                    list(range(1, probes + 1)),
+                    EngineSettings(protocol="tcp"),
+                )
+
+            self.assertEqual(repo.count_results(scan_id), probes)
+            # A handful of polls plus the cold checks around the scan, not one
+            # per probe and certainly not two.
+            self.assertLess(calls["count"], 50, f"{calls['count']} cancel checks for {probes} probes")
+
+    def test_a_cancel_is_still_noticed_promptly(self):
+        from netroach.api import _run_scan_job
+        from netroach.engine import EngineSettings
+        from netroach.models import ScanSummary
+        from netroach.storage import SQLiteRepository
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db_path)
+            scan_id = repo.create_scan_job(
+                targets="127.0.0.1", ports="1-500", scope=["127.0.0.1/32"], params={"protocol": "tcp"}
+            )
+            repo.request_scan_cancel(scan_id)
+
+            def fake_run_scan(**kwargs):
+                for port in range(1, 501):
+                    kwargs["on_event"](
+                        {
+                            "event": "port",
+                            "scan_id": scan_id,
+                            "host": "127.0.0.1",
+                            "port": port,
+                            "protocol": "tcp",
+                            "state": "filtered",
+                            "latency_ms": 1.0,
+                        }
+                    )
+                return [], ScanSummary(scan_id=scan_id, total=500)
+
+            with patch("netroach.api.run_scan", side_effect=fake_run_scan):
+                _run_scan_job(
+                    str(db_path),
+                    scan_id,
+                    [ipaddress.ip_address("127.0.0.1")],
+                    list(range(1, 501)),
+                    EngineSettings(protocol="tcp"),
+                )
+
+            self.assertEqual(repo.get_job(scan_id)["status"], "cancelled")
+
     def test_a_failing_final_flush_still_marks_the_job(self):
         """A dying scan thread must never leave the job reading 'running'.
 
