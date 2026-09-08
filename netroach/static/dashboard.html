@@ -1625,6 +1625,49 @@
       }
     }
 
+    // Targets get their own compaction rather than sharing the port one: ports
+    // merge into ranges, targets are discrete entries, and forcing one function
+    // to do both makes each harder to read. The <details> disclosure is shared,
+    // so the two rows still look like one system.
+    function compactTargetsText(value, maxItems = 3) {
+      const items = asList(value);
+      if (items.length <= 1) return text(value).trim();
+      const hidden = items.length - maxItems;
+      const head = items.slice(0, maxItems).join(', ');
+      return hidden > 0 ? `${head} +${hidden}` : head;
+    }
+
+    function compactTargetsHtml(value, maxItems = 3) {
+      return `<span class="mono" title="${escapeHtml(value)}">${escapeHtml(compactTargetsText(value, maxItems))}</span>`;
+    }
+
+    function expandableTargetsHtml(value) {
+      const items = asList(value);
+      if (items.length <= 3) return compactTargetsHtml(value, 3);
+      return `
+        <details class="ports-details">
+          <summary>${escapeHtml(compactTargetsText(value, 3))}</summary>
+          <div class="mono">${escapeHtml(text(value))}</div>
+        </details>
+      `;
+    }
+
+    // The strip answers "how much is left", so it names the first target and
+    // counts the rest; the full list belongs in the table and the detail panel.
+    function stripTargetLabel(value) {
+      const items = asList(value);
+      if (items.length <= 1) return text(value).trim();
+      return `${items[0]} 외 ${items.length - 1}개`;
+    }
+
+    function stripPortLabel(value) {
+      try {
+        return `${parsePortExpression(value).ports.length.toLocaleString()} 포트`;
+      } catch (_) {
+        return compactPortText(value, 2);
+      }
+    }
+
     function compactPortsHtml(value, maxRanges = 4) {
       return `<span class="port-summary mono" title="${escapeHtml(value)}">${escapeHtml(compactPortText(value, maxRanges))}</span>`;
     }
@@ -2012,7 +2055,7 @@ ${health.db}` : '데이터베이스 없음';
         <tr class="clickable ${job.id === state.scanId ? 'selected' : ''}" data-scan-row="${escapeHtml(job.id)}">
           <td class="mono">${escapeHtml(shortId(job.id))}</td>
           <td>${pill(job.status, stateClass(job.status))}</td>
-          <td class="mono">${escapeHtml(job.targets)}</td>
+          <td>${compactTargetsHtml(job.targets)}</td>
           <td>${compactPortsHtml(job.ports, 3)}</td>
           <td>${escapeHtml(job.summary?.open || 0)}</td>
         </tr>
@@ -2087,7 +2130,7 @@ ${health.db}` : '데이터베이스 없음';
         <tr class="clickable ${job.id === state.scanId ? 'selected' : ''}" data-scan-row="${escapeHtml(job.id)}">
           <td class="mono" title="${escapeHtml(job.id)}">${escapeHtml(shortId(job.id))}</td>
           <td>${pill(job.status, stateClass(job.status))}</td>
-          <td class="cell-clip mono" title="${escapeHtml(job.targets)}">${escapeHtml(job.targets)}</td>
+          <td class="cell-clip">${compactTargetsHtml(job.targets)}</td>
           <td>${compactPortsHtml(job.ports, 3)}</td>
           <td>${escapeHtml(job.summary?.total || 0)}</td>
           <td>${escapeHtml(job.summary?.open || 0)}</td>
@@ -2117,7 +2160,7 @@ ${health.db}` : '데이터베이스 없음';
       $('selectedScanSummary').innerHTML = `
         <div><span>Scan ID</span><strong class="mono">${escapeHtml(job.id)}</strong></div>
         <div><span>Status</span>${pill(job.status, stateClass(job.status))}</div>
-        <div><span>Targets</span>${escapeHtml(job.targets)}</div>
+        <div><span>Targets</span>${expandableTargetsHtml(job.targets)}</div>
         <div><span>Ports</span>${expandablePortsHtml(job.ports)}</div>
         <div><span>Created</span>${escapeHtml(formatDateTime(job.created_at))}</div>
         <div><span>Completed</span>${escapeHtml(formatDateTime(job.completed_at) || 'n/a')}</div>
@@ -2253,7 +2296,7 @@ ${health.db}` : '데이터베이스 없음';
       return {
         scanId: job.id,
         status: progress.status,
-        label: `${job.targets} · ${job.ports}`,
+        label: `${stripTargetLabel(job.targets)} · ${stripPortLabel(job.ports)}`,
         percent: progress.percent || 0,
         completed: progress.completed_results || 0,
         planned: progress.planned_total || 0,

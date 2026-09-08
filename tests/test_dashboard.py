@@ -383,5 +383,46 @@ class DashboardSelfContainmentTests(unittest.TestCase):
         self.assertIn("@media (prefers-reduced-motion: reduce)", html)
 
 
+class DashboardTargetCompactionTests(unittest.TestCase):
+    """A range scan's target list is long enough to swamp the row it sits in.
+
+    Ports were already compacted; targets were printed raw in all four places,
+    so six /24 networks filled the table cell, the detail row and the progress
+    strip with 71 characters of CIDR.
+    """
+
+    def test_the_helpers_exist(self):
+        html = dashboard_html()
+
+        for symbol in (
+            "function compactTargetsText(",
+            "function compactTargetsHtml(",
+            "function expandableTargetsHtml(",
+            "function stripTargetLabel(",
+            "function stripPortLabel(",
+        ):
+            self.assertIn(symbol, html)
+
+    def test_no_place_prints_the_raw_target_list_any_more(self):
+        html = dashboard_html()
+
+        self.assertNotIn("${escapeHtml(job.targets)}</td>", html)
+        self.assertNotIn("<span>Targets</span>${escapeHtml(job.targets)}", html)
+
+    def test_lists_compact_and_the_detail_row_expands(self):
+        html = dashboard_html()
+
+        # Tables get the tooltip-only form: an expanding row would make the
+        # table jump. The detail panel gets the disclosure, like Ports beside it.
+        self.assertIn("<td>${compactTargetsHtml(job.targets)}</td>", html)
+        self.assertIn("<span>Targets</span>${expandableTargetsHtml(job.targets)}", html)
+
+    def test_the_strip_names_one_target_and_counts_the_ports(self):
+        html = dashboard_html()
+
+        self.assertIn("label: `${stripTargetLabel(job.targets)} · ${stripPortLabel(job.ports)}`", html)
+        self.assertIn("외 ${items.length - 1}개", html)
+
+
 if __name__ == "__main__":
     unittest.main()
