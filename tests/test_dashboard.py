@@ -424,5 +424,59 @@ class DashboardTargetCompactionTests(unittest.TestCase):
         self.assertIn("외 ${items.length - 1}개", html)
 
 
+class DashboardHostViewTests(unittest.TestCase):
+    """The hosts tab mixed an accurate summary with a truncated result page.
+
+    Port numbers came from the loaded rows (capped at 500) while totals came
+    from the server's GROUP BY over every row, so a host whose open ports fell
+    outside the window rendered as an empty line and sorted below hosts with
+    nothing open - the opposite of what the tab is for.
+    """
+
+    def test_open_detection_uses_the_server_summary_not_the_loaded_page(self):
+        html = dashboard_html()
+
+        body = html.split("function groupResultsByHost(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("entry.openCount = Number(summary.states?.open || 0)", body)
+        self.assertIn("b.openCount - a.openCount", body)
+
+    def test_hosts_are_ordered_stably(self):
+        """Equal hosts kept insertion order, which changed between polls."""
+        html = dashboard_html()
+
+        body = html.split("function groupResultsByHost(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("localeCompare(b.host", body)
+
+    def test_open_ports_outside_the_window_are_still_reported(self):
+        html = dashboard_html()
+
+        self.assertIn("function hostOpenText(", html)
+        body = html.split("function hostOpenText(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("open ${known}개", body)
+        self.assertIn("외 ${missing}개", body)
+
+    def test_a_truncated_host_list_says_so(self):
+        html = dashboard_html()
+
+        self.assertIn("표시 중", html)
+        self.assertIn("HOST_ROW_RENDER_LIMIT", html)
+
+    def test_only_the_hosts_tab_asks_for_the_host_summary(self):
+        """It is a GROUP BY over every row; the other tabs never render it."""
+        html = dashboard_html()
+
+        self.assertIn("params.set('include_hosts', 'false')", html)
+
+    def test_the_hosts_tab_does_not_apply_the_row_filters(self):
+        """Its totals come from an unfiltered summary, so filtering only the
+        rows would put two populations in one line. The filter controls live
+        inside the ports tab."""
+        html = dashboard_html()
+
+        body = html.split("const usingHostView = state.resultTab === 'hosts';", 1)[1].split("try {", 1)[0]
+        self.assertIn("if (!usingHostView) {", body)
+        self.assertIn("params.set('host', state.scanResultHost)", body)
+
+
 if __name__ == "__main__":
     unittest.main()

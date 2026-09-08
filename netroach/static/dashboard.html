@@ -2408,9 +2408,18 @@ ${health.db}` : '데이터베이스 없음';
         limit: String(limit),
         offset: String(offset)
       });
-      if (state.scanResultHost) params.set('host', state.scanResultHost);
-      if (state.scanResultState) params.set('state', state.scanResultState);
-      if (state.scanResultQuery.trim()) params.set('search', state.scanResultQuery.trim());
+      // The hosts tab is the scan-wide overview and deliberately ignores the
+      // filters: its per-host totals come from an unfiltered summary, so
+      // filtering only the rows would put two populations in one row. The
+      // filters belong to the 열린 포트 tab, which shows the rows themselves.
+      if (!usingHostView) {
+        if (state.scanResultHost) params.set('host', state.scanResultHost);
+        if (state.scanResultState) params.set('state', state.scanResultState);
+        if (state.scanResultQuery.trim()) params.set('search', state.scanResultQuery.trim());
+        // The summary is a full GROUP BY over every row of the scan and only
+        // the hosts tab renders it, so the other tabs do not ask for it.
+        params.set('include_hosts', 'false');
+      }
       try {
         const payload = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/results?${params}`);
         const hosts = Array.isArray(payload.hosts) ? payload.hosts : [];
@@ -2597,12 +2606,22 @@ ${health.db}` : '데이터베이스 없음';
         const entry = get(summary.host);
         entry.total = Number(summary.total || 0);
         entry.error = Number(summary.states?.error || 0);
+        // The port numbers come from the loaded page, which is capped, but the
+        // count comes from the server's summary over every row. Judging "does
+        // this host have anything open" by the loaded page hid open hosts whose
+        // rows fell outside the window, and sorted them below empty ones.
+        entry.openCount = Number(summary.states?.open || 0);
       });
       const rows = [...byHost.values()];
-      rows.forEach((entry) => entry.open.sort((a, b) => a - b));
-      // Open hosts first: in a 254-address sweep the three that matter should
-      // never be below the fold.
-      return rows.sort((a, b) => (b.open.length ? 1 : 0) - (a.open.length ? 1 : 0));
+      rows.forEach((entry) => {
+        entry.open.sort((a, b) => a - b);
+        if (entry.openCount === undefined) entry.openCount = entry.open.length;
+      });
+      // Open hosts first, most open ports first, then by address so the order
+      // is stable between polls rather than following insertion.
+      return rows.sort((a, b) =>
+        (b.openCount - a.openCount) || a.host.localeCompare(b.host, undefined, {numeric: true})
+      );
     }
 
     // Per-host live state (design spec section 3): 대기/스캔 중/완료/오류. There
@@ -2616,6 +2635,16 @@ ${health.db}` : '데이터베이스 없음';
     // mean expanding the target CIDR client-side into actual addresses,
     // which is exactly the exact-vs-clamped mismatch item 1 removed) - a
     // host simply has no row at all until its first result arrives.
+    // The loaded page may not carry every open port of every host, so say how
+    // many are known and list the ones actually in hand.
+    function hostOpenText(entry) {
+      const known = Number(entry.openCount || 0);
+      if (!known) return '';
+      if (!entry.open.length) return `open ${known}개`;
+      const missing = known - entry.open.length;
+      return `open ${entry.open.join(',')}${missing > 0 ? ` 외 ${missing}개` : ''}`;
+    }
+
     function hostRowState(entry, jobRunning, portCount) {
       if (entry.error > 0) return '오류';
       if (jobRunning && portCount > 0 && entry.total < portCount) {
@@ -2645,10 +2674,18 @@ ${health.db}` : '데이터베이스 없음';
       const payload = state.scanResultPayload || {results: [], total: 0, hosts: []};
       const loaded = (payload.results || []).length;
       const total = Number(payload.total || 0);
-      $('scanResultMetrics').textContent = total > loaded
+      const grouped = groupResultsByHost(payload.results, payload.hosts);
+      const rows = grouped.slice(0, HOST_ROW_RENDER_LIMIT);
+      // The hosts tab counts hosts, not rows: saying "500 / 12,000행" while
+      // silently dropping 1,324 of 1,524 hosts told the operator nothing about
+      // what was missing.
+      const hostLabel = grouped.length > rows.length
+        ? `호스트 ${rows.length.toLocaleString()} / ${grouped.length.toLocaleString()} 표시 중`
+        : `호스트 ${grouped.length.toLocaleString()}개`;
+      const rowLabel = total > loaded
         ? `${loaded.toLocaleString()} / ${total.toLocaleString()}행 로드됨`
         : `${total.toLocaleString()}행`;
-      const rows = groupResultsByHost(payload.results, payload.hosts).slice(0, HOST_ROW_RENDER_LIMIT);
+      $('scanResultMetrics').textContent = `${hostLabel} · ${rowLabel}`;
       const job = selectedScanJob();
       const jobRunning = Boolean(job && RUNNING_STATUSES.has(job.status));
       const portCount = Number(state.scanProgress?.port_count) || 0;
@@ -2657,7 +2694,7 @@ ${health.db}` : '데이터베이스 없음';
       rows.forEach((entry) => {
         const id = hostRowId(entry.host);
         seen.add(id);
-        const openText = entry.open.length ? `open ${entry.open.join(',')}` : '';
+        const openText = hostOpenText(entry);
         const stateText = hostRowState(entry, jobRunning, portCount);
         let node = document.getElementById(id);
         if (!node) {

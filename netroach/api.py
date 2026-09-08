@@ -430,6 +430,7 @@ def create_app(
         service: str | None = None,
         host: str | None = None,
         search: str | None = None,
+        include_hosts: bool = True,
     ) -> dict[str, object]:
         if not repo.get_job(scan_id):
             raise _not_found("scan not found")
@@ -469,7 +470,10 @@ def create_app(
                 "offset": offset,
                 "count": len(results),
                 "total": total,
-                "hosts": repo.summarize_results_by_host(scan_id),
+                # Only the hosts tab reads this, and it is a GROUP BY over every
+                # row of the scan - 181ms at half a million rows, on a list the
+                # other tabs never look at. The caller says when it needs them.
+                "hosts": repo.summarize_results_by_host(scan_id) if include_hosts else [],
                 "results": public_result_dicts(results),
             }
         except Exception as exc:  # noqa: BLE001
