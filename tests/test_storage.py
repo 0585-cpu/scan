@@ -515,6 +515,52 @@ class StorageTests(unittest.TestCase):
 PNG_BYTES = bytes.fromhex("89504e470d0a1a0a") + b"evidence"
 
 
+class ScanProgressCostTests(unittest.TestCase):
+    """The progress strip polls this every 700ms while a scan runs."""
+
+    def test_progress_counts_the_table_once(self):
+        """It used to call COUNT(*) and then GROUP BY state, counting the same
+        rows twice - 24ms of the 127 this took at half a million rows. Every
+        result has a state, so the per-state counts already sum to the total."""
+        from unittest.mock import patch
+
+        from netroach.storage import PortResult, SQLiteRepository
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
+            scan_id = repo.create_scan_job(
+                targets="127.0.0.1", ports="1-3", scope=["127.0.0.1/32"], params={}
+            )
+            repo.mark_scan_started(scan_id)
+            repo.add_port_results(
+                [
+                    PortResult(scan_id=scan_id, host="127.0.0.1", port=1, state="open", latency_ms=1.0),
+                    PortResult(scan_id=scan_id, host="127.0.0.1", port=2, state="closed", latency_ms=1.0),
+                    PortResult(scan_id=scan_id, host="127.0.0.1", port=3, state="filtered", latency_ms=1.0),
+                ]
+            )
+
+            with patch.object(SQLiteRepository, "count_results", side_effect=AssertionError("counted twice")):
+                progress = repo.get_scan_progress(scan_id)
+
+            self.assertEqual(progress["completed_results"], 3)
+            self.assertEqual(progress["states"], {"open": 1, "closed": 1, "filtered": 1})
+
+    def test_the_per_state_group_by_has_an_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "netroach.db"
+            SQLiteRepository(path)
+            conn = sqlite3.connect(path)
+            try:
+                names = {row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='port_results'"
+                )}
+            finally:
+                conn.close()
+            self.assertIn("idx_port_results_scan_state", names)
+            self.assertIn("idx_port_results_scan_host_state", names)
+
+
 class ScanHeartbeatTests(unittest.TestCase):
     """Distinguishing a dead worker from a live one in another process.
 

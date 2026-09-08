@@ -196,6 +196,11 @@ class SQLiteRepository:
                 -- once the index answers the query outright.
                 CREATE INDEX IF NOT EXISTS idx_port_results_scan_host_state
                     ON port_results(scan_id, host, state);
+                -- The progress strip groups by state alone every poll. The
+                -- host index above cannot answer that without a temporary
+                -- b-tree: 110ms at half a million rows, 34ms with this one.
+                CREATE INDEX IF NOT EXISTS idx_port_results_scan_state
+                    ON port_results(scan_id, state);
                 CREATE INDEX IF NOT EXISTS idx_port_results_scan_host_port
                     ON port_results(scan_id, host, port);
                 CREATE TABLE IF NOT EXISTS result_evidence_files (
@@ -1024,8 +1029,11 @@ class SQLiteRepository:
         target_count = _count_targets(job["targets"], job["params"].get("max_hosts"))
         port_count = _count_ports(job["ports"])
         planned_total = target_count * port_count
-        completed_results = self.count_results(scan_id)
+        # Every result carries a state, so the per-state counts already add up
+        # to the total. Counting the table twice per poll cost 24ms of the 127
+        # this call took at half a million rows.
         states = self.count_results_by_state(scan_id)
+        completed_results = sum(states.values())
         percent = 100.0 if planned_total == 0 else min(100.0, round((completed_results / planned_total) * 100, 2))
         if job["status"] in {"completed", "failed", "cancelled"}:
             percent = 100.0
