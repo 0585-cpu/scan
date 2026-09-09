@@ -12,7 +12,11 @@ use std::{
 use tauri::{path::BaseDirectory, Manager, RunEvent};
 
 const BACKEND_HOST: &str = "127.0.0.1";
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+// A first start against a database written by an older build has to
+// migrate every result row, which takes far longer than a warm start.
+// A backend that dies is still caught immediately by try_wait below, so
+// this deadline only bounds a hung one.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Default)]
 struct BackendProcess(Mutex<Option<Child>>);
@@ -124,7 +128,7 @@ fn wait_for_backend(child: &mut Child, port: u16) -> io::Result<()> {
         if started.elapsed() >= STARTUP_TIMEOUT {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
-                "Netroach backend did not become ready within 20 seconds",
+                "Netroach backend did not become ready within 5 minutes",
             ));
         }
         thread::sleep(Duration::from_millis(100));

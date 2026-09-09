@@ -817,5 +817,57 @@ class LegacyDataMigrationTests(unittest.TestCase):
             self.assertTrue(legacy.is_file())
 
 
+class MigrationCostTests(unittest.TestCase):
+    """The dedupe below is a full table scan. It must run once, not per start."""
+
+    def _sql_of_second_open(self, path):
+        SQLiteRepository(path)
+        statements = []
+        real_connect = sqlite3.connect
+
+        def tracing_connect(*args, **kwargs):
+            conn = real_connect(*args, **kwargs)
+            conn.set_trace_callback(statements.append)
+            return conn
+
+        sqlite3.connect = tracing_connect
+        try:
+            SQLiteRepository(path)
+        finally:
+            sqlite3.connect = real_connect
+        return " ".join(statements)
+
+    def test_dedupe_does_not_rerun_once_the_unique_index_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sql = self._sql_of_second_open(Path(tmp) / "netroach.db")
+            self.assertNotIn("DELETE FROM port_results", sql)
+
+    def test_dedupe_still_runs_on_a_database_that_predates_the_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(path)
+            scan_id = repo.create_scan_job(targets="127.0.0.1", ports="80", scope=[], params={})
+            with repo.session() as conn:
+                conn.execute("DROP INDEX idx_port_results_unique")
+                for _ in range(2):
+                    conn.execute(
+                        "INSERT INTO port_results(scan_id, host, port, protocol, state)"
+                        " VALUES(?, '127.0.0.1', 80, 'tcp', 'open')",
+                        (scan_id,),
+                    )
+
+            SQLiteRepository(path)
+
+            with SQLiteRepository(path).session() as conn:
+                self.assertEqual(
+                    conn.execute("SELECT count(*) FROM port_results").fetchone()[0], 1
+                )
+                self.assertIsNotNone(
+                    conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name='idx_port_results_unique'"
+                    ).fetchone()
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

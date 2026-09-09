@@ -288,6 +288,15 @@ class SQLiteRepository:
             conn.execute("ALTER TABLE port_results ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]'")
         if "note" not in columns:
             conn.execute("ALTER TABLE port_results ADD COLUMN note TEXT")
+        # Both statements below read every row of port_results, so they may
+        # only run against a database that predates the unique index. Left
+        # unguarded they cost a full table scan on every start - fifteen
+        # seconds on a multi-gigabyte history, which the desktop shell counts
+        # against its backend startup deadline.
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_port_results_unique'"
+        ).fetchone():
+            return
         conn.execute(
             """
             DELETE FROM port_results
@@ -300,7 +309,7 @@ class SQLiteRepository:
         )
         conn.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_port_results_unique
+            CREATE UNIQUE INDEX idx_port_results_unique
             ON port_results(scan_id, host, port, protocol)
             """
         )
