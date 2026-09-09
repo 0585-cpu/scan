@@ -33,7 +33,7 @@ from .pcap import analyze_pcap
 from .plugins import load_effective_plugin_catalog, load_plugin_manifest
 from .reports import REPORT_FORMATS, build_scan_report, embed_report_evidence, format_scan_report
 from .scan_inputs import PORT_PROFILES, resolve_ports, resolve_targets, validate_scan_workload
-from .storage import SQLiteRepository
+from .storage import OPEN_STATES, SQLiteRepository
 from .version import APP_NAME, __version__
 
 
@@ -715,8 +715,8 @@ def validate_result_query_args(args: argparse.Namespace) -> None:
         raise ValueError("--limit must be at least 1")
     if args.offset < 0:
         raise ValueError("--offset must be at least 0")
-    if args.open_only and args.state and args.state != "open":
-        raise ValueError("--open-only can only be combined with --state open")
+    if args.open_only and args.state and args.state not in OPEN_STATES:
+        raise ValueError(f"--open-only can only be combined with --state in: {', '.join(OPEN_STATES)}")
 
 
 def print_summary(summary: dict[str, Any]) -> None:

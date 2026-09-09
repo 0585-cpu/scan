@@ -82,6 +82,9 @@ _EVIDENCE_NOT_CAPTURED_SQL = """
 
 COLLAPSE_THRESHOLD = 25
 COLLAPSIBLE_STATES = ("closed", "filtered")
+# What `open_only` selects. A UDP port that did not refuse is open as far as a
+# scan can tell, which is why the evidence pass and the re-scan both count it.
+OPEN_STATES = ("open", "open|filtered")
 
 
 def parse_port_ranges(text: str | None) -> list[tuple[int, int]]:
@@ -2204,7 +2207,8 @@ class SQLiteRepository:
             # did not refuse. Exporting only the exact state left a UDP scan's
             # findings out of the assessment workbook while the summary, the
             # evidence pass and the re-scan all went on counting them.
-            query += " AND state IN ('open', 'open|filtered')"
+            query += f" AND state IN ({','.join('?' * len(OPEN_STATES))})"
+            params.extend(OPEN_STATES)
         if state:
             query += " AND state=?"
             params.append(state)

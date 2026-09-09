@@ -358,6 +358,19 @@ class PrimaryEvidenceTests(unittest.TestCase):
 
         self.assertIsNone(primary_evidence([]))
 
+    def test_a_port_that_only_failed_to_refuse_is_not_written_up_as_open(self):
+        """The workbook carries UDP findings now, and open|filtered means the
+        probe went out and nothing came back. "포트 오픈됨" would put a finding
+        in the report that the scan never made."""
+        from netroach.exporters import report_detail
+
+        self.assertEqual(report_detail(None, "open|filtered"), "무응답 (열림/차단 구분 불가)")
+        self.assertEqual(report_detail("SNMP", "open|filtered"), "무응답 (열림/차단 구분 불가)")
+        self.assertEqual(report_detail(None, "open"), "포트 오픈됨")
+        self.assertEqual(report_detail("WEB", "open"), "웹 서비스 오픈됨")
+        # A caller that does not know the state keeps the old wording.
+        self.assertEqual(report_detail("WEB"), "웹 서비스 오픈됨")
+
 
 if __name__ == "__main__":
     unittest.main()

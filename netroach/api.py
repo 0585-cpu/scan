@@ -61,7 +61,7 @@ from .scan_inputs import (
     validate_scan_workload,
 )
 from .scope import IPAddress, scope_values_from_targets
-from .storage import SQLiteRepository
+from .storage import OPEN_STATES, SQLiteRepository
 from .version import __version__
 
 # A worker stamps the job it is running so recovery can tell a live peer from a
@@ -1440,8 +1440,8 @@ def _validate_result_query(
         raise ValueError("state must be one of: open, closed, open|filtered, filtered, error")
     if protocol and protocol not in RESULT_PROTOCOLS:
         raise ValueError("protocol must be 'tcp' or 'udp'")
-    if open_only and state and state != "open":
-        raise ValueError("open_only can only be combined with state=open")
+    if open_only and state and state not in OPEN_STATES:
+        raise ValueError(f"open_only can only be combined with state in: {', '.join(OPEN_STATES)}")
     if host and len(host) > 255:
         raise ValueError("host must be 255 characters or fewer")
     if search and len(search) > 200:

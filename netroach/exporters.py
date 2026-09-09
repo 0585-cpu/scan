@@ -273,7 +273,16 @@ def report_service_name(service: str | None) -> str | None:
     return _REPORT_SERVICE_NAMES.get(str(service or "").strip().lower())
 
 
-def report_detail(service_label: str | None) -> str:
+def report_detail(service_label: str | None, state: str | None = None) -> str:
+    """The 상세내용 cell, which has to say only what the scan established.
+
+    A UDP port that did not refuse is `open|filtered`: the probe went out and
+    nothing came back, which is not the same as finding the port open. Writing
+    "포트 오픈됨" there put a finding in the workbook that the scan had not
+    made, and the reader has no other column to catch it from.
+    """
+    if str(state or "") == "open|filtered":
+        return "무응답 (열림/차단 구분 불가)"
     return "웹 서비스 오픈됨" if service_label in _REPORT_WEB_SERVICES else "포트 오픈됨"
 
 
@@ -314,7 +323,7 @@ def format_diagnostic_report_xlsx(
                 _excel_text(result.get("host")),
                 result.get("port"),
                 service_label,
-                report_detail(service_label),
+                report_detail(service_label, result.get("state")),
                 None,
                 None,
             ]
