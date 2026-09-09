@@ -662,10 +662,20 @@ async fn scan_udp_one(
                     service_name: fingerprint.name,
                     service_confidence: fingerprint.confidence,
                     banner: fingerprint.banner,
-                    evidence: Some(format!(
-                        "correlated udp response received ({size} bytes, attempt {})",
-                        attempt + 1
-                    )),
+                    // What the record claims has to be what was done. With no
+                    // service probe out there nothing was correlated - the
+                    // reply is evidence that the port answered, and no more.
+                    evidence: Some(if service_probe {
+                        format!(
+                            "correlated udp response received ({size} bytes, attempt {})",
+                            attempt + 1
+                        )
+                    } else {
+                        format!(
+                            "udp response received ({size} bytes, attempt {}; neutral probe, service detection off)",
+                            attempt + 1
+                        )
+                    }),
                     error: None,
                 };
             }
@@ -687,12 +697,25 @@ async fn scan_udp_one(
         service_name: None,
         service_confidence: None,
         banner: None,
-        evidence: Some(format!(
-            "no UDP response after {} attempt(s) (open|filtered; correlated response required)",
-            retries + 1
-        )),
+        evidence: Some(udp_no_response_evidence(retries, service_probe)),
         error: None,
     }
+}
+
+/// What the scan writes down when a UDP port never answered.
+///
+/// The line is quoted into the assessment report, so it names the method that
+/// was actually used: a neutral probe correlates nothing.
+fn udp_no_response_evidence(retries: u8, service_probe: bool) -> String {
+    format!(
+        "no UDP response after {} attempt(s) (open|filtered; {})",
+        retries + 1,
+        if service_probe {
+            "correlated response required"
+        } else {
+            "neutral probe, service detection off"
+        }
+    )
 }
 
 fn udp_error_or_closed_event(
@@ -2757,6 +2780,18 @@ mod tests {
         assert!(udp_probe_payload(5353).len() > 12);
         assert!(udp_probe_payload(5683).starts_with(&[0x40, 0x01]));
         assert_eq!(udp_probe_payload(11211), b"version\r\n");
+    }
+
+    #[test]
+    fn the_record_does_not_claim_a_correlation_that_was_not_made() {
+        // The evidence line is what the assessment report quotes. With no
+        // probe of ours out there nothing was correlated: the reply says the
+        // port answered, and no more.
+        let quiet = udp_no_response_evidence(1, false);
+        assert!(!quiet.contains("correlated"));
+        assert!(quiet.contains("service detection off"));
+        let probed = udp_no_response_evidence(1, true);
+        assert!(probed.contains("correlated response required"));
     }
 
     #[test]
