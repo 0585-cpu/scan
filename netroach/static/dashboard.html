@@ -996,7 +996,7 @@
               </div>
               <div class="result-tabs">
                 <button type="button" data-result-tab="hosts" class="active">호스트</button>
-                <button type="button" data-result-tab="ports">열린 포트</button>
+                <button type="button" data-result-tab="ports">포트 결과</button>
                 <button type="button" data-result-tab="log">로그</button>
                 <span class="result-progress" id="scanResultMetrics"></span>
               </div>
@@ -2411,7 +2411,7 @@ ${health.db}` : '데이터베이스 없음';
       // The hosts tab is the scan-wide overview and deliberately ignores the
       // filters: its per-host totals come from an unfiltered summary, so
       // filtering only the rows would put two populations in one row. The
-      // filters belong to the 열린 포트 tab, which shows the rows themselves.
+      // filters belong to the 포트 결과 tab, which shows the rows themselves.
       if (!usingHostView) {
         if (state.scanResultHost) params.set('host', state.scanResultHost);
         if (state.scanResultState) params.set('state', state.scanResultState);

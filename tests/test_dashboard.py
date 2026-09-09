@@ -447,6 +447,14 @@ class DashboardHostViewTests(unittest.TestCase):
         body = html.split("function groupResultsByHost(", 1)[1].split(chr(10) + "    }", 1)[0]
         self.assertIn("localeCompare(b.host", body)
 
+    def test_the_row_tab_is_not_named_after_a_filter_it_does_not_apply(self):
+        """It defaults to every state, so calling it 열린 포트 misreads closed
+        rows as a bug in the scan rather than the name."""
+        html = dashboard_html()
+
+        self.assertIn('data-result-tab="ports">포트 결과<', html)
+        self.assertNotIn("열린 포트", html)
+
     def test_a_host_with_nothing_open_still_says_what_was_found(self):
         """Its ports are stored as a count, so the row has no rows to show."""
         html = dashboard_html()
