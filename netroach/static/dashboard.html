@@ -2550,9 +2550,11 @@ ${health.db}` : '데이터베이스 없음';
         }
         $('scanTargets').value = payload.targets;
         $('scanPorts').value = payload.ports;
+        // A scan is one protocol throughout, and these ports were found on it.
+        if (payload.protocol) $('scanProtocol').value = payload.protocol;
         $('scanTargets').scrollIntoView({block: 'center'});
         setStatus('scanSecondaryStatus',
-          `호스트 ${Number(payload.hosts).toLocaleString()}개 · 포트 ${Number(payload.ports_found).toLocaleString()}개를 폼에 넣었습니다.`
+          `호스트 ${Number(payload.hosts).toLocaleString()}개 · ${String(payload.protocol || 'tcp').toUpperCase()} 포트 ${Number(payload.ports_found).toLocaleString()}개를 폼에 넣었습니다.`
           + ` 스캔은 둘을 교차하므로 ${Number(payload.probes).toLocaleString()} 프로브가 됩니다.`);
       } catch (error) {
         setStatus('scanSecondaryStatus', error.message, true);

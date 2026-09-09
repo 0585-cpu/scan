@@ -676,6 +676,13 @@ class DashboardHostViewTests(unittest.TestCase):
         # stale line from whatever ran last.
         self.assertIn("resumeRecaptureWatch(scanId)", html.split("async function selectScan(", 1)[1])
 
+    def test_a_rescan_keeps_the_protocol_the_ports_were_found_on(self):
+        """UDP ports re-scanned over TCP find nothing and say nothing."""
+        html = dashboard_html()
+
+        body = html.split("async function fillFormWithOpenTargets() {", 1)[1]
+        self.assertIn("$('scanProtocol').value = payload.protocol", body)
+
 
 if __name__ == "__main__":
     unittest.main()

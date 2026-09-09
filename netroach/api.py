@@ -598,13 +598,18 @@ def create_app(
         the authorization tick, the scope check and the workload warning are the
         same ones every other scan goes through.
         """
-        if not repo.get_job(scan_id):
+        job = repo.get_job(scan_id)
+        if not job:
             raise _not_found("scan not found")
         hosts, ports = repo.open_result_targets(scan_id)
         return {
             # One host per line, the form's own separator.
             "targets": chr(10).join(hosts),
             "ports": normalize_ports_expr(ports),
+            # A scan is one protocol throughout, and it is one of the inputs
+            # the form holds. Leaving it out re-scanned a UDP scan's ports over
+            # TCP, which finds nothing and says nothing about why.
+            "protocol": str(job.get("params", {}).get("protocol") or "tcp"),
             "hosts": len(hosts),
             "ports_found": len(ports),
             # A scan crosses every target with every port, so this is larger

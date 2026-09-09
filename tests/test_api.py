@@ -1706,6 +1706,34 @@ class RescanAndRecaptureTests(unittest.TestCase):
             # ports that produced them - the caller is told so.
             self.assertEqual(payload["probes"], 4)
 
+    def test_a_udp_scans_ports_come_back_as_udp(self):
+        """The form holds one protocol for the whole scan. Leaving it out of
+        the inputs re-scanned a UDP scan's open ports over TCP, which finds
+        nothing and gives no reason."""
+        with tempfile.TemporaryDirectory() as tmp:
+            from fastapi.testclient import TestClient
+
+            from netroach.api import create_app
+            from netroach.models import PortResult
+            from netroach.storage import SQLiteRepository
+
+            db_path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db_path)
+            scan_id = repo.create_scan_job(
+                targets="10.0.0.1", ports="161", scope=[], params={"protocol": "udp"}
+            )
+            repo.mark_scan_started(scan_id)
+            repo.add_port_results([
+                PortResult(scan_id=scan_id, host="10.0.0.1", port=161, protocol="udp",
+                           state="open", latency_ms=1.0),
+            ])
+            repo.complete_scan(scan_id, repo.summarize_scan_results(scan_id))
+            client = TestClient(create_app(str(db_path)))
+
+            payload = client.get(f"/v1/scans/{scan_id}/open-targets").json()
+
+            self.assertEqual(payload["protocol"], "udp")
+
     def test_evidence_can_be_collected_without_scanning_again(self):
         with tempfile.TemporaryDirectory() as tmp:
             client, repo, scan_id = self._client_with_open_results(tmp)
