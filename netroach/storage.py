@@ -68,6 +68,44 @@ COLLAPSE_THRESHOLD = 25
 COLLAPSIBLE_STATES = ("closed", "filtered")
 
 
+def parse_port_ranges(text: str | None) -> list[tuple[int, int]]:
+    """Read "1-3,7,9-11" back into inclusive (low, high) pairs."""
+    ranges: list[tuple[int, int]] = []
+    for part in (text or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        low, _, high = part.partition("-")
+        ranges.append((int(low), int(high or low)))
+    return ranges
+
+
+def format_port_ranges(ranges: Iterable[tuple[int, int]]) -> str:
+    return ",".join(f"{low}" if low == high else f"{low}-{high}" for low, high in ranges)
+
+
+def merge_port_ranges(existing: str | None, ports: Iterable[int]) -> str:
+    """Add ports to a range string, keeping it sorted and coalesced.
+
+    A scan folds tens of thousands of ports per host, and storing them
+    individually would defeat the point of folding at all. Consecutive ports
+    are the normal case, so ranges keep this to a handful of characters.
+    """
+    points: list[tuple[int, int]] = list(parse_port_ranges(existing))
+    points.extend((port, port) for port in ports)
+    if not points:
+        return ""
+    points.sort()
+    merged: list[tuple[int, int]] = [points[0]]
+    for low, high in points[1:]:
+        last_low, last_high = merged[-1]
+        if low <= last_high + 1:
+            merged[-1] = (last_low, max(last_high, high))
+        else:
+            merged.append((low, high))
+    return format_port_ranges(merged)
+
+
 def default_db_path() -> Path:
     system = platform.system().lower()
     if system == "windows":
@@ -222,6 +260,10 @@ class SQLiteRepository:
                     protocol TEXT NOT NULL,
                     state TEXT NOT NULL,
                     collapsed INTEGER NOT NULL,
+                    -- Which ports were folded, as "1-1998,2001-3000". A resumed
+                    -- scan asks what has already been probed, and a bare count
+                    -- cannot answer that - it would re-probe the whole range.
+                    ports TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY(scan_id, host, protocol, state),
                     FOREIGN KEY(scan_id) REFERENCES scan_jobs(id) ON DELETE CASCADE
                 );
@@ -303,6 +345,13 @@ class SQLiteRepository:
             # Rows written before this column exist and stay readable; they
             # simply cannot say what produced them.
             conn.execute("ALTER TABLE result_evidence_files ADD COLUMN capture_agent TEXT")
+        folded_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(scan_state_counts)").fetchall()
+        }
+        if folded_columns and "ports" not in folded_columns:
+            # Written by a build that stored only the count. Those rows keep
+            # their totals; a scan resumed from one re-probes what it folded.
+            conn.execute("ALTER TABLE scan_state_counts ADD COLUMN ports TEXT NOT NULL DEFAULT ''")
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(port_results)").fetchall()}
         if "evidence" not in columns:
             conn.execute("ALTER TABLE port_results ADD COLUMN evidence TEXT")
@@ -700,14 +749,33 @@ class SQLiteRepository:
             count = int(row["count"])
             if count <= COLLAPSE_THRESHOLD and key not in collapsing:
                 continue
+            folding = [
+                int(found["port"])
+                for found in conn.execute(
+                    """
+                    SELECT port FROM port_results
+                    WHERE scan_id=? AND host=? AND protocol=? AND state=?
+                      AND banner IS NULL AND evidence IS NULL
+                    """,
+                    (scan_id, *key),
+                )
+            ]
+            previous = conn.execute(
+                """
+                SELECT ports FROM scan_state_counts
+                WHERE scan_id=? AND host=? AND protocol=? AND state=?
+                """,
+                (scan_id, *key),
+            ).fetchone()
+            ports = merge_port_ranges(previous["ports"] if previous else "", folding)
             conn.execute(
                 """
-                INSERT INTO scan_state_counts(scan_id, host, protocol, state, collapsed)
-                VALUES(?, ?, ?, ?, ?)
+                INSERT INTO scan_state_counts(scan_id, host, protocol, state, collapsed, ports)
+                VALUES(?, ?, ?, ?, ?, ?)
                 ON CONFLICT(scan_id, host, protocol, state)
-                DO UPDATE SET collapsed=collapsed + excluded.collapsed
+                DO UPDATE SET collapsed=collapsed + excluded.collapsed, ports=excluded.ports
                 """,
-                (scan_id, *key, count),
+                (scan_id, *key, len(folding), ports),
             )
             conn.execute(
                 """
@@ -903,7 +971,21 @@ class SQLiteRepository:
                 """,
                 (scan_id, protocol),
             ).fetchall()
-        return {(str(row["host"]), int(row["port"])) for row in rows}
+            folded = conn.execute(
+                """
+                SELECT host, ports FROM scan_state_counts
+                WHERE scan_id=? AND protocol=?
+                """,
+                (scan_id, protocol),
+            ).fetchall()
+        keys = {(str(row["host"]), int(row["port"])) for row in rows}
+        # A folded port was probed; leaving it out here would make a resumed
+        # scan repeat every port it had already finished.
+        for row in folded:
+            host = str(row["host"])
+            for low, high in parse_port_ranges(row["ports"]):
+                keys.update((host, port) for port in range(low, high + 1))
+        return keys
 
     def get_results(
         self,
@@ -1487,6 +1569,13 @@ class SQLiteRepository:
                 ORDER BY created_at, id
                 """
             ).fetchall()
+            folded_rows = conn.execute(
+                """
+                SELECT scan_id, host, protocol, state, collapsed, ports
+                FROM scan_state_counts
+                ORDER BY scan_id, host, protocol, state
+                """
+            ).fetchall()
             pcap_rows = conn.execute(
                 "SELECT id, file_path, summary_json, created_at FROM pcap_analyses ORDER BY created_at ASC"
             ).fetchall()
@@ -1524,6 +1613,9 @@ class SQLiteRepository:
             "schema_version": SCHEMA_VERSION,
             "scan_jobs": [self._scan_job_row_to_dict(row) for row in job_rows],
             "port_results": [_port_result_row_to_dict(row) for row in result_rows],
+            # Folded results live only here. Leaving them out of a backup would
+            # restore a scan with most of its findings silently missing.
+            "scan_state_counts": [dict(row) for row in folded_rows],
             "result_evidence_files": evidence_files,
             "pcap_analyses": [_pcap_analysis_row_to_dict(row) for row in pcap_rows],
             "packet_audit": [_packet_audit_row_to_dict(row) for row in audit_rows],
@@ -1535,6 +1627,7 @@ class SQLiteRepository:
         counts = {
             "scan_jobs": 0,
             "port_results": 0,
+            "scan_state_counts": 0,
             "result_evidence_files": 0,
             "pcap_analyses": 0,
             "packet_audit": 0,
@@ -1607,6 +1700,24 @@ class SQLiteRepository:
                         ),
                     )
                     counts["port_results"] += 1
+                for folded in data.get("scan_state_counts", []):
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO scan_state_counts(
+                            scan_id, host, protocol, state, collapsed, ports
+                        )
+                        VALUES(?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            folded["scan_id"],
+                            folded["host"],
+                            folded.get("protocol", "tcp"),
+                            folded["state"],
+                            int(folded.get("collapsed", 0)),
+                            folded.get("ports") or "",
+                        ),
+                    )
+                    counts["scan_state_counts"] += 1
                 for evidence in data.get("result_evidence_files", []):
                     encoded = evidence.get("content_base64")
                     if not encoded:

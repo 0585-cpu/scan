@@ -1026,6 +1026,32 @@ class CollapsedStateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "summary total mismatch"):
                 repo.complete_scan(scan_id, summary)
 
+    def test_a_resumed_scan_knows_which_folded_ports_were_done(self):
+        """Folding must not make finished work look unfinished."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            repo.mark_scan_started(scan_id)
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 2000, first_port=1)
+
+            keys = repo.get_result_keys(scan_id, protocol="tcp")
+
+            self.assertEqual(len(keys), 2000)
+            self.assertIn(("10.0.0.1", 1), keys)
+            self.assertIn(("10.0.0.1", 2000), keys)
+            self.assertNotIn(("10.0.0.1", 2001), keys)
+
+    def test_folded_ports_survive_a_backup_and_restore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 2000)
+            exported = repo.export_database()
+
+            restored = SQLiteRepository(Path(tmp) / "restored.db")
+            restored.import_database(exported)
+
+            self.assertEqual(restored.count_results_by_state(scan_id), {"filtered": 2000})
+            self.assertEqual(len(restored.get_result_keys(scan_id, protocol="tcp")), 2000)
+
 
 if __name__ == "__main__":
     unittest.main()
