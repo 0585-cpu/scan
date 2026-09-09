@@ -731,6 +731,20 @@ class DashboardHostViewTests(unittest.TestCase):
         preset = html.split("id: 'builtin-udp'", 1)[1].split("}}", 1)[0]
         self.assertIn("udp_service_probe: false", preset)
 
+    def test_the_recapture_button_becomes_the_way_to_stop_it(self):
+        """A capture of a thousand ports runs for the better part of an hour.
+        Leaving the button disabled for the duration left no way to stop one
+        started on the wrong scan."""
+        html = dashboard_html()
+
+        self.assertIn("async function cancelRecapture(", html)
+        self.assertIn("method: 'DELETE'", html.split("async function cancelRecapture(", 1)[1])
+        # It stays live while a capture runs, and reads as a stop.
+        self.assertIn("'증적 재수집 중지' : '증적 재수집'", html)
+        self.assertIn("recapturing ? false : (!job || active)", html)
+        # And it knows which scan to stop even after the operator moved on.
+        self.assertIn("state.recapturingScanId", html.split("async function cancelRecapture(", 1)[1])
+
 
 if __name__ == "__main__":
     unittest.main()

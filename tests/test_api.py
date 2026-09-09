@@ -1734,6 +1734,53 @@ class RescanAndRecaptureTests(unittest.TestCase):
 
             self.assertEqual(payload["protocol"], "udp")
 
+    def test_a_recapture_can_be_stopped_once_it_has_started(self):
+        """Console capture costs a second or two a port, so a thousand ports
+        runs for the better part of an hour and holds the one recapture slot
+        the whole time. Started on the wrong scan, it could only be escaped by
+        closing the application."""
+        with tempfile.TemporaryDirectory() as tmp:
+            client, repo, scan_id = self._client_with_open_results(tmp)
+            started = threading.Event()
+            seen: list[bool] = []
+
+            def paced(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
+                from netroach.evidence import ScreenshotCaptureSummary
+
+                captured = 0
+                for result in list(results):
+                    started.set()
+                    for _ in range(200):
+                        if should_stop is not None and should_stop():
+                            break
+                        time.sleep(0.01)
+                    if should_stop is not None and should_stop():
+                        seen.append(True)
+                        break
+                    store(result, PNG_HEADER, "shot.png", None, "web_screenshot", "test")
+                    captured += 1
+                return ScreenshotCaptureSummary(candidates=1, captured=captured, failed=0)
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=paced):
+                client.post(f"/v1/scans/{scan_id}/evidence/recapture",
+                            json={"screenshot_max": 50, "capture_console": False})
+                self.assertTrue(started.wait(timeout=10))
+                stopped = client.delete(f"/v1/scans/{scan_id}/evidence/recapture")
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+
+            self.assertEqual(stopped.status_code, 200)
+            self.assertTrue(stopped.json()["cancelled"])
+            self.assertEqual(seen, [True], "the capture never saw the stop")
+            progress = client.get(f"/v1/scans/{scan_id}/evidence/recapture").json()
+            self.assertFalse(progress["running"])
+            self.assertTrue(progress["cancelled"])
+            # The slot is free again, so another scan can be captured.
+            self.assertEqual(
+                client.delete(f"/v1/scans/{scan_id}/evidence/recapture").status_code, 400
+            )
+
     def test_a_folded_scan_does_not_blame_the_report_limit(self):
         """A port folded into a count has no row, so it is not something the
         report left out. Counting it as omitted made a scan five thousand rows
@@ -1775,7 +1822,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
             client, repo, scan_id = self._client_with_open_results(tmp)
             captured = []
 
-            def fake_capture(results, *, store, timeout_ms, maximum, capture_console):
+            def fake_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
                 for result in list(results):
                     captured.append((result["host"], result["port"]))
                     store(result, PNG_HEADER, "shot.png", None, "web_screenshot", "test")
@@ -1807,7 +1854,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
             started = threading.Event()
             release = threading.Event()
 
-            def blocking_capture(results, *, store, timeout_ms, maximum, capture_console):
+            def blocking_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 started.set()
@@ -1868,7 +1915,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
             first_stored = threading.Event()
             release = threading.Event()
 
-            def paced_capture(results, *, store, timeout_ms, maximum, capture_console):
+            def paced_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 rows = list(results)
@@ -1935,7 +1982,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
             started = threading.Event()
             release = threading.Event()
 
-            def blocking(results, *, store, timeout_ms, maximum, capture_console):
+            def blocking(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 started.set()
@@ -1967,7 +2014,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
                 )
             captured = []
 
-            def fake_capture(results, *, store, timeout_ms, maximum, capture_console):
+            def fake_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 for result in list(results):
@@ -1997,7 +2044,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
                 file_name="by-hand.png", evidence_type="manual",
             )
 
-            def fake_capture(results, *, store, timeout_ms, maximum, capture_console):
+            def fake_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 for result in list(results):

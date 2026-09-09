@@ -650,6 +650,7 @@ def create_app(
             "started_at": _now_iso(),
             "finished_at": None,
             "error": None,
+            "cancelled": False,
         }
         recapture_progress[scan_id] = state
 
@@ -674,12 +675,26 @@ def create_app(
                 "on_finished": finished,
                 "on_captured": captured_one,
                 "on_error": failed,
+                # Console capture takes a second or two a port, so a thousand
+                # of them runs for the better part of an hour - and holds the
+                # one recapture slot the whole time. Started on the wrong scan,
+                # it was unstoppable short of closing the application.
+                "should_stop": lambda: bool(state["cancelled"]),
             },
             name=f"netroach-evidence-{scan_id[:8]}",
             daemon=True,
         )
         thread.start()
         return {"status": "started", "pending": pending, "limit": request.screenshot_max}
+
+    @app.delete("/v1/scans/{scan_id}/evidence/recapture")
+    def cancel_recapture(scan_id: str) -> dict[str, object]:
+        """Stop a capture in progress after the port it is on."""
+        state = recapture_progress.get(scan_id)
+        if state is None or not state["running"]:
+            raise _bad_request(ValueError("no evidence capture is running for this scan"))
+        state["cancelled"] = True
+        return {"scan_id": scan_id, "cancelled": True, "captured": state["captured"]}
 
     @app.get("/v1/scans/{scan_id}/evidence/recapture")
     def recapture_progress_state(scan_id: str) -> dict[str, object]:
@@ -989,6 +1004,7 @@ def _run_evidence_recapture(
     on_finished: Callable[[], None] | None = None,
     on_captured: Callable[[], None] | None = None,
     on_error: Callable[[str], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> None:
     """Collect evidence for results a finished scan already recorded.
 
@@ -1006,6 +1022,7 @@ def _run_evidence_recapture(
             screenshot_max=screenshot_max,
             capture_console=capture_console,
             on_captured=on_captured,
+            should_stop=should_stop,
         )
     except Exception as exc:  # noqa: BLE001 - a thread's traceback goes nowhere.
         # This runs on its own thread, so an exception here used to vanish: the
@@ -1043,6 +1060,7 @@ def _capture_stored_evidence(
     screenshot_max: int,
     capture_console: bool,
     on_captured: Callable[[], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> None:
     # A recapture redoes the scan's evidence rather than filling its gaps: the
     # reason to run one is that what is there was taken with the wrong
@@ -1100,6 +1118,7 @@ def _capture_stored_evidence(
         timeout_ms=screenshot_timeout_ms,
         maximum=screenshot_max,
         capture_console=capture_console,
+        should_stop=should_stop,
     )
     repo.record_evidence_capture_failures(
         scan_id,
