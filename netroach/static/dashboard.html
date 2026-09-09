@@ -1333,6 +1333,22 @@
             <div class="band-head"><h3>실행 환경 진단</h3></div>
             <div class="kv" id="diagnosticsTable"></div>
           </section>
+          <section class="band">
+            <div class="band-head"><h3>다른 기기의 결과 불러오기</h3></div>
+            <div class="band-body">
+              <p class="hint">다른 기기의 <code>netroach.db</code> 경로를 입력하세요. 증적 이미지는
+                같은 폴더의 <code>netroach-artifacts</code>에서 함께 가져옵니다. 기존 결과는 지워지지
+                않고, 이미 있는 스캔은 건너뜁니다.</p>
+              <div class="field">
+                <label for="mergeDbPath">netroach.db 경로</label>
+                <input id="mergeDbPath" type="text" placeholder="D:\Netroach\netroach.db">
+              </div>
+              <div class="view-actions">
+                <button type="button" id="mergeDbRun">불러오기</button>
+              </div>
+              <div class="kv" id="mergeDbResult"></div>
+            </div>
+          </section>
         </section>
       </main>
     </div>
@@ -1843,6 +1859,40 @@
       $('scanPorts').value = '';
       $('scanProfile').value = '';
       renderScanEstimate();
+    }
+
+    // The file is routinely gigabytes and the evidence tree beside it has to
+    // come too, so the backend is given a path to read rather than an upload
+    // to receive - it is running on this machine already.
+    async function mergeDatabase() {
+      const input = $('mergeDbPath');
+      const button = $('mergeDbRun');
+      const output = $('mergeDbResult');
+      const path = input.value.trim();
+      if (!path) {
+        output.innerHTML = '<div class="metric-warning">경로를 입력하세요.</div>';
+        return;
+      }
+      button.disabled = true;
+      output.innerHTML = '<div class="hint">불러오는 중…</div>';
+      try {
+        const counts = await api('/v1/db/merge', {method: 'POST', body: JSON.stringify({path})});
+        const rows = [
+          ['스캔', counts.scan_jobs],
+          ['결과', counts.port_results],
+          ['접힌 상태', counts.scan_state_counts],
+          ['증적 기록', counts.result_evidence_files],
+          ['증적 이미지', counts.evidence_files]
+        ];
+        output.innerHTML = rows
+          .map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${Number(value || 0).toLocaleString()}</strong></div>`)
+          .join('');
+        await refreshScans();
+      } catch (error) {
+        output.innerHTML = `<div class="metric-warning">${escapeHtml(error.message)}</div>`;
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function api(path, options = {}) {
@@ -3271,6 +3321,7 @@ ${health.db}` : '데이터베이스 없음';
     $('oastRefresh').addEventListener('click', () => refreshOast());
     $('pluginsRefresh').addEventListener('click', refreshPlugins);
     $('diagnosticsRefresh').addEventListener('click', refreshHealth);
+    $('mergeDbRun').addEventListener('click', mergeDatabase);
     $('packetTemplate').addEventListener('change', updatePacketFields);
     $('scanPorts').addEventListener('input', () => {
       if ($('scanPorts').value.trim()) {

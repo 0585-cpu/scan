@@ -1053,5 +1053,80 @@ class CollapsedStateTests(unittest.TestCase):
             self.assertEqual(len(restored.get_result_keys(scan_id, protocol="tcp")), 2000)
 
 
+_PNG_BYTES = bytes([137, 80, 78, 71, 13, 10, 26, 10]) + b"shot"
+
+
+class DatabaseMergeTests(unittest.TestCase):
+    """Loading another machine's Netroach data folder into this one."""
+
+    def _populate(self, path, *, host):
+        repo = SQLiteRepository(path)
+        scan_id = repo.create_scan_job(targets=host, ports="1-100", scope=[], params={})
+        repo.add_port_results(
+            [
+                PortResult(
+                    scan_id=scan_id, host=host, port=80, protocol="tcp",
+                    state="open", latency_ms=1.0,
+                )
+            ]
+            + [
+                PortResult(
+                    scan_id=scan_id, host=host, port=port, protocol="tcp",
+                    state="filtered", latency_ms=None,
+                )
+                for port in range(1000, 1100)
+            ]
+        )
+        repo.add_result_evidence(
+            scan_id, host=host, port=80, data=_PNG_BYTES, file_name="shot.png"
+        )
+        return repo, scan_id
+
+    def test_another_databases_scans_results_and_evidence_are_merged_in(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, source_scan = self._populate(Path(tmp) / "source" / "netroach.db", host="10.0.0.1")
+            target, target_scan = self._populate(Path(tmp) / "target" / "netroach.db", host="192.168.0.1")
+
+            counts = target.import_from_database(source.path)
+
+            self.assertEqual(counts["scan_jobs"], 1)
+            # Both scans are present: importing adds, it does not replace.
+            self.assertEqual({str(job["id"]) for job in target.list_jobs(limit=10)},
+                             {source_scan, target_scan})
+            self.assertEqual(target.count_results_by_state(source_scan), {"open": 1, "filtered": 100})
+            evidence = target.list_result_evidence(source_scan, host="10.0.0.1", port=80)
+            self.assertEqual(len(evidence), 1)
+            found = target.get_evidence_content(evidence[0]["id"])
+            self.assertIsNotNone(found, "the evidence image itself has to travel with the row")
+            self.assertEqual(found[1].read_bytes(), _PNG_BYTES)
+
+    def test_importing_the_same_database_twice_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, source_scan = self._populate(Path(tmp) / "source" / "netroach.db", host="10.0.0.1")
+            target = SQLiteRepository(Path(tmp) / "target" / "netroach.db")
+
+            target.import_from_database(source.path)
+            target.import_from_database(source.path)
+
+            self.assertEqual(len(target.list_jobs(limit=10)), 1)
+            self.assertEqual(target.count_results_by_state(source_scan), {"open": 1, "filtered": 100})
+
+    def test_importing_a_file_that_is_not_a_database_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = SQLiteRepository(Path(tmp) / "netroach.db")
+            junk = Path(tmp) / "notes.txt"
+            junk.write_text("not a database", encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                target.import_from_database(junk)
+
+    def test_importing_a_missing_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = SQLiteRepository(Path(tmp) / "netroach.db")
+
+            with self.assertRaises(ValueError):
+                target.import_from_database(Path(tmp) / "nothing.db")
+
+
 if __name__ == "__main__":
     unittest.main()

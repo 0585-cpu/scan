@@ -447,6 +447,19 @@ class DashboardHostViewTests(unittest.TestCase):
         body = html.split("function groupResultsByHost(", 1)[1].split(chr(10) + "    }", 1)[0]
         self.assertIn("localeCompare(b.host", body)
 
+    def test_another_machines_database_can_be_loaded_from_the_ui(self):
+        """Copying the folder in by hand needs the app closed and the paths right."""
+        html = dashboard_html()
+
+        self.assertIn('id="mergeDbPath"', html)
+        self.assertIn('id="mergeDbRun"', html)
+        self.assertIn("function mergeDatabase(", html)
+        body = html.split("function mergeDatabase(", 1)[1].split(chr(10) + "    }", 1)[0]
+        # A path, not an upload: the file is routinely gigabytes.
+        self.assertIn("'/v1/db/merge'", body)
+        self.assertIn("JSON.stringify({path})", body)
+        self.assertIn("netroach-artifacts", html)
+
     def test_a_scan_that_recorded_more_than_it_planned_says_so(self):
         """Folded counts can double; a fifteen-million total cannot be eyeballed."""
         html = dashboard_html()

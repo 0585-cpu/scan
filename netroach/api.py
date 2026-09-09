@@ -174,6 +174,10 @@ class DatabaseImportRequest(BaseModel):
     replace: bool = False
 
 
+class DatabaseMergeRequest(BaseModel):
+    path: str
+
+
 class OastSessionCreateRequest(BaseModel):
     label: str | None = None
     base_url: str | None = None
@@ -785,6 +789,19 @@ def create_app(
         try:
             return repo.import_database(request.data, replace=request.replace)
         except Exception as exc:  # noqa: BLE001
+            raise _bad_request(exc) from exc
+
+    @app.post("/v1/db/merge")
+    def merge_database(request: DatabaseMergeRequest) -> dict[str, int]:
+        """Load another machine's netroach.db, and the images beside it.
+
+        Takes a path rather than an upload: the file can be gigabytes, the
+        caller is on this machine already, and the evidence tree next to it
+        has to come along.
+        """
+        try:
+            return repo.import_from_database(request.path)
+        except ValueError as exc:
             raise _bad_request(exc) from exc
 
     return app

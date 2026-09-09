@@ -1541,6 +1541,113 @@ class SQLiteRepository:
             ).fetchall()
         return [_oast_interaction_row_to_dict(row) for row in rows]
 
+    # Every table a scan's findings live in, in the order a foreign key needs
+    # them: a result cannot land before the job it belongs to.
+    MERGED_TABLES = (
+        "scan_jobs",
+        "port_results",
+        "scan_state_counts",
+        "result_evidence_files",
+        "pcap_analyses",
+        "packet_audit",
+        "oast_sessions",
+        "oast_interactions",
+    )
+
+    def import_from_database(self, source: str | Path) -> dict[str, int]:
+        """Merge another Netroach database, and its evidence images, into this one.
+
+        Written for the ordinary case of carrying a scan back from the machine
+        that ran it: point at that machine's netroach.db and the images beside
+        it come too. Rows are added rather than replacing what is here, and a
+        row already present is left alone - importing the same database twice
+        does nothing the second time.
+
+        The copy runs in SQLite rather than Python because the alternative,
+        reading every row out as JSON with the images base64-encoded, needs the
+        whole scan in memory at once.
+        """
+        source_path = Path(source)
+        if not source_path.is_file():
+            raise ValueError(f"database not found: {source_path}")
+        # sqlite3's context manager ends the transaction but leaves the
+        # connection open, which on Windows keeps a lock on the file.
+        try:
+            probe = sqlite3.connect(f"file:{source_path.as_posix()}?mode=ro", uri=True)
+        except sqlite3.DatabaseError as exc:
+            raise ValueError(f"could not open database: {source_path}") from exc
+        try:
+            probe.execute("SELECT 1 FROM scan_jobs LIMIT 1").fetchall()
+        except sqlite3.DatabaseError as exc:
+            raise ValueError(f"not a Netroach database: {source_path}") from exc
+        finally:
+            probe.close()
+
+        counts: dict[str, int] = {}
+        # Its own connection: ATTACH only reads a file: URI when the connection
+        # was opened in URI mode, and the source is attached read-only so an
+        # import cannot write to the database it was handed.
+        conn = sqlite3.connect(self.path, uri=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        try:
+            conn.execute("ATTACH DATABASE ? AS source", (f"file:{source_path.as_posix()}?mode=ro",))
+            try:
+                for table in self.MERGED_TABLES:
+                    columns = [
+                        str(row["name"])
+                        for row in conn.execute(f"PRAGMA source.table_info({table})").fetchall()
+                        # A rowid surrogate means nothing outside its own
+                        # database: carrying it over would collide with a row
+                        # this database already numbered, and INSERT OR IGNORE
+                        # would silently drop the incoming one. Let SQLite
+                        # assign a new one and conflict on the real key.
+                        if not (row["pk"] and str(row["type"]).upper() == "INTEGER")
+                    ]
+                    if not columns:
+                        # An older database may predate the table entirely.
+                        counts[table] = 0
+                        continue
+                    names = ", ".join(columns)
+                    cursor = conn.execute(
+                        f"INSERT OR IGNORE INTO main.{table}({names}) SELECT {names} FROM source.{table}"
+                    )
+                    counts[table] = cursor.rowcount if cursor.rowcount > 0 else 0
+                conn.commit()
+            finally:
+                conn.execute("DETACH DATABASE source")
+        finally:
+            conn.close()
+
+        counts["evidence_files"] = self._copy_evidence_tree(
+            source_path.parent / f"{source_path.stem}-artifacts"
+        )
+        return counts
+
+    def _copy_evidence_tree(self, source_root: Path) -> int:
+        """Bring the images across, keeping the paths the rows already record.
+
+        Stored paths are relative to the evidence root and start with the scan
+        id, so two machines' trees can be laid on top of each other without
+        colliding. A file already here is left as it is: it is addressed by a
+        uuid, so a name that matches is the same image.
+        """
+        if not source_root.is_dir():
+            return 0
+        destination_root = self.evidence_root
+        copied = 0
+        for source_file in source_root.rglob("*"):
+            if not source_file.is_file():
+                continue
+            destination = destination_root / source_file.relative_to(source_root)
+            if destination.exists():
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_file, destination)
+            copied += 1
+        return copied
+
     def export_database(self) -> dict[str, Any]:
         with self.session() as conn:
             job_rows = conn.execute(

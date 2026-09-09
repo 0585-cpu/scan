@@ -1619,5 +1619,49 @@ rate_limit_per_sec = 13
                 self.assertEqual(client.get("/v1/health").status_code, 200)
 
 
+@unittest.skipUnless(has_fastapi_testclient(), "fastapi TestClient dependencies are not installed")
+class DatabaseMergeEndpointTests(unittest.TestCase):
+    def test_merging_another_database_reports_what_it_loaded(self):
+        from fastapi.testclient import TestClient
+
+        from netroach.api import create_app
+        from netroach.models import PortResult
+        from netroach.storage import SQLiteRepository
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = SQLiteRepository(Path(tmp) / "other" / "netroach.db")
+            scan_id = source.create_scan_job(targets="10.0.0.1", ports="80", scope=[], params={})
+            source.add_port_results(
+                [
+                    PortResult(
+                        scan_id=scan_id, host="10.0.0.1", port=80, protocol="tcp",
+                        state="open", latency_ms=1.0,
+                    )
+                ]
+            )
+            client = TestClient(create_app(str(Path(tmp) / "netroach.db")))
+
+            response = client.post("/v1/db/merge", json={"path": str(source.path)})
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["scan_jobs"], 1)
+            listed = client.get("/v1/scans").json()
+            self.assertEqual([job["id"] for job in listed["scans"]], [scan_id])
+
+    def test_merging_something_that_is_not_a_database_is_a_bad_request(self):
+        from fastapi.testclient import TestClient
+
+        from netroach.api import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            junk = Path(tmp) / "notes.txt"
+            junk.write_text("nope", encoding="utf-8")
+            client = TestClient(create_app(str(Path(tmp) / "netroach.db")))
+
+            response = client.post("/v1/db/merge", json={"path": str(junk)})
+
+            self.assertEqual(response.status_code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()
