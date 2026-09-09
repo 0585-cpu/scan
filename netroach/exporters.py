@@ -250,10 +250,12 @@ def format_results_xlsx(
 # row, matching the workbook an assessment is handed in. 구분 and 비고 are the
 # assessor's columns and are left empty on purpose.
 _REPORT_HEADERS = ("번호", "구분", "IP", "포트번호", "서비스 명", "상세내용", "증적", "비고")
-_REPORT_COLUMN_WIDTHS = {"A": 10.6, "B": 15.6, "C": 35.6, "D": 20.6, "E": 20.6, "F": 55.6, "G": 120.6, "H": 40.6}
+_REPORT_COLUMN_WIDTHS = {"A": 10.6, "B": 15.6, "C": 35.6, "D": 20.6, "E": 20.6, "F": 55.6, "G": 164.6, "H": 40.6}
 # The evidence box in column G, in pixels. A screenshot keeps its proportions
-# inside it rather than being stretched to fill it.
-_REPORT_EVIDENCE_BOX = (840, 260)
+# inside it rather than being stretched to fill it. Wide enough to hold a
+# console capture at its own size: scaling one down to a narrower column is
+# paid for by the netstat line, which is the thing being evidenced.
+_REPORT_EVIDENCE_BOX = (1150, 260)
 _REPORT_ROW_HEIGHT = 200.1
 
 # Service names as an assessment report writes them, not as a scanner prints

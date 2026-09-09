@@ -48,7 +48,7 @@ TELNET_PANE_WIDTH_RATIO = 0.36
 CONSOLE_WINDOW_SIZE = (770, 300)
 # The evidence cell of the report the capture is pasted into. Anything wider
 # is scaled down there, and the console text is what the scaling costs.
-COMPOSED_TARGET_WIDTH = 960
+COMPOSED_TARGET_WIDTH = 1150
 # Rows of background left under the last line of output before cropping.
 CONTENT_MARGIN_PX = 12
 # A row counts as content only past this many differing pixels, so a stray
