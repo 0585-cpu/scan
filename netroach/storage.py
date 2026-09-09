@@ -1104,13 +1104,17 @@ class SQLiteRepository:
         hosts that answered on four hundred ports between them therefore probes
         more than it found - still a rounding error against the range the ports
         were found in.
+
+        `open|filtered` counts as open here, as it does everywhere else in this
+        module: it is what a UDP scan calls a port that did not refuse, and
+        leaving it out would give a UDP scan nothing to re-scan.
         """
         with self.session() as conn:
             rows = conn.execute(
                 """
                 SELECT DISTINCT host, port
                 FROM port_results
-                WHERE scan_id=? AND state='open'
+                WHERE scan_id=? AND state IN ('open', 'open|filtered')
                 """,
                 (scan_id,),
             ).fetchall()

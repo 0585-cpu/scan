@@ -1735,6 +1735,41 @@ class RescanAndRecaptureTests(unittest.TestCase):
             self.assertEqual(sorted(captured), [("10.0.0.1", 443), ("10.0.0.2", 80)])
             self.assertEqual(len(repo.list_result_evidence(scan_id, host="10.0.0.2", port=80)), 1)
 
+    def test_a_second_recapture_is_refused_while_the_first_runs(self):
+        """A candidate stops being one only once its evidence is stored, so two
+        runs started together photograph the same ports twice."""
+        with tempfile.TemporaryDirectory() as tmp:
+            client, _repo, scan_id = self._client_with_open_results(tmp)
+            started = threading.Event()
+            release = threading.Event()
+
+            def blocking_capture(results, *, store, timeout_ms, maximum, capture_console):
+                from netroach.evidence import ScreenshotCaptureSummary
+
+                started.set()
+                release.wait(timeout=30)
+                return ScreenshotCaptureSummary(candidates=0, captured=0, failed=0)
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=blocking_capture):
+                first = client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={})
+                self.assertTrue(started.wait(timeout=30))
+                second = client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={})
+                release.set()
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 400)
+            # And the guard is released, so a later run is allowed.
+            with patch("netroach.api.capture_automatic_evidence", side_effect=blocking_capture):
+                release.set()
+                third = client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={})
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+            self.assertEqual(third.status_code, 200)
+
     def test_a_scan_with_every_port_photographed_is_left_alone(self):
         with tempfile.TemporaryDirectory() as tmp:
             client, repo, scan_id = self._client_with_open_results(tmp)

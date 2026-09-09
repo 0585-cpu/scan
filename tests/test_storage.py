@@ -1207,6 +1207,21 @@ class OpenResultTargetsTests(unittest.TestCase):
             self.assertEqual(targets, ["10.0.0.1", "10.0.0.2"])
             self.assertEqual(ports, [80, 81, 443])
 
+    def test_a_udp_scans_open_filtered_ports_count_as_open(self):
+        """It is what a UDP scan calls a port that did not refuse; leaving it
+        out would give a UDP scan nothing to re-scan."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
+            scan_id = repo.create_scan_job(targets="10.0.0.1", ports="53", scope=[], params={})
+            repo.add_port_results(
+                [
+                    PortResult(scan_id=scan_id, host="10.0.0.1", port=53, protocol="udp",
+                               state="open|filtered", latency_ms=None),
+                ]
+            )
+
+            self.assertEqual(repo.open_result_targets(scan_id), (["10.0.0.1"], [53]))
+
     def test_a_scan_with_nothing_open_gives_nothing_back(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "netroach.db")

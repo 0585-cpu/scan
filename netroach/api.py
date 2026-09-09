@@ -207,6 +207,10 @@ def create_app(
     api_token: str | None = None,
 ) -> FastAPI:
     repo = SQLiteRepository(db_path)
+    # Scoped to this application rather than the module: a test that builds two
+    # apps must not have one hold the other's scan.
+    recapture_lock = threading.Lock()
+    recapture_running: set[str] = set()
     app_config = load_config(config_path)
     plugin_catalog = load_effective_plugin_catalog(app_config, plugin_paths)
     resolved_plugin_paths = tuple(plugin.path for plugin in plugin_catalog.plugins if plugin.path)
@@ -613,6 +617,13 @@ def create_app(
         pending = repo.count_automatic_evidence_candidates(scan_id)
         if not pending:
             return {"status": "nothing to capture", "pending": 0}
+        # A candidate stops being one once its evidence is stored, so two runs
+        # started before either has stored anything both photograph the same
+        # ports - and a port ends up with the same screenshot twice.
+        with recapture_lock:
+            if scan_id in recapture_running:
+                raise _bad_request(ValueError("evidence is already being captured for this scan"))
+            recapture_running.add(scan_id)
         thread = threading.Thread(
             target=_run_evidence_recapture,
             args=(str(repo.path), scan_id),
@@ -620,6 +631,7 @@ def create_app(
                 "screenshot_timeout_ms": request.screenshot_timeout_ms,
                 "screenshot_max": request.screenshot_max,
                 "capture_console": request.capture_console,
+                "on_finished": lambda: _release_recapture(recapture_lock, recapture_running, scan_id),
             },
             name=f"netroach-evidence-{scan_id[:8]}",
             daemon=True,
@@ -921,6 +933,7 @@ def _run_evidence_recapture(
     screenshot_timeout_ms: int,
     screenshot_max: int,
     capture_console: bool,
+    on_finished: Callable[[], None] | None = None,
 ) -> None:
     """Collect evidence for results a finished scan already recorded.
 
@@ -930,6 +943,32 @@ def _run_evidence_recapture(
     scan behind it.
     """
     repo = SQLiteRepository(db_path)
+    try:
+        _capture_stored_evidence(
+            repo,
+            scan_id,
+            screenshot_timeout_ms=screenshot_timeout_ms,
+            screenshot_max=screenshot_max,
+            capture_console=capture_console,
+        )
+    finally:
+        if on_finished is not None:
+            on_finished()
+
+
+def _release_recapture(lock: threading.Lock, running: set[str], scan_id: str) -> None:
+    with lock:
+        running.discard(scan_id)
+
+
+def _capture_stored_evidence(
+    repo: SQLiteRepository,
+    scan_id: str,
+    *,
+    screenshot_timeout_ms: int,
+    screenshot_max: int,
+    capture_console: bool,
+) -> None:
     eligible = repo.count_automatic_evidence_candidates(scan_id)
     candidates = repo.get_automatic_evidence_candidates(scan_id, limit=screenshot_max)
     if not candidates:
