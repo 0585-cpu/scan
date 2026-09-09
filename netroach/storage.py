@@ -1302,7 +1302,7 @@ class SQLiteRepository:
                 """
                 SELECT COUNT(DISTINCT host) AS count
                 FROM port_results
-                WHERE scan_id=? AND state='open'
+                WHERE scan_id=? AND state IN ('open', 'open|filtered')
                 """,
                 (scan_id,),
             ).fetchone()
@@ -2167,7 +2167,12 @@ class SQLiteRepository:
         search: str | None,
     ) -> tuple[str, list[Any]]:
         if open_only:
-            query += " AND state='open'"
+            # `open|filtered` counts as open here too, as the rest of this
+            # module already has it: it is what a UDP scan calls a port that
+            # did not refuse. Exporting only the exact state left a UDP scan's
+            # findings out of the assessment workbook while the summary, the
+            # evidence pass and the re-scan all went on counting them.
+            query += " AND state IN ('open', 'open|filtered')"
         if state:
             query += " AND state=?"
             params.append(state)

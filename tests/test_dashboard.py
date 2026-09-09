@@ -566,11 +566,14 @@ class DashboardHostViewTests(unittest.TestCase):
 
     def test_the_assessment_workbook_is_reachable_and_lists_findings_only(self):
         """It is the shape a report is handed in, and a closed port is not a
-        finding - the link asks for open results rather than the whole scan."""
+        finding - the link asks for open results rather than the whole scan.
+
+        open_only rather than state=open: a UDP port that did not refuse is a
+        finding too, and its state is open|filtered."""
         html = dashboard_html()
 
         self.assertIn('id="scanExportReport"', html)
-        self.assertIn("format=report-xlsx&state=open", html)
+        self.assertIn("format=report-xlsx&open_only=true", html)
 
     def test_a_scan_that_photographed_only_some_of_its_ports_says_so(self):
         """Ports past the capture limit are never tried, so nothing fails and

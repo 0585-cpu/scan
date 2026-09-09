@@ -57,6 +57,14 @@ def build_scan_report(
         else summarize_results(results)
     )
     open_results = [result for result in results if result.get("state") == "open"]
+    # A UDP port that did not refuse is open|filtered, and the host holding it
+    # has something open as far as this scan can tell. The services breakdown
+    # below stays on the exact state: only a correlated reply names a service.
+    answering_hosts = {
+        result.get("host")
+        for result in results
+        if result.get("state") in {"open", "open|filtered"}
+    }
     annotated = [
         result
         for result in results
@@ -66,7 +74,7 @@ def build_scan_report(
         "states": dict(Counter(str(result.get("state") or "unknown") for result in results)),
         "protocols": dict(Counter(str(result.get("protocol") or "unknown") for result in results)),
         "services": top_counter(result.get("service_name") or "unknown" for result in open_results),
-        "hosts_with_open_ports": len({result.get("host") for result in open_results}),
+        "hosts_with_open_ports": len(answering_hosts),
     }
     supplied: dict[str, Any] = counts or {}
     report_counts = {

@@ -1130,6 +1130,60 @@ class DatabaseMergeTests(unittest.TestCase):
 
             self.assertEqual(target.count_results_by_state(source_scan), {"open": 1, "filtered": 100})
 
+    def test_a_udp_scans_hosts_are_counted_as_holding_something_open(self):
+        """The report card reads "open 포트 보유 호스트". A UDP scan whose ports
+        are open|filtered used to put 0 there while listing them as open."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
+            scan_id = repo.create_scan_job(
+                targets="10.0.0.1,10.0.0.2", ports="161", scope=[], params={"protocol": "udp"}
+            )
+            repo.mark_scan_started(scan_id)
+            repo.add_port_results([
+                PortResult(scan_id=scan_id, host="10.0.0.1", port=161, protocol="udp",
+                           state="open|filtered", latency_ms=None),
+                PortResult(scan_id=scan_id, host="10.0.0.2", port=161, protocol="udp",
+                           state="open|filtered", latency_ms=None),
+                PortResult(scan_id=scan_id, host="10.0.0.3", port=161, protocol="udp",
+                           state="closed", latency_ms=1.0),
+            ])
+
+            counts = repo.summarize_report_counts(scan_id)
+
+            self.assertEqual(counts["hosts_with_open_ports"], 2)
+
+    def test_open_only_carries_the_state_a_udp_port_answers_with(self):
+        """The assessment workbook is exported with this filter. A UDP port
+        that did not refuse is open|filtered, and the summary, the evidence
+        pass and the re-scan all count it - leaving it out here dropped a UDP
+        scan's findings out of the report while the app went on reporting them."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
+            scan_id = repo.create_scan_job(
+                targets="10.0.0.1", ports="53,161", scope=[], params={"protocol": "udp"}
+            )
+            repo.mark_scan_started(scan_id)
+            repo.add_port_results([
+                PortResult(scan_id=scan_id, host="10.0.0.1", port=53, protocol="udp",
+                           state="open", latency_ms=2.0),
+                PortResult(scan_id=scan_id, host="10.0.0.1", port=161, protocol="udp",
+                           state="open|filtered", latency_ms=None),
+                PortResult(scan_id=scan_id, host="10.0.0.1", port=99, protocol="udp",
+                           state="closed", latency_ms=1.0),
+            ])
+
+            exported = repo.get_results(scan_id, open_only=True)
+
+            self.assertEqual(
+                {(row["port"], row["state"]) for row in exported},
+                {(53, "open"), (161, "open|filtered")},
+            )
+            self.assertEqual(len(exported), repo.count_open_results(scan_id))
+            # state= stays an exact filter: it is how an operator narrows to one.
+            self.assertEqual(
+                [row["port"] for row in repo.get_results(scan_id, state="open|filtered")], [161]
+            )
+
     def test_importing_a_file_that_is_not_a_database_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = SQLiteRepository(Path(tmp) / "netroach.db")

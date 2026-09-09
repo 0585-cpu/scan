@@ -2463,7 +2463,9 @@ ${health.db}` : '데이터베이스 없음';
       );
       setScanLinkState('scanExportXlsx', true, `/v1/scans/${scan}/export?format=xlsx${suffix}`);
       // The assessment workbook lists findings, and a closed port is not one.
-      setScanLinkState('scanExportReport', true, `/v1/scans/${scan}/export?format=report-xlsx&state=open`);
+      // open_only rather than state=open: a UDP port that did not refuse is a
+      // finding the report has to carry, and its state is open|filtered.
+      setScanLinkState('scanExportReport', true, `/v1/scans/${scan}/export?format=report-xlsx&open_only=true`);
     }
 
     // Evidence lives on results that are already stored, so a scan whose
