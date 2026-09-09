@@ -2407,7 +2407,9 @@ ${health.db}` : '데이터베이스 없음';
       updateScanActionState();
       renderScanJobs();
       renderOverviewScans();
-      await Promise.allSettled([refreshScanProgress(), refreshScanResults()]);
+      await Promise.allSettled([
+        refreshScanProgress(), refreshScanResults(), resumeRecaptureWatch(scanId),
+      ]);
       if (state.resultTab === 'hosts') renderHostRows();
     }
 
@@ -2487,30 +2489,51 @@ ${health.db}` : '데이터베이스 없음';
     async function watchRecaptureProgress(scanId) {
       if (state.recaptureWatch) clearTimeout(state.recaptureWatch);
       const tick = async () => {
-        if (state.scanId !== scanId) return;
         try {
           const progress = await api(`/v1/scans/${encodeURIComponent(scanId)}/evidence/recapture`);
           const done = Number(progress.captured || 0);
           const total = Number(progress.total || 0);
+          // The run belongs to the scan that started it, not to whatever is
+          // selected now, so say which one when the two have parted.
+          const whose = scanId === state.scanId ? '' : ` (스캔 ${shortId(scanId)})`;
           if (progress.error) {
-            setStatus('scanSecondaryStatus', `증적 재수집 실패: ${progress.error}`, true);
+            state.recaptureWatch = null;
+            setStatus('scanSecondaryStatus', `증적 재수집 실패${whose}: ${progress.error}`, true);
             await refreshScans();
             return;
           }
           if (progress.running) {
             setStatus('scanSecondaryStatus',
-              `증적 재수집 중… ${done.toLocaleString()} / ${total.toLocaleString()}`);
+              `증적 재수집 중…${whose} ${done.toLocaleString()} / ${total.toLocaleString()}`);
             state.recaptureWatch = setTimeout(tick, RECAPTURE_POLL_MS);
             return;
           }
+          state.recaptureWatch = null;
           setStatus('scanSecondaryStatus',
-            `증적 재수집 완료 · ${done.toLocaleString()} / ${total.toLocaleString()}건`);
-          await Promise.all([refreshScans(), refreshScanResults()]);
+            `증적 재수집 완료${whose} · ${done.toLocaleString()} / ${total.toLocaleString()}건`);
+          await refreshScans();
+          if (scanId === state.scanId) await refreshScanResults();
         } catch (error) {
+          state.recaptureWatch = null;
           setStatus('scanSecondaryStatus', error.message, true);
         }
       };
       state.recaptureWatch = setTimeout(tick, RECAPTURE_POLL_MS);
+    }
+
+    // A recapture outlives the selection that started it - it runs on the
+    // backend until the ports are done. Coming back to that scan picks its
+    // progress up again, and coming back to any other clears a line that
+    // would otherwise keep reporting a run that has nothing to do with it.
+    async function resumeRecaptureWatch(scanId) {
+      if (state.recaptureWatch) return;
+      setStatus('scanSecondaryStatus', '');
+      try {
+        const progress = await api(`/v1/scans/${encodeURIComponent(scanId)}/evidence/recapture`);
+        if (progress.running) watchRecaptureProgress(scanId);
+      } catch (error) {
+        // Nothing to report: the line is already empty.
+      }
     }
 
     // Fills the form rather than starting a scan: the authorization tick, the

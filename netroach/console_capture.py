@@ -64,7 +64,9 @@ def console_capture_supported() -> bool:
     return sys.platform == "win32"
 
 
-def build_connection_script(host: str, port: int, *, done_path: Path, hold_s: float = 20.0) -> str:
+def build_connection_script(
+    host: str, port: int, *, done_path: Path, hold_s: float = 20.0, title: str | None = None
+) -> str:
     """A session that proves the port answered, in the form a report shows it.
 
     The connection is still open while `netstat` runs, which is the whole point:
@@ -73,8 +75,11 @@ def build_connection_script(host: str, port: int, *, done_path: Path, hold_s: fl
     stops - before anything that could be taken for a login attempt.
     """
     safe_host = host.replace("'", "''")
+    # The title is how the capture finds its own window, so it carries the
+    # caller's token rather than only the port two scans might share.
+    safe_title = (title or f"Netroach {safe_host}:{port}").replace("'", "''")
     return (
-        f"$Host.UI.RawUI.WindowTitle = 'Netroach {safe_host}:{port}'; "
+        f"$Host.UI.RawUI.WindowTitle = '{safe_title}'; "
         # Broken over two lines so the window can be narrow. A capture wider
         # than the report's evidence cell is scaled down to fit it, and the
         # text is what pays for the width.
@@ -394,10 +399,14 @@ def capture_console_session(
     if not console_capture_supported():
         return None
     user32 = ctypes.windll.user32
-    token = f"Netroach {host}:{port}"
+    # The title is how the window is found, so it has to name this capture and
+    # not merely this port: two scans of the same range hold the same host and
+    # port, and a title they share would let one run photograph the other's
+    # window - or close it.
+    token = f"Netroach {host}:{port} {uuid.uuid4().hex[:8]}"
     with tempfile.TemporaryDirectory(prefix="netroach-console-") as tmp:
         done_path = Path(tmp) / f"{uuid.uuid4().hex}.done"
-        script = build_connection_script(host, port, done_path=done_path, hold_s=hold_s)
+        script = build_connection_script(host, port, done_path=done_path, hold_s=hold_s, title=token)
         try:
             # No stdin/stdout/stderr arguments on purpose. Naming any of them
             # makes Python pass the parent's handles explicitly, and the child

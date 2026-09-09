@@ -1854,6 +1854,43 @@ class RescanAndRecaptureTests(unittest.TestCase):
             self.assertFalse(state["running"])
             self.assertEqual(state["captured"], 0)
 
+    def test_only_one_recapture_runs_at_a_time_across_scans(self):
+        """Two runs share the desktop the console capture drives, and two scans
+        of the same range hold the same host and port."""
+        from netroach.models import PortResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client, repo, first = self._client_with_open_results(tmp)
+            second = repo.create_scan_job(targets="10.0.0.2", ports="80", scope=[], params={})
+            repo.mark_scan_started(second)
+            repo.add_port_results([
+                PortResult(scan_id=second, host="10.0.0.2", port=80, protocol="tcp",
+                           state="open", latency_ms=1.0),
+            ])
+            repo.complete_scan(second, repo.summarize_scan_results(second))
+            started = threading.Event()
+            release = threading.Event()
+
+            def blocking(results, *, store, timeout_ms, maximum, capture_console):
+                from netroach.evidence import ScreenshotCaptureSummary
+
+                started.set()
+                release.wait(timeout=30)
+                return ScreenshotCaptureSummary(candidates=0, captured=0, failed=0)
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=blocking):
+                one = client.post(f"/v1/scans/{first}/evidence/recapture", json={})
+                self.assertTrue(started.wait(timeout=30))
+                two = client.post(f"/v1/scans/{second}/evidence/recapture", json={})
+                release.set()
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+
+            self.assertEqual(one.status_code, 200)
+            self.assertEqual(two.status_code, 400)
+            self.assertIn(first[:8], two.json()["detail"]["error"])
+
     def test_a_port_that_already_has_evidence_is_photographed_again(self):
         """The reason to run a recapture is that what is there was taken with
         the wrong settings, so a port with a picture needs a new one most."""

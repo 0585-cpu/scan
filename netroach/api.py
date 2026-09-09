@@ -624,12 +624,18 @@ def create_app(
         pending = repo.count_open_results(scan_id)
         if not pending:
             return {"status": "nothing to capture", "pending": 0}
-        # A candidate stops being one once its evidence is stored, so two runs
-        # started before either has stored anything both photograph the same
-        # ports - and a port ends up with the same screenshot twice.
+        # One at a time across the whole application, not one per scan. A
+        # candidate stops being one only once its evidence is stored, so two
+        # runs over the same scan both photograph the same ports; and two runs
+        # over different scans still share the desktop the console capture
+        # drives, where a second run's window can be photographed in place of
+        # the first's when the two scans hold the same host and port.
         with recapture_lock:
-            if scan_id in recapture_running:
-                raise _bad_request(ValueError("evidence is already being captured for this scan"))
+            if recapture_running:
+                busy = next(iter(recapture_running))
+                raise _bad_request(
+                    ValueError(f"evidence is already being captured for scan {busy[:8]}")
+                )
             recapture_running.add(scan_id)
         planned = min(pending, request.screenshot_max)
         state: dict[str, object] = {

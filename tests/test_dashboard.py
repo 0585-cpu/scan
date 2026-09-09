@@ -660,5 +660,22 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertNotIn("state.scanResult", hosts_branch)
 
 
+    def test_recapture_progress_survives_looking_at_another_scan(self):
+        """The capture runs on the backend for as long as the ports take. The
+        poll used to stop the moment the operator clicked a different job,
+        leaving a count frozen mid-run and never resuming - so a second scan's
+        recapture looked like it had simply done nothing."""
+        html = dashboard_html()
+
+        watch = html.split("async function watchRecaptureProgress(scanId) {", 1)[1]
+        tick = watch.split("const tick = async () => {", 1)[1].split("state.recaptureWatch = setTimeout(tick", 1)[0]
+        self.assertNotIn("if (state.scanId !== scanId) return;", tick)
+        # It says whose run it is once the selection has moved on.
+        self.assertIn("scanId === state.scanId ? '' : ` (스캔 ${shortId(scanId)})`", watch)
+        # And picking that scan again resumes the count rather than showing a
+        # stale line from whatever ran last.
+        self.assertIn("resumeRecaptureWatch(scanId)", html.split("async function selectScan(", 1)[1])
+
+
 if __name__ == "__main__":
     unittest.main()

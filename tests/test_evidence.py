@@ -417,6 +417,17 @@ class ConsoleCaptureTests(unittest.TestCase):
         self.assertIn("'192.0.2.4:111 '", script)
         self.assertIn("Stopped before username, password, key, AUTH, or login.", script)
 
+    def test_the_window_title_names_this_capture_not_just_the_port(self):
+        """Two scans of the same range hold the same host and port; a shared
+        title would let one run photograph the other's window."""
+        from netroach.console_capture import build_connection_script
+
+        script = build_connection_script(
+            "10.0.0.1", 80, done_path=Path("C:/tmp/done"), title="Netroach 10.0.0.1:80 abc12345"
+        )
+
+        self.assertIn("WindowTitle = 'Netroach 10.0.0.1:80 abc12345'", script)
+
     def test_a_host_cannot_break_out_of_the_quoted_string(self):
         from netroach.console_capture import build_connection_script
 
