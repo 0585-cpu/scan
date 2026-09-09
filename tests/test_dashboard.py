@@ -481,6 +481,18 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("JSON.stringify({path})", body)
         self.assertIn("netroach-artifacts", html)
 
+    def test_a_running_recapture_reports_how_far_it_has_got(self):
+        """It runs on the backend's own thread; a line saying it started is
+        indistinguishable from one that died."""
+        html = dashboard_html()
+
+        self.assertIn("async function watchRecaptureProgress(", html)
+        body = html.split("async function watchRecaptureProgress(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("/evidence/recapture", body)
+        self.assertIn("증적 재수집 중", body)
+        self.assertIn("progress.error", body)
+        self.assertIn("watchRecaptureProgress(state.scanId)", html)
+
     def test_evidence_can_be_recaptured_without_scanning_again(self):
         """A scan whose capture limit was too low has the ports already; the
         limit cost the pictures, not the findings."""

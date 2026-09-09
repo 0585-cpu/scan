@@ -5,6 +5,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -211,6 +212,10 @@ def create_app(
     # apps must not have one hold the other's scan.
     recapture_lock = threading.Lock()
     recapture_running: set[str] = set()
+    # What a recapture is doing right now. It runs on a thread with nowhere to
+    # report to, so a caller who started one had no way to tell it apart from
+    # one that had died.
+    recapture_progress: dict[str, dict[str, object]] = {}
     app_config = load_config(config_path)
     plugin_catalog = load_effective_plugin_catalog(app_config, plugin_paths)
     resolved_plugin_paths = tuple(plugin.path for plugin in plugin_catalog.plugins if plugin.path)
@@ -626,6 +631,28 @@ def create_app(
             if scan_id in recapture_running:
                 raise _bad_request(ValueError("evidence is already being captured for this scan"))
             recapture_running.add(scan_id)
+        planned = min(pending, request.screenshot_max)
+        state: dict[str, object] = {
+            "running": True,
+            "total": planned,
+            "captured": 0,
+            "started_at": _now_iso(),
+            "finished_at": None,
+            "error": None,
+        }
+        recapture_progress[scan_id] = state
+
+        def finished() -> None:
+            state["running"] = False
+            state["finished_at"] = _now_iso()
+            _release_recapture(recapture_lock, recapture_running, scan_id)
+
+        def captured_one() -> None:
+            state["captured"] = int(state["captured"]) + 1  # type: ignore[call-overload]
+
+        def failed(reason: str) -> None:
+            state["error"] = reason
+
         thread = threading.Thread(
             target=_run_evidence_recapture,
             args=(str(repo.path), scan_id),
@@ -633,13 +660,23 @@ def create_app(
                 "screenshot_timeout_ms": request.screenshot_timeout_ms,
                 "screenshot_max": request.screenshot_max,
                 "capture_console": request.capture_console,
-                "on_finished": lambda: _release_recapture(recapture_lock, recapture_running, scan_id),
+                "on_finished": finished,
+                "on_captured": captured_one,
+                "on_error": failed,
             },
             name=f"netroach-evidence-{scan_id[:8]}",
             daemon=True,
         )
         thread.start()
         return {"status": "started", "pending": pending, "limit": request.screenshot_max}
+
+    @app.get("/v1/scans/{scan_id}/evidence/recapture")
+    def recapture_progress_state(scan_id: str) -> dict[str, object]:
+        """How far a recapture has got, for a caller that cannot see the thread."""
+        state = recapture_progress.get(scan_id)
+        if state is None:
+            return {"running": False, "total": 0, "captured": 0}
+        return dict(state)
 
     @app.post("/v1/scans/{scan_id}/cancel")
     def cancel_scan(scan_id: str) -> dict[str, object]:
@@ -936,6 +973,8 @@ def _run_evidence_recapture(
     screenshot_max: int,
     capture_console: bool,
     on_finished: Callable[[], None] | None = None,
+    on_captured: Callable[[], None] | None = None,
+    on_error: Callable[[str], None] | None = None,
 ) -> None:
     """Collect evidence for results a finished scan already recorded.
 
@@ -952,6 +991,7 @@ def _run_evidence_recapture(
             screenshot_timeout_ms=screenshot_timeout_ms,
             screenshot_max=screenshot_max,
             capture_console=capture_console,
+            on_captured=on_captured,
         )
     except Exception as exc:  # noqa: BLE001 - a thread's traceback goes nowhere.
         # This runs on its own thread, so an exception here used to vanish: the
@@ -965,9 +1005,15 @@ def _run_evidence_recapture(
             without_evidence=0,
             errors=[f"evidence capture failed: {exc}"],
         )
+        if on_error is not None:
+            on_error(str(exc))
     finally:
         if on_finished is not None:
             on_finished()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _release_recapture(lock: threading.Lock, running: set[str], scan_id: str) -> None:
@@ -982,6 +1028,7 @@ def _capture_stored_evidence(
     screenshot_timeout_ms: int,
     screenshot_max: int,
     capture_console: bool,
+    on_captured: Callable[[], None] | None = None,
 ) -> None:
     # A recapture redoes the scan's evidence rather than filling its gaps: the
     # reason to run one is that what is there was taken with the wrong
@@ -1021,6 +1068,8 @@ def _capture_stored_evidence(
             source_url=source_url,
             capture_agent=capture_agent,
         )
+        if on_captured is not None:
+            on_captured()
 
     summary = capture_automatic_evidence(
         candidates,

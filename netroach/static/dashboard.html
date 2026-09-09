@@ -1415,6 +1415,7 @@
       scanResultQuery: '',
       scanResultHost: '',
       scanResultState: '',
+      recaptureWatch: null,
       scanResultPage: 1,
       scanResultPageSize: 50,
       scanResultSearchTimer: null,
@@ -2352,14 +2353,53 @@ ${health.db}` : '데이터베이스 없음';
             capture_console: form.get('capture_console') === 'on'
           })
         });
-        setStatus('scanExportStatus', payload.pending
-          ? `열린 포트 ${Number(payload.pending).toLocaleString()}개 중 최대 ${Number(payload.limit).toLocaleString()}개의 증적을 다시 수집합니다. 기존 증적은 새로 찍은 것으로 교체됩니다.`
-          : '열린 포트가 없습니다.');
+        if (!payload.pending) {
+          setStatus('scanExportStatus', '열린 포트가 없습니다.');
+          return;
+        }
+        setStatus('scanExportStatus',
+          `증적 재수집 시작 · 열린 포트 ${Number(payload.pending).toLocaleString()}개 중 최대 ${Number(payload.limit).toLocaleString()}개. 기존 증적은 교체됩니다.`);
+        watchRecaptureProgress(state.scanId);
       } catch (error) {
         setStatus('scanExportStatus', error.message, true);
       } finally {
         updateScanActionState();
       }
+    }
+
+    // The capture runs on the backend's own thread, so the only way to tell a
+    // run in progress from one that died is to ask. A port can take a second
+    // or two, and a scan of a busy range has a thousand of them - without this
+    // the operator is left watching a line that says it started.
+    const RECAPTURE_POLL_MS = 2000;
+
+    async function watchRecaptureProgress(scanId) {
+      if (state.recaptureWatch) clearTimeout(state.recaptureWatch);
+      const tick = async () => {
+        if (state.scanId !== scanId) return;
+        try {
+          const progress = await api(`/v1/scans/${encodeURIComponent(scanId)}/evidence/recapture`);
+          const done = Number(progress.captured || 0);
+          const total = Number(progress.total || 0);
+          if (progress.error) {
+            setStatus('scanExportStatus', `증적 재수집 실패: ${progress.error}`, true);
+            await refreshScans();
+            return;
+          }
+          if (progress.running) {
+            setStatus('scanExportStatus',
+              `증적 재수집 중… ${done.toLocaleString()} / ${total.toLocaleString()}`);
+            state.recaptureWatch = setTimeout(tick, RECAPTURE_POLL_MS);
+            return;
+          }
+          setStatus('scanExportStatus',
+            `증적 재수집 완료 · ${done.toLocaleString()} / ${total.toLocaleString()}건`);
+          await Promise.all([refreshScans(), refreshScanResults()]);
+        } catch (error) {
+          setStatus('scanExportStatus', error.message, true);
+        }
+      };
+      state.recaptureWatch = setTimeout(tick, RECAPTURE_POLL_MS);
     }
 
     // Fills the form rather than starting a scan: the authorization tick, the

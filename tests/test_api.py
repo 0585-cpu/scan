@@ -1798,6 +1798,62 @@ class RescanAndRecaptureTests(unittest.TestCase):
             evidence = repo.get_job(scan_id)["summary"]["evidence"]
             self.assertTrue(any("boom" in reason for reason in evidence["errors"]))
 
+    def test_progress_can_be_read_while_a_recapture_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client, _repo, scan_id = self._client_with_open_results(tmp)
+            first_stored = threading.Event()
+            release = threading.Event()
+
+            def paced_capture(results, *, store, timeout_ms, maximum, capture_console):
+                from netroach.evidence import ScreenshotCaptureSummary
+
+                rows = list(results)
+                store(rows[0], PNG_HEADER, "one.png", None, "web_screenshot", "test")
+                first_stored.set()
+                release.wait(timeout=30)
+                store(rows[1], PNG_HEADER, "two.png", None, "web_screenshot", "test")
+                return ScreenshotCaptureSummary(candidates=2, captured=2, failed=0)
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=paced_capture):
+                client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={})
+                self.assertTrue(first_stored.wait(timeout=30))
+                mid = client.get(f"/v1/scans/{scan_id}/evidence/recapture").json()
+                release.set()
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+                done = client.get(f"/v1/scans/{scan_id}/evidence/recapture").json()
+
+            self.assertTrue(mid["running"])
+            self.assertEqual(mid["total"], 2)
+            self.assertEqual(mid["captured"], 1)
+            self.assertFalse(done["running"])
+            self.assertEqual(done["captured"], 2)
+            self.assertIsNone(done["error"])
+
+    def test_a_failed_recapture_shows_up_in_its_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client, _repo, scan_id = self._client_with_open_results(tmp)
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=RuntimeError("boom")):
+                client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={})
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+
+            state = client.get(f"/v1/scans/{scan_id}/evidence/recapture").json()
+            self.assertFalse(state["running"])
+            self.assertIn("boom", state["error"])
+
+    def test_a_scan_that_never_recaptured_reports_nothing_running(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client, _repo, scan_id = self._client_with_open_results(tmp)
+
+            state = client.get(f"/v1/scans/{scan_id}/evidence/recapture").json()
+
+            self.assertFalse(state["running"])
+            self.assertEqual(state["captured"], 0)
+
     def test_a_port_that_already_has_evidence_is_photographed_again(self):
         """The reason to run a recapture is that what is there was taken with
         the wrong settings, so a port with a picture needs a new one most."""
