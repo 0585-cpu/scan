@@ -83,6 +83,9 @@ def build_connection_script(host: str, port: int, *, done_path: Path, hold_s: fl
         f"$tcp = [Net.Sockets.TcpClient]::new(); "
         f"$connected = $tcp.ConnectAsync('{safe_host}', {port}).Wait(5000); "
         "Write-Host (\"Connected: \" + $connected); "
+        # Written where the caller can read it: a capture of a connection that
+        # never opened proves nothing, and must not replace one that did.
+        f"if ($connected) {{ Set-Content -Path '{done_path.as_posix()}.ok' -Value 'connected' }}; "
         f"Write-Host ''; Write-Host 'PS> netstat -an | Select-String \"{safe_host}:{port}\"'; "
         # Only the line for this port. Every other socket on the host is
         # context nobody reads, and it is paid for twice - once in the
@@ -368,13 +371,21 @@ def _capture_telnet_window(
 
 
 def capture_console_session(
-    host: str, port: int, *, hold_s: float = 20.0, with_telnet: bool = True
+    host: str, port: int, *, hold_s: float = 20.0, with_telnet: bool = True,
+    require_connection: bool = True,
 ) -> bytes | None:
     """Run the session in a real console and return a PNG of that window.
 
     A telnet client is opened beside it when the system has one, and the two
     windows are photographed into a single image: the console proving the
     connection, the client sitting on it.
+
+    Returns None when the connection did not open, unless `require_connection`
+    is False. A picture of a console reading "Connected: False" beside a
+    SYN_SENT line looks like evidence and proves nothing, and the caller
+    replaces the stored evidence with whatever comes back - so a scan re-run
+    from a machine that cannot reach the targets would overwrite good captures
+    with failures.
 
     Returns None whenever the console cannot be photographed - no desktop, the
     window never appeared, the pixels came back blank - so the caller can fall
@@ -425,6 +436,8 @@ def capture_console_session(
                     break
                 time.sleep(CAPTURE_POLL_INTERVAL_S)
             if hwnd is None:
+                return None
+            if require_connection and not Path(f"{done_path}.ok").exists():
                 return None
             time.sleep(CAPTURE_SETTLE_S)
             console_pane = _capture_window_png(hwnd)

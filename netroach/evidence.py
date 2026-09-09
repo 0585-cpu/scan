@@ -4,6 +4,7 @@ import io
 import os
 import re
 import shutil
+import socket
 import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -442,6 +443,28 @@ def run_powershell_diagnostic(
     )
 
 
+def port_still_answers(result: Mapping[str, Any], *, timeout_ms: int) -> bool:
+    """Whether a TCP connection to this result's port opens right now.
+
+    UDP has no handshake to test, so a UDP result is taken at its word - its
+    evidence is the scan record either way.
+    """
+    protocol = str(result.get("protocol") or "tcp").lower()
+    if protocol != "tcp":
+        return True
+    host = str(result.get("host") or "")
+    try:
+        port = result_port(result)
+    except (TypeError, ValueError):
+        return False
+    timeout = max(0.5, min(30.0, timeout_ms / 1000))
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def render_terminal_transcript(
     result: Mapping[str, Any],
     transcript: TerminalTranscript,
@@ -515,6 +538,14 @@ def capture_terminal_transcripts(
         if should_stop and should_stop():
             break
         host = str(result.get("host") or "")
+        # Ask whether the port still answers before photographing anything. A
+        # scan re-run from a machine that cannot reach the targets would
+        # otherwise store a console reading "Connected: False" beside a
+        # SYN_SENT line - which looks like evidence, proves nothing, and
+        # replaces the capture taken where the port did answer.
+        if not port_still_answers(result, timeout_ms=timeout_ms):
+            errors.append(f"{host}:{result.get('port')}: 연결되지 않아 증적을 남기지 않았습니다")
+            continue
         try:
             image = None
             capture_agent = f"netroach transcript renderer {SCREENSHOT_WIDTH}x{SCREENSHOT_HEIGHT}"

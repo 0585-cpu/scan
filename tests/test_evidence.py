@@ -158,7 +158,11 @@ class EvidenceTests(unittest.TestCase):
         )
         with patch("netroach.evidence.capture_web_screenshots", return_value=failed_web):
             with patch("netroach.evidence.run_powershell_diagnostic", return_value=transcript):
-                summary = capture_automatic_evidence(results, store=store)
+                # These ports are fictional; the reachability check that guards
+                # against photographing a connection that never opened would
+                # otherwise skip them.
+                with patch("netroach.evidence.port_still_answers", return_value=True):
+                    summary = capture_automatic_evidence(results, store=store)
 
         # The renderer identifies itself so a transcript can say what drew it,
         # the same way a screenshot names the browser that rendered it.
@@ -517,6 +521,42 @@ class ConsoleCaptureTests(unittest.TestCase):
             is_web_result({"port": 22, "service_name": "ssh", "banner": "SSH-2.0-OpenSSH_8.9"})
         )
 
+    def test_a_port_that_no_longer_answers_keeps_its_old_evidence(self):
+        """Re-run from a machine that cannot reach the targets, the capture
+        would read "Connected: False" beside a SYN_SENT line - evidence in
+        appearance only, and it would replace the one that proved something."""
+        from netroach import evidence as evidence_module
+
+        stored = []
+
+        def store(result, data, file_name, source_url, capture_agent=None):
+            stored.append(result["port"])
+
+        results = [{"host": "10.0.0.1", "port": 22, "protocol": "tcp", "state": "open",
+                    "service_name": "ssh", "banner": None}]
+        with patch.object(evidence_module, "port_still_answers", return_value=False):
+            summary = evidence_module.capture_terminal_transcripts(results, store=store)
+
+        self.assertEqual(stored, [])
+        self.assertEqual(summary.captured, 0)
+        self.assertTrue(any("연결되지 않아" in reason for reason in summary.errors))
+
+    def test_a_udp_result_is_taken_at_its_word(self):
+        """There is no handshake to test, and its evidence is the scan record."""
+        from netroach.evidence import port_still_answers
+
+        self.assertTrue(
+            port_still_answers({"host": "10.0.0.1", "port": 53, "protocol": "udp"}, timeout_ms=1000)
+        )
+
+    def test_a_tcp_port_that_refuses_is_not_photographed(self):
+        from netroach.evidence import port_still_answers
+
+        # 9 is discard; nothing listens on it here.
+        self.assertFalse(
+            port_still_answers({"host": "127.0.0.1", "port": 9, "protocol": "tcp"}, timeout_ms=1000)
+        )
+
     def test_a_failed_capture_falls_back_to_the_drawing(self):
         from netroach import evidence as evidence_module
 
@@ -527,10 +567,11 @@ class ConsoleCaptureTests(unittest.TestCase):
 
         results = [{"host": "10.0.0.1", "port": 22, "protocol": "tcp", "state": "open",
                     "service_name": "ssh", "banner": None}]
-        with patch.object(evidence_module, "capture_console_session", return_value=None):
-            summary = evidence_module.capture_terminal_transcripts(
-                results, store=store, capture_console=True
-            )
+        with patch.object(evidence_module, "port_still_answers", return_value=True):
+            with patch.object(evidence_module, "capture_console_session", return_value=None):
+                summary = evidence_module.capture_terminal_transcripts(
+                    results, store=store, capture_console=True
+                )
 
         self.assertEqual(summary.captured, 1)
         self.assertEqual(len(stored), 1)
@@ -546,8 +587,9 @@ class ConsoleCaptureTests(unittest.TestCase):
 
         results = [{"host": "10.0.0.1", "port": 22, "protocol": "tcp", "state": "open",
                     "service_name": "ssh", "banner": None}]
-        with patch.object(evidence_module, "capture_console_session", return_value=b"PNGDATA"):
-            evidence_module.capture_terminal_transcripts(results, store=store, capture_console=True)
+        with patch.object(evidence_module, "port_still_answers", return_value=True):
+            with patch.object(evidence_module, "capture_console_session", return_value=b"PNGDATA"):
+                evidence_module.capture_terminal_transcripts(results, store=store, capture_console=True)
 
         self.assertEqual(stored[0][0], b"PNGDATA")
         self.assertEqual(stored[0][1], "windows console capture")
@@ -562,8 +604,9 @@ class ConsoleCaptureTests(unittest.TestCase):
 
         results = [{"host": "10.0.0.1", "port": 22, "protocol": "tcp", "state": "open",
                     "service_name": "ssh", "banner": None}]
-        with patch.object(evidence_module, "capture_console_session") as capture:
-            evidence_module.capture_terminal_transcripts(results, store=store)
+        with patch.object(evidence_module, "port_still_answers", return_value=True):
+            with patch.object(evidence_module, "capture_console_session") as capture:
+                evidence_module.capture_terminal_transcripts(results, store=store)
 
         capture.assert_not_called()
         self.assertIn("transcript renderer", stored[0])
