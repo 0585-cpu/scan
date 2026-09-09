@@ -992,7 +992,7 @@
                 </div>
                 <div class="toolbar-group">
                   <span class="toolbar-label">작업</span>
-                  <button type="button" id="scanRecaptureEvidence" disabled title="스캔하지 않고, 증적이 없는 열린 포트만 다시 수집합니다">증적 재수집</button>
+                  <button type="button" id="scanRecaptureEvidence" disabled title="스캔하지 않고 열린 포트의 증적을 처음부터 다시 수집합니다. 기존 증적은 교체되고, 직접 첨부한 파일은 유지됩니다">증적 재수집</button>
                   <button type="button" id="scanRescanOpen" disabled title="이 스캔이 찾은 열린 포트로 새 스캔 폼을 채웁니다">열린 포트 재스캔</button>
                   <button type="button" id="scanCancel" disabled>취소</button>
                   <button class="danger" type="button" id="scanDelete" disabled>삭제</button>
@@ -2353,8 +2353,8 @@ ${health.db}` : '데이터베이스 없음';
           })
         });
         setStatus('scanExportStatus', payload.pending
-          ? `증적 없는 ${Number(payload.pending).toLocaleString()}개 중 최대 ${Number(payload.limit).toLocaleString()}개를 수집합니다.`
-          : '증적이 없는 열린 포트가 없습니다.');
+          ? `열린 포트 ${Number(payload.pending).toLocaleString()}개 중 최대 ${Number(payload.limit).toLocaleString()}개의 증적을 다시 수집합니다. 기존 증적은 새로 찍은 것으로 교체됩니다.`
+          : '열린 포트가 없습니다.');
       } catch (error) {
         setStatus('scanExportStatus', error.message, true);
       } finally {

@@ -97,12 +97,24 @@ def format_results_csv_bundle(
     return output.getvalue()
 
 
+# The evidence image inside a result row, and the room a row needs for it.
+_RESULT_EVIDENCE_BOX = (1150, 260)
+_RESULT_EVIDENCE_COLUMN_WIDTH = 164.6
+_RESULT_EVIDENCE_ROW_HEIGHT = 200.1
+
+
 def format_results_xlsx(
     job: dict[str, Any],
     results: list[dict[str, Any]],
     *,
     load_evidence: Callable[[str], tuple[dict[str, Any], Path] | None],
 ) -> bytes:
+    """One sheet: every result, with its evidence in the row it belongs to.
+
+    This used to be two - the results on one, the images on another keyed by
+    host and port - which left the reader matching rows across sheets by hand
+    for the one thing they opened the file to see.
+    """
     try:
         from openpyxl import Workbook
         from openpyxl.drawing.image import Image as ExcelImage
@@ -115,9 +127,9 @@ def format_results_xlsx(
     workbook = Workbook()
     workbook.properties.title = f"Netroach Scan {job.get('id', '')}".strip()
     workbook.properties.creator = "Netroach"
-    results_sheet = workbook.active
-    results_sheet.title = "Results"
-    result_headers = [
+    sheet = workbook.active
+    sheet.title = "Results"
+    headers = [
         "Scan ID",
         "Host",
         "Port",
@@ -125,19 +137,30 @@ def format_results_xlsx(
         "State",
         "Service",
         "Banner",
-        "Evidence",
+        "Evidence Detail",
         "Tags",
         "Note",
         "Created At",
         "Image Count",
+        "Evidence",
     ]
-    results_sheet.append(result_headers)
-    _style_excel_header(results_sheet, Font, PatternFill, Alignment)
+    sheet.append(headers)
+    _style_excel_header(sheet, Font, PatternFill, Alignment)
+    sheet.freeze_panes = "A2"
+    sheet.column_dimensions["A"].width = 38
+    sheet.column_dimensions["B"].width = 24
+    for column in ("C", "D", "E", "F", "L"):
+        sheet.column_dimensions[column].width = 14
+    for column in ("G", "H", "I", "J"):
+        sheet.column_dimensions[column].width = 36
+    sheet.column_dimensions["K"].width = 22
+    sheet.column_dimensions["M"].width = _RESULT_EVIDENCE_COLUMN_WIDTH
 
-    public_results = public_result_dicts(results)
-    for result in public_results:
+    image_streams: list[io.BytesIO] = []
+    row_number = 2
+    for result in public_result_dicts(results):
         evidence_files = result.get("evidence_files") or []
-        results_sheet.append(
+        sheet.append(
             [
                 _excel_text(result.get("scan_id")),
                 _excel_text(result.get("host")),
@@ -151,96 +174,37 @@ def format_results_xlsx(
                 _excel_text(result.get("note")),
                 _excel_text(result.get("created_at")),
                 len(evidence_files),
+                None,
             ]
         )
-
-    results_sheet.freeze_panes = "A2"
-    results_sheet.auto_filter.ref = results_sheet.dimensions
-    results_sheet.column_dimensions["A"].width = 38
-    results_sheet.column_dimensions["B"].width = 24
-    for column in ("C", "D", "E", "F", "L"):
-        results_sheet.column_dimensions[column].width = 14
-    for column in ("G", "H", "I", "J"):
-        results_sheet.column_dimensions[column].width = 36
-    results_sheet.column_dimensions["K"].width = 22
-    for row in results_sheet.iter_rows(min_row=2):
-        for cell in row:
+        for cell in sheet[row_number]:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
-
-    evidence_sheet = workbook.create_sheet("Evidence")
-    evidence_headers = [
-        "Host",
-        "Port",
-        "Protocol",
-        "Service",
-        "Type",
-        "File Name",
-        "SHA-256",
-        "Source URL",
-        "Image",
-    ]
-    evidence_sheet.append(evidence_headers)
-    _style_excel_header(evidence_sheet, Font, PatternFill, Alignment)
-    evidence_sheet.freeze_panes = "A2"
-    evidence_sheet.column_dimensions["A"].width = 24
-    evidence_sheet.column_dimensions["B"].width = 12
-    evidence_sheet.column_dimensions["C"].width = 12
-    evidence_sheet.column_dimensions["D"].width = 18
-    evidence_sheet.column_dimensions["E"].width = 20
-    evidence_sheet.column_dimensions["F"].width = 32
-    evidence_sheet.column_dimensions["G"].width = 68
-    evidence_sheet.column_dimensions["H"].width = 42
-    evidence_sheet.column_dimensions["I"].width = 56
-
-    image_streams: list[io.BytesIO] = []
-    evidence_row = 2
-    for result in public_results:
-        for evidence in result.get("evidence_files") or []:
-            evidence_sheet.append(
-                [
-                    _excel_text(result.get("host")),
-                    result.get("port"),
-                    _excel_text(result.get("protocol")),
-                    _excel_text(result.get("service_name")),
-                    _excel_text(evidence.get("type")),
-                    _excel_text(evidence.get("file_name")),
-                    _excel_text(evidence.get("sha256")),
-                    _excel_text(evidence.get("source_url")),
-                    "",
-                ]
-            )
-            loaded = load_evidence(str(evidence.get("id") or ""))
+        if evidence_files:
+            # The first image is the one shown; Image Count says whether the
+            # row carries more than the one on screen.
+            loaded = load_evidence(str(evidence_files[0].get("id") or ""))
             if loaded:
                 try:
                     _, source_path = loaded
                     with PillowImage.open(source_path) as source_image:
                         source_image.load()
-                        normalized = source_image.convert("RGB")
-                        contained = ImageOps.contain(normalized, (400, 300))
-                        canvas = PillowImage.new("RGB", (400, 300), "white")
-                        left = (400 - contained.width) // 2
-                        top = (300 - contained.height) // 2
-                        canvas.paste(contained, (left, top))
-                        image_stream = io.BytesIO()
-                        canvas.save(image_stream, format="PNG")
-                        image_stream.seek(0)
-                    image_streams.append(image_stream)
-                    excel_image = ExcelImage(image_stream)
-                    excel_image.width = 400
-                    excel_image.height = 300
-                    evidence_sheet.add_image(excel_image, f"I{evidence_row}")
-                    evidence_sheet.row_dimensions[evidence_row].height = 225
-                except Exception as exc:  # noqa: BLE001 - keep the workbook usable if one image is corrupt.
-                    evidence_sheet.cell(evidence_row, 9, f"Image unavailable: {str(exc)[:160]}")
-            evidence_row += 1
+                        contained = ImageOps.contain(
+                            source_image.convert("RGB"), _RESULT_EVIDENCE_BOX
+                        )
+                        stream = io.BytesIO()
+                        contained.save(stream, format="PNG")
+                        stream.seek(0)
+                    image_streams.append(stream)
+                    excel_image = ExcelImage(stream)
+                    excel_image.width = contained.width
+                    excel_image.height = contained.height
+                    sheet.add_image(excel_image, f"M{row_number}")
+                    sheet.row_dimensions[row_number].height = _RESULT_EVIDENCE_ROW_HEIGHT
+                except Exception as exc:  # noqa: BLE001 - one broken image must not cost the sheet.
+                    sheet.cell(row_number, 13, f"Image unavailable: {str(exc)[:160]}")
+        row_number += 1
 
-    if evidence_row == 2:
-        evidence_sheet.cell(2, 1, "No image evidence")
-    evidence_sheet.auto_filter.ref = f"A1:I{max(1, evidence_row - 1)}"
-    for row in evidence_sheet.iter_rows(min_row=2):
-        for cell in row[:8]:
-            cell.alignment = Alignment(vertical="top", wrap_text=True)
-
+    sheet.auto_filter.ref = f"A1:M{max(1, row_number - 1)}"
     output = io.BytesIO()
     workbook.save(output)
     return output.getvalue()

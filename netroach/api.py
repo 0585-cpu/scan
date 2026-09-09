@@ -614,7 +614,9 @@ def create_app(
             raise _not_found("scan not found")
         if job["status"] in {"queued", "running", "recovering", "cancel_requested"}:
             raise _bad_request(ValueError("the scan is still running"))
-        pending = repo.count_automatic_evidence_candidates(scan_id)
+        # Everything open, not only what is missing a picture: a recapture
+        # replaces the scan's evidence rather than topping it up.
+        pending = repo.count_open_results(scan_id)
         if not pending:
             return {"status": "nothing to capture", "pending": 0}
         # A candidate stops being one once its evidence is stored, so two runs
@@ -981,8 +983,13 @@ def _capture_stored_evidence(
     screenshot_max: int,
     capture_console: bool,
 ) -> None:
-    eligible = repo.count_automatic_evidence_candidates(scan_id)
-    candidates = repo.get_automatic_evidence_candidates(scan_id, limit=screenshot_max)
+    # A recapture redoes the scan's evidence rather than filling its gaps: the
+    # reason to run one is that what is there was taken with the wrong
+    # settings, so a port that already has a picture needs a new one most.
+    candidates = repo.get_automatic_evidence_candidates(
+        scan_id, limit=screenshot_max, include_captured=True
+    )
+    eligible = len(candidates) if len(candidates) < screenshot_max else repo.count_open_results(scan_id)
     if not candidates:
         return
 
@@ -994,6 +1001,15 @@ def _capture_stored_evidence(
         evidence_type: str,
         capture_agent: str | None = None,
     ) -> None:
+        # Replaced, not added to - and only once the new picture is in hand, so
+        # a run that fails part way leaves the old ones where they were. A file
+        # the operator attached is theirs and is not touched.
+        repo.delete_automatic_evidence(
+            scan_id,
+            host=str(result["host"]),
+            port=int(result["port"]),
+            protocol=str(result["protocol"]),
+        )
         repo.add_result_evidence(
             scan_id,
             host=str(result["host"]),

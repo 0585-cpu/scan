@@ -491,6 +491,9 @@ class DashboardHostViewTests(unittest.TestCase):
         body = html.split("async function recaptureEvidence(", 1)[1].split(chr(10) + "    }", 1)[0]
         self.assertIn("screenshot_max", body)
         self.assertIn("capture_console", body)
+        # It replaces the scan's evidence rather than topping it up, which the
+        # operator has to know before pressing it.
+        self.assertIn("교체", body)
 
     def test_rescanning_open_ports_fills_the_form_rather_than_starting(self):
         """The authorization tick and the workload warning belong to every

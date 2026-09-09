@@ -1798,18 +1798,66 @@ class RescanAndRecaptureTests(unittest.TestCase):
             evidence = repo.get_job(scan_id)["summary"]["evidence"]
             self.assertTrue(any("boom" in reason for reason in evidence["errors"]))
 
-    def test_a_scan_with_every_port_photographed_is_left_alone(self):
+    def test_a_port_that_already_has_evidence_is_photographed_again(self):
+        """The reason to run a recapture is that what is there was taken with
+        the wrong settings, so a port with a picture needs a new one most."""
         with tempfile.TemporaryDirectory() as tmp:
             client, repo, scan_id = self._client_with_open_results(tmp)
             for host, port in (("10.0.0.2", 80), ("10.0.0.1", 443)):
                 repo.add_result_evidence(
                     scan_id, host=host, port=port, data=PNG_HEADER,
-                    file_name="shot.png", evidence_type="web_screenshot",
+                    file_name="old.png", evidence_type="web_screenshot",
+                )
+            captured = []
+
+            def fake_capture(results, *, store, timeout_ms, maximum, capture_console):
+                from netroach.evidence import ScreenshotCaptureSummary
+
+                for result in list(results):
+                    captured.append((result["host"], result["port"]))
+                    store(result, PNG_HEADER, "new.png", None, "web_screenshot", "test")
+                return ScreenshotCaptureSummary(
+                    candidates=len(captured), captured=len(captured), failed=0
                 )
 
-            payload = client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={}).json()
+            with patch("netroach.api.capture_automatic_evidence", side_effect=fake_capture):
+                payload = client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={}).json()
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
 
-            self.assertEqual(payload["pending"], 0)
+            self.assertEqual(payload["pending"], 2)
+            self.assertEqual(sorted(captured), [("10.0.0.1", 443), ("10.0.0.2", 80)])
+            # Replaced rather than added to: one picture per port, the new one.
+            stored = repo.list_result_evidence(scan_id, host="10.0.0.2", port=80)
+            self.assertEqual([item["file_name"] for item in stored], ["new.png"])
+
+    def test_a_file_the_operator_attached_survives_a_recapture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client, repo, scan_id = self._client_with_open_results(tmp)
+            repo.add_result_evidence(
+                scan_id, host="10.0.0.2", port=80, data=PNG_HEADER,
+                file_name="by-hand.png", evidence_type="manual",
+            )
+
+            def fake_capture(results, *, store, timeout_ms, maximum, capture_console):
+                from netroach.evidence import ScreenshotCaptureSummary
+
+                for result in list(results):
+                    store(result, PNG_HEADER, "new.png", None, "web_screenshot", "test")
+                return ScreenshotCaptureSummary(candidates=1, captured=1, failed=0)
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=fake_capture):
+                client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={})
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+
+            names = sorted(
+                item["file_name"]
+                for item in repo.list_result_evidence(scan_id, host="10.0.0.2", port=80)
+            )
+            self.assertEqual(names, ["by-hand.png", "new.png"])
 
     def test_a_running_scan_is_not_recaptured_underneath_itself(self):
         with tempfile.TemporaryDirectory() as tmp:

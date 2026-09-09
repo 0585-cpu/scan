@@ -64,6 +64,22 @@ def _port_result_values(result: PortResult) -> tuple[Any, ...]:
 # information the count does not already give. Below it they do: three filtered
 # ports among a thousand closed ones name the firewall rule. nmap draws the same
 # line at roughly this size.
+# Evidence Netroach captured itself, as opposed to a file an operator attached.
+AUTOMATIC_EVIDENCE_TYPES = ("web_screenshot", "protocol_snapshot", "terminal_transcript")
+_EVIDENCE_NOT_CAPTURED_SQL = """
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM result_evidence_files evidence
+                  WHERE evidence.scan_id=port_results.scan_id
+                    AND evidence.host=port_results.host
+                    AND evidence.port=port_results.port
+                    AND evidence.protocol=port_results.protocol
+                    AND evidence.evidence_type IN (
+                        'web_screenshot', 'protocol_snapshot', 'terminal_transcript'
+                    )
+              )
+"""
+
 COLLAPSE_THRESHOLD = 25
 COLLAPSIBLE_STATES = ("closed", "filtered")
 
@@ -928,6 +944,31 @@ class SQLiteRepository:
             return None
         return _evidence_file_row_to_dict(row), path
 
+    def delete_automatic_evidence(
+        self, scan_id: str, *, host: str, port: int, protocol: str = "tcp"
+    ) -> int:
+        """Drop the evidence Netroach captured for one port, keeping the rest.
+
+        A file an operator attached by hand is theirs and survives; only what
+        this program photographed is replaced. Called just before a new capture
+        is stored, so a run that fails part way leaves the old pictures alone.
+        """
+        placeholders = ",".join("?" * len(AUTOMATIC_EVIDENCE_TYPES))
+        with self.session() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id, stored_path FROM result_evidence_files
+                WHERE scan_id=? AND host=? AND port=? AND protocol=?
+                  AND evidence_type IN ({placeholders})
+                """,
+                (scan_id, host, port, protocol, *AUTOMATIC_EVIDENCE_TYPES),
+            ).fetchall()
+            for row in rows:
+                conn.execute("DELETE FROM result_evidence_files WHERE id=?", (row["id"],))
+        for row in rows:
+            self._resolve_evidence_path(row["stored_path"]).unlink(missing_ok=True)
+        return len(rows)
+
     def delete_evidence_file(self, evidence_id: str) -> bool:
         with self.session() as conn:
             row = conn.execute(
@@ -1067,26 +1108,26 @@ class SQLiteRepository:
             self._attach_evidence_files(conn, results, scan_id)
         return results
 
-    def get_automatic_evidence_candidates(self, scan_id: str, *, limit: int) -> list[dict[str, Any]]:
+    def get_automatic_evidence_candidates(
+        self, scan_id: str, *, limit: int, include_captured: bool = False
+    ) -> list[dict[str, Any]]:
+        """Open results evidence can be captured for.
+
+        `include_captured` asks for every open result rather than only the ones
+        still missing evidence - a recapture redoes the scan's evidence rather
+        than filling its gaps, because the reason to run one is usually that
+        what is there was taken with the wrong settings.
+        """
         if limit < 1:
             return []
-        query = """
+        captured_filter = "" if include_captured else _EVIDENCE_NOT_CAPTURED_SQL
+        query = f"""
             SELECT scan_id, host, port, protocol, state, latency_ms,
                    service_name, service_confidence, banner, evidence, error,
                    tags_json, note, created_at
             FROM port_results
             WHERE scan_id=? AND state IN ('open', 'open|filtered')
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM result_evidence_files evidence
-                  WHERE evidence.scan_id=port_results.scan_id
-                    AND evidence.host=port_results.host
-                    AND evidence.port=port_results.port
-                    AND evidence.protocol=port_results.protocol
-                    AND evidence.evidence_type IN (
-                        'web_screenshot', 'protocol_snapshot', 'terminal_transcript'
-                    )
-              )
+              {captured_filter}
             ORDER BY host, port
             LIMIT ?
         """
@@ -1121,6 +1162,18 @@ class SQLiteRepository:
         hosts = sorted({str(row["host"]) for row in rows})
         ports = sorted({int(row["port"]) for row in rows})
         return hosts, ports
+
+    def count_open_results(self, scan_id: str) -> int:
+        """Every open result, whether or not it already carries evidence."""
+        with self.session() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count FROM port_results
+                WHERE scan_id=? AND state IN ('open', 'open|filtered')
+                """,
+                (scan_id,),
+            ).fetchone()
+        return int(row["count"])
 
     def count_automatic_evidence_candidates(self, scan_id: str) -> int:
         """How many ports evidence could be captured for, before any limit.

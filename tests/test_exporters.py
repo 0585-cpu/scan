@@ -120,13 +120,34 @@ class ExporterTests(unittest.TestCase):
             )
             workbook = load_workbook(BytesIO(payload))
 
-            self.assertEqual(workbook.sheetnames, ["Results", "Evidence"])
-            self.assertEqual(workbook["Results"]["B2"].value, "127.0.0.1")
-            self.assertEqual(workbook["Results"]["J2"].value, "'=SUM(1,1)")
-            self.assertEqual(workbook["Evidence"]["F2"].value, "proof.png")
-            self.assertEqual(len(workbook["Evidence"]._images), 1)
-            self.assertEqual(workbook["Evidence"]._images[0].width, 400)
-            self.assertEqual(workbook["Evidence"]._images[0].height, 300)
+            # One sheet. Matching a result to its picture across two of them
+            # was the reader's job, for the one thing they opened the file for.
+            self.assertEqual(workbook.sheetnames, ["Results"])
+            sheet = workbook["Results"]
+            self.assertEqual(sheet["B2"].value, "127.0.0.1")
+            self.assertEqual(sheet["J2"].value, "'=SUM(1,1)")
+            self.assertEqual(sheet.cell(1, 13).value, "Evidence")
+            self.assertEqual(len(sheet._images), 1)
+            # In the row it belongs to, in the Evidence column.
+            self.assertEqual(sheet._images[0].anchor._from.col, 12)
+            self.assertEqual(sheet._images[0].anchor._from.row, 1)
+
+    def test_the_results_sheet_drops_the_bookkeeping_columns(self):
+        """A sha256, a stored file name and an evidence type told the reader
+        nothing they were reading the sheet to learn."""
+        from openpyxl import load_workbook
+
+        payload = format_results_xlsx(
+            {"id": "scan-1"},
+            [{"scan_id": "scan-1", "host": "10.0.0.1", "port": 80, "protocol": "tcp",
+              "state": "open", "service_name": "http", "evidence_files": []}],
+            load_evidence=lambda _evidence_id: None,
+        )
+        sheet = load_workbook(BytesIO(payload))["Results"]
+
+        headers = [sheet.cell(1, column).value for column in range(1, 14)]
+        for gone in ("SHA-256", "File Name", "Type"):
+            self.assertNotIn(gone, headers)
 
 
 class ExcelIllegalCharacterTests(unittest.TestCase):
