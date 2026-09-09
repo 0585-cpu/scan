@@ -121,6 +121,9 @@ class ScanCreateRequest(BaseModel):
     # not a considered ceiling - it was small enough to look like a typo cap.
     # Each capture costs a page load, so the number is the operator's to weigh.
     screenshot_max: int = Field(default=DEFAULT_SCREENSHOT_MAX, ge=1, le=10000)
+    # Off by default: it needs a desktop to photograph, and it spends about a
+    # second and a half per port where the drawing spends milliseconds.
+    capture_console: bool = False
     max_hosts: int = Field(default=65536, ge=1, le=MAX_HOSTS)
     max_attempts: int = Field(default=DEFAULT_MAX_ATTEMPTS, ge=1)
     confirm_large_scan: bool = False
@@ -407,6 +410,7 @@ def create_app(
             request.capture_screenshots,
             request.screenshot_timeout_ms,
             request.screenshot_max,
+            request.capture_console,
         )
         return {"scan_id": scan_id, "status": "queued", "workload": workload}
 
@@ -867,6 +871,7 @@ def _run_scan_job(
     capture_screenshots: bool = False,
     screenshot_timeout_ms: int = DEFAULT_SCREENSHOT_TIMEOUT_MS,
     screenshot_max: int = DEFAULT_SCREENSHOT_MAX,
+    capture_console: bool = False,
     recovery_token: str | None = None,
 ) -> None:
     repo = SQLiteRepository(db_path)
@@ -979,6 +984,7 @@ def _run_scan_job(
                     timeout_ms=screenshot_timeout_ms,
                     maximum=screenshot_max,
                     should_stop=cancel_requested,
+                    capture_console=capture_console,
                 )
             if repo.is_scan_cancel_requested(scan_id):
                 repo.mark_scan_cancelled(scan_id)
@@ -1123,6 +1129,7 @@ def _start_scan_recovery(db_path) -> list[threading.Thread]:
                     bool(params.get("capture_screenshots", False)),
                     int(params.get("screenshot_timeout_ms", DEFAULT_SCREENSHOT_TIMEOUT_MS)),
                     int(params.get("screenshot_max", DEFAULT_SCREENSHOT_MAX)),
+                    bool(params.get("capture_console", False)),
                     recovery_token,
                 ),
                 name=f"netroach-recovery-{scan_id[:8]}",

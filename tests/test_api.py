@@ -1215,9 +1215,11 @@ rate_limit_per_sec = 13
                 summary.observe(result)
                 return [result], summary
 
-            def fake_capture(results, *, store, timeout_ms, maximum, should_stop):
+            def fake_capture(results, *, store, timeout_ms, maximum, should_stop, capture_console):
                 result = list(results)[0]
                 self.assertFalse(should_stop())
+                # Photographing a real console needs a desktop, so it is opt-in.
+                self.assertFalse(capture_console)
                 store(
                     result,
                     b"\x89PNG\r\n\x1a\napi automatic",

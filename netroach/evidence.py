@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from .console_capture import capture_console_session
+
 MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
 DEFAULT_SCREENSHOT_TIMEOUT_MS = 8_000
 DEFAULT_SCREENSHOT_MAX = 20
@@ -462,6 +464,7 @@ def capture_terminal_transcripts(
     timeout_ms: int = DEFAULT_SCREENSHOT_TIMEOUT_MS,
     maximum: int = DEFAULT_SCREENSHOT_MAX,
     should_stop: Callable[[], bool] | None = None,
+    capture_console: bool = False,
 ) -> ScreenshotCaptureSummary:
     candidates = automatic_evidence_candidates(results, maximum=maximum)
     captured = 0
@@ -471,8 +474,19 @@ def capture_terminal_transcripts(
             break
         host = str(result.get("host") or "")
         try:
-            transcript = run_powershell_diagnostic(result, timeout_ms=timeout_ms)
-            image = render_terminal_transcript(result, transcript)
+            image = None
+            capture_agent = f"netroach transcript renderer {SCREENSHOT_WIDTH}x{SCREENSHOT_HEIGHT}"
+            if capture_console:
+                # A photograph of a real console beats a drawing of one, but it
+                # needs a desktop to draw on. Where there is none the capture
+                # comes back empty and the drawing is used instead - an empty
+                # image is the one thing evidence must never be.
+                image = capture_console_session(host, int(result.get("port") or 0))
+                if image is not None:
+                    capture_agent = "windows console capture"
+            if image is None:
+                transcript = run_powershell_diagnostic(result, timeout_ms=timeout_ms)
+                image = render_terminal_transcript(result, transcript)
             filename_host = re.sub(r"[^A-Za-z0-9_.-]+", "_", host.strip("[]"))
             source_url = web_result_url(result) if is_web_result(result) else None
             store(
@@ -480,7 +494,7 @@ def capture_terminal_transcripts(
                 image,
                 f"{filename_host}_{result.get('port')}_{result.get('protocol', 'tcp')}_powershell.png",
                 source_url,
-                f"netroach transcript renderer {SCREENSHOT_WIDTH}x{SCREENSHOT_HEIGHT}",
+                capture_agent,
             )
             captured += 1
         except Exception as exc:  # noqa: BLE001 - one malformed result must not stop other transcripts.
@@ -501,6 +515,7 @@ def capture_automatic_evidence(
     timeout_ms: int = DEFAULT_SCREENSHOT_TIMEOUT_MS,
     maximum: int = DEFAULT_SCREENSHOT_MAX,
     should_stop: Callable[[], bool] | None = None,
+    capture_console: bool = False,
 ) -> ScreenshotCaptureSummary:
     candidates = automatic_evidence_candidates(results, maximum=maximum)
     if not candidates:
@@ -546,6 +561,7 @@ def capture_automatic_evidence(
             timeout_ms=timeout_ms,
             maximum=len(remaining),
             should_stop=should_stop,
+            capture_console=capture_console,
         )
     else:
         terminal_summary = ScreenshotCaptureSummary(candidates=0, captured=0, failed=0)

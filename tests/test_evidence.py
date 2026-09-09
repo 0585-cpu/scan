@@ -1,5 +1,6 @@
 import io
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -339,6 +340,84 @@ class HostRouteFilterTests(unittest.TestCase):
             handler(route)
 
             self.assertEqual(calls, ["continue"], url)
+
+
+class ConsoleCaptureTests(unittest.TestCase):
+    """A photograph of a console, with a drawing behind it when there is none."""
+
+    def test_the_session_shows_the_connection_still_open(self):
+        from netroach.console_capture import build_connection_script
+
+        script = build_connection_script("192.0.2.4", 111, done_path=Path("C:/tmp/done"))
+
+        # netstat runs while the socket is still held: the ESTABLISHED line
+        # naming this host and port is the whole evidence.
+        self.assertIn("TcpClient", script)
+        self.assertIn("netstat -an", script)
+        self.assertIn("192.0.2.4", script)
+        self.assertLess(script.index("TcpClient"), script.index("netstat -an"))
+        self.assertIn("Stopped before username, password, key, AUTH, or login.", script)
+
+    def test_a_host_cannot_break_out_of_the_quoted_string(self):
+        from netroach.console_capture import build_connection_script
+
+        script = build_connection_script("10.0.0.1'; calc; '", 80, done_path=Path("C:/tmp/done"))
+
+        # PowerShell escapes a quote inside a single-quoted string by doubling
+        # it, so the payload stays a value and never becomes a statement.
+        self.assertIn("10.0.0.1''; calc; ''", script)
+        self.assertNotIn("10.0.0.1'; calc; '", script)
+
+    def test_a_failed_capture_falls_back_to_the_drawing(self):
+        from netroach import evidence as evidence_module
+
+        stored = []
+
+        def store(result, data, file_name, source_url, capture_agent=None):
+            stored.append((file_name, capture_agent))
+
+        results = [{"host": "10.0.0.1", "port": 22, "protocol": "tcp", "state": "open",
+                    "service_name": "ssh", "banner": None}]
+        with patch.object(evidence_module, "capture_console_session", return_value=None):
+            summary = evidence_module.capture_terminal_transcripts(
+                results, store=store, capture_console=True
+            )
+
+        self.assertEqual(summary.captured, 1)
+        self.assertEqual(len(stored), 1)
+        self.assertIn("transcript renderer", stored[0][1])
+
+    def test_a_successful_capture_is_recorded_as_one(self):
+        from netroach import evidence as evidence_module
+
+        stored = []
+
+        def store(result, data, file_name, source_url, capture_agent=None):
+            stored.append((data, capture_agent))
+
+        results = [{"host": "10.0.0.1", "port": 22, "protocol": "tcp", "state": "open",
+                    "service_name": "ssh", "banner": None}]
+        with patch.object(evidence_module, "capture_console_session", return_value=b"PNGDATA"):
+            evidence_module.capture_terminal_transcripts(results, store=store, capture_console=True)
+
+        self.assertEqual(stored[0][0], b"PNGDATA")
+        self.assertEqual(stored[0][1], "windows console capture")
+
+    def test_the_drawing_is_used_when_the_option_is_off(self):
+        from netroach import evidence as evidence_module
+
+        stored = []
+
+        def store(result, data, file_name, source_url, capture_agent=None):
+            stored.append(capture_agent)
+
+        results = [{"host": "10.0.0.1", "port": 22, "protocol": "tcp", "state": "open",
+                    "service_name": "ssh", "banner": None}]
+        with patch.object(evidence_module, "capture_console_session") as capture:
+            evidence_module.capture_terminal_transcripts(results, store=store)
+
+        capture.assert_not_called()
+        self.assertIn("transcript renderer", stored[0])
 
 
 if __name__ == "__main__":

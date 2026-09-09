@@ -901,6 +901,9 @@
                       <span class="field-label">옵션</span>
                       <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지</label>
                       <label class="check-row"><input name="capture_screenshots" type="checkbox">서비스 증적 이미지 수집</label>
+                      <label class="check-row"><input name="capture_console" type="checkbox">증적을 실제 콘솔 창으로 캡처
+                        <span class="helper">netstat으로 연결이 성립한 화면을 그대로 찍습니다. 화면이 켜진 상태에서만 되고, 포트당 1~2초가 더 걸립니다.</span>
+                      </label>
                     </div>
                     <div class="field full authorization-box">
                       <label class="check-row"><input id="scanAuthorized" name="confirm_authorized" type="checkbox" required>스캔 권한을 확인했습니다</label>
@@ -1452,7 +1455,7 @@
     const SCAN_PRESET_MAX_COUNT = 12;
     // The authorization checkbox is deliberately absent: a restored tick would
     // defeat the gate that makes every scan a deliberate act.
-    const PRESET_FIELDS = ['ports', 'top_ports', 'protocol', 'concurrency', 'timeout_ms', 'udp_retries', 'service_probe', 'capture_screenshots'];
+    const PRESET_FIELDS = ['ports', 'top_ports', 'protocol', 'concurrency', 'timeout_ms', 'udp_retries', 'service_probe', 'capture_screenshots', 'capture_console'];
 
     const BUILTIN_SCAN_PRESETS = [
       {id: 'builtin-quick', name: '빠른 점검', builtin: true, values: {top_ports: 100, protocol: 'tcp', service_probe: true}},
@@ -3216,6 +3219,7 @@ ${health.db}` : '데이터베이스 없음';
         udp_retries: Number(form.get('udp_retries') || 0),
         service_probe: form.get('service_probe') === 'on',
         capture_screenshots: form.get('capture_screenshots') === 'on',
+        capture_console: form.get('capture_console') === 'on',
         screenshot_max: Number(form.get('screenshot_max') || 20),
         max_attempts: Number(form.get('max_attempts') || 1000000),
         confirm_large_scan: form.get('confirm_large_scan') === 'on'

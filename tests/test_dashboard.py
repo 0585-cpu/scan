@@ -481,6 +481,15 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("JSON.stringify({path})", body)
         self.assertIn("netroach-artifacts", html)
 
+    def test_the_console_capture_option_warns_what_it_costs(self):
+        """It needs a desktop and spends a second and a half per port, so the
+        operator has to be told before ticking it."""
+        html = dashboard_html()
+
+        self.assertIn('name="capture_console"', html)
+        self.assertIn("capture_console: form.get('capture_console') === 'on'", html)
+        self.assertIn("화면이 켜진 상태에서만", html)
+
     def test_the_assessment_workbook_is_reachable_and_lists_findings_only(self):
         """It is the shape a report is handed in, and a closed port is not a
         finding - the link asks for open results rather than the whole scan."""
