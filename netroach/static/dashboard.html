@@ -577,6 +577,18 @@
       grid-template-columns: repeat(4, minmax(120px, 1fr));
       gap: 12px;
     }
+    /* The metrics row is a four-column grid, so this has to claim the whole
+       width rather than sit in a cell sized for a number. */
+    .metric-warning {
+      grid-column: 1 / -1;
+      border: 1px solid var(--danger-line);
+      border-radius: var(--radius);
+      background: var(--danger-soft);
+      color: var(--danger);
+      padding: 10px 14px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
     .metric {
       border: 0;
       border-radius: var(--radius);
@@ -2046,6 +2058,20 @@ ${health.db}` : '데이터베이스 없음';
       ].join('');
     }
 
+    // Bulk states are stored as a count, not one row per port, and a count can
+    // be wrong in a way a row cannot: probing a folded port a second time would
+    // add to it twice. Recording more results than the scan planned is what
+    // that looks like, and it is the one number here an operator cannot check
+    // by eye against a fifteen-million-probe total.
+    function overRecordedWarning(progress) {
+      const recorded = Number(progress.completed_results || 0);
+      const planned = Number(progress.planned_total || 0);
+      if (!planned || recorded <= planned) return '';
+      const excess = recorded - planned;
+      return `<div class="metric-warning">기록된 결과가 계획보다 ${excess.toLocaleString()}개 많습니다. `
+        + `집계가 중복되었을 수 있으니 결과를 그대로 신뢰하지 마세요.</div>`;
+    }
+
     function metric(label, value) {
       return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
     }
@@ -2273,7 +2299,7 @@ ${health.db}` : '데이터베이스 없음';
         metric('완료', progress.completed_results || 0),
         metric('계획', progress.planned_total || 0),
         metric('open', states.open || 0)
-      ].join('');
+      ].join('') + overRecordedWarning(progress);
       // Kept for renderHostRows(): port_count is the exact per-host port
       // total the server planned (from the job's own port expression), the
       // one denominator that lets a host row read "스캔 중... 41/100" instead

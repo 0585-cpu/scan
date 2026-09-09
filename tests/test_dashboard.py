@@ -447,6 +447,17 @@ class DashboardHostViewTests(unittest.TestCase):
         body = html.split("function groupResultsByHost(", 1)[1].split(chr(10) + "    }", 1)[0]
         self.assertIn("localeCompare(b.host", body)
 
+    def test_a_scan_that_recorded_more_than_it_planned_says_so(self):
+        """Folded counts can double; a fifteen-million total cannot be eyeballed."""
+        html = dashboard_html()
+
+        self.assertIn("function overRecordedWarning(", html)
+        body = html.split("function overRecordedWarning(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("recorded <= planned", body)
+        self.assertIn("metric-warning", body)
+        self.assertIn(".metric-warning {", html)
+        self.assertIn("grid-column: 1 / -1", html)
+
     def test_the_row_tab_is_not_named_after_a_filter_it_does_not_apply(self):
         """It defaults to every state, so calling it 열린 포트 misreads closed
         rows as a bug in the scan rather than the name."""
