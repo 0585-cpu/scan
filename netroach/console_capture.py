@@ -75,9 +75,15 @@ def build_connection_script(host: str, port: int, *, done_path: Path, hold_s: fl
         f"$tcp = [Net.Sockets.TcpClient]::new(); "
         f"$connected = $tcp.ConnectAsync('{safe_host}', {port}).Wait(5000); "
         "Write-Host (\"Connected: \" + $connected); "
-        f"Write-Host ''; Write-Host 'PS> netstat -an | Select-String \"{safe_host}\"'; "
-        f"netstat -an | Select-String '{safe_host}' | Select-Object -First 8 | ForEach-Object "
-        "{ Write-Host $_.Line.TrimEnd() }; "
+        f"Write-Host ''; Write-Host 'PS> netstat -an | Select-String \"{safe_host}:{port}\"'; "
+        # Only the line for this port. Every other socket on the host is
+        # context nobody reads, and it is paid for twice - once in the
+        # height of the picture, again in how far the report shrinks it.
+        "$rows = netstat -an; "
+        f"$match = $rows | Select-String -SimpleMatch '{safe_host}:{port} '; "
+        f"if (-not $match) {{ $match = $rows | Select-String -SimpleMatch '{safe_host}' | "
+        "Select-Object -First 3 }; "
+        "$match | Select-Object -First 3 | ForEach-Object { Write-Host $_.Line.TrimEnd() }; "
         "Write-Host ''; Write-Host 'Stopped before username, password, key, AUTH, or login.'; "
         f"New-Item -ItemType File -Path '{done_path.as_posix()}' -Force | Out-Null; "
         f"Start-Sleep -Seconds {hold_s}"

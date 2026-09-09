@@ -386,8 +386,11 @@ class ConsoleCaptureTests(unittest.TestCase):
         # naming this host and port is the whole evidence.
         self.assertIn("TcpClient", script)
         self.assertIn("netstat -an", script)
-        self.assertIn("192.0.2.4", script)
         self.assertLess(script.index("TcpClient"), script.index("netstat -an"))
+        # Narrowed to this port. Every other socket on the host is height the
+        # picture pays for and nobody reads. The trailing space keeps port 111
+        # from matching 1110.
+        self.assertIn("'192.0.2.4:111 '", script)
         self.assertIn("Stopped before username, password, key, AUTH, or login.", script)
 
     def test_a_host_cannot_break_out_of_the_quoted_string(self):
