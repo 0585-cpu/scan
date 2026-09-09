@@ -372,6 +372,26 @@ class ConsoleCaptureTests(unittest.TestCase):
 
         self.assertEqual(composed, left)
 
+    def test_a_client_window_too_wide_for_the_cell_is_scaled_down(self):
+        """The terminal will not open below a few hundred pixels, so the client
+        arrives wider than there is room for beside the console."""
+        from netroach.console_capture import _fit_pane_width
+
+        wide = self._png_bytes((480, 300), (20, 20, 20))
+
+        fitted = Image.open(io.BytesIO(_fit_pane_width(wide, 190)))
+
+        self.assertEqual(fitted.width, 190)
+        # Scaled, not cropped: it is the same window, smaller.
+        self.assertAlmostEqual(fitted.width / fitted.height, 480 / 300, places=1)
+
+    def test_a_pane_that_already_fits_is_left_alone(self):
+        from netroach.console_capture import _fit_pane_width
+
+        narrow = self._png_bytes((150, 90), (20, 20, 20))
+
+        self.assertEqual(_fit_pane_width(narrow, 190), narrow)
+
     def test_nothing_captured_composes_to_nothing(self):
         from netroach.console_capture import compose_side_by_side
 

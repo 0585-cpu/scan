@@ -43,7 +43,12 @@ TELNET_READY_TIMEOUT_S = 6.0
 # The client pane beside the console, as a share of the console's width.
 TELNET_PANE_WIDTH_RATIO = 0.36
 # Wide enough for a netstat line and the command above it, and no wider.
-CONSOLE_WINDOW_SIZE = (900, 420)
+# Sized so the console and the client together stay inside the report's
+# evidence cell, where anything wider is scaled down.
+CONSOLE_WINDOW_SIZE = (770, 300)
+# The evidence cell of the report the capture is pasted into. Anything wider
+# is scaled down there, and the console text is what the scaling costs.
+COMPOSED_TARGET_WIDTH = 960
 # Rows of background left under the last line of output before cropping.
 CONTENT_MARGIN_PX = 12
 # A row counts as content only past this many differing pixels, so a stray
@@ -70,8 +75,11 @@ def build_connection_script(host: str, port: int, *, done_path: Path, hold_s: fl
     safe_host = host.replace("'", "''")
     return (
         f"$Host.UI.RawUI.WindowTitle = 'Netroach {safe_host}:{port}'; "
-        f"Write-Host 'PS> $tcp = [Net.Sockets.TcpClient]::new(); "
-        f"$tcp.ConnectAsync(''{safe_host}'', {port}).Wait(5000)'; "
+        # Broken over two lines so the window can be narrow. A capture wider
+        # than the report's evidence cell is scaled down to fit it, and the
+        # text is what pays for the width.
+        "Write-Host 'PS> $tcp = [Net.Sockets.TcpClient]::new()'; "
+        f"Write-Host 'PS> $tcp.ConnectAsync({safe_host}, {port}).Wait(5000)'; "
         f"$tcp = [Net.Sockets.TcpClient]::new(); "
         f"$connected = $tcp.ConnectAsync('{safe_host}', {port}).Wait(5000); "
         "Write-Host (\"Connected: \" + $connected); "
@@ -249,6 +257,45 @@ def telnet_executable() -> str | None:
     return shutil.which("telnet")
 
 
+def _remaining_width(console_pane: bytes) -> int:
+    """What is left of the evidence cell once the console has its share."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return COMPOSED_TARGET_WIDTH // 3
+    try:
+        console = Image.open(io.BytesIO(console_pane))
+    except Exception:  # noqa: BLE001 - a pane we cannot measure gets a default.
+        return COMPOSED_TARGET_WIDTH // 3
+    return max(140, COMPOSED_TARGET_WIDTH - console.width - COMPOSED_PANE_GAP)
+
+
+def _fit_pane_width(pane: bytes, maximum: int) -> bytes:
+    """Scale a pane down to fit, keeping its proportions.
+
+    The terminal will not open below a few hundred pixels however small a size
+    it is asked for, so the client window arrives wider than there is room for.
+    Scaling the picture is honest - it is the same window, smaller - where
+    letting it run over is not: the report would shrink both panes to fit, and
+    the console text would pay for the client's chrome.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return pane
+    try:
+        image = Image.open(io.BytesIO(pane))
+    except Exception:  # noqa: BLE001 - an unreadable pane is returned untouched.
+        return pane
+    if image.width <= maximum:
+        return pane
+    height = max(1, round(image.height * maximum / image.width))
+    resized = image.convert("RGB").resize((maximum, height), Image.LANCZOS)
+    output = io.BytesIO()
+    resized.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
 def _telnet_pane_size(console_pane: bytes) -> tuple[int, int] | None:
     """Keep the client narrow beside the console, and no taller than it."""
     try:
@@ -390,6 +437,9 @@ def capture_console_session(
             )
             if telnet_pane is not None:
                 telnet_pane = crop_to_content(telnet_pane)
+                telnet_pane = _fit_pane_width(
+                    telnet_pane, _remaining_width(console_pane)
+                )
             return compose_side_by_side([console_pane, telnet_pane or b""])
         finally:
             process.terminate()
