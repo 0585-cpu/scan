@@ -40,6 +40,8 @@ CAPTURE_POLL_INTERVAL_S = 0.2
 CAPTURE_SETTLE_S = 0.35
 # The client either paints quickly or is not installed at all.
 TELNET_READY_TIMEOUT_S = 6.0
+# The client pane beside the console, as a share of the console's width.
+TELNET_PANE_WIDTH_RATIO = 0.36
 # Gap between the two panes when a telnet window joins the console one.
 COMPOSED_PANE_GAP = 12
 COMPOSED_BACKGROUND = "#0c0c0c"
@@ -192,7 +194,22 @@ def telnet_executable() -> str | None:
     return shutil.which("telnet")
 
 
-def _capture_telnet_window(user32: ctypes.WinDLL, host: str, port: int) -> bytes | None:
+def _telnet_pane_size(console_pane: bytes) -> tuple[int, int] | None:
+    """Keep the client narrow beside the console, and no taller than it."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    try:
+        console = Image.open(io.BytesIO(console_pane))
+    except Exception:  # noqa: BLE001 - a pane we cannot measure gets no resize.
+        return None
+    return (max(320, round(console.width * TELNET_PANE_WIDTH_RATIO)), console.height)
+
+
+def _capture_telnet_window(
+    user32: ctypes.WinDLL, host: str, port: int, *, size: tuple[int, int] | None = None
+) -> bytes | None:
     """Open a telnet client on the port and photograph its window.
 
     Unlike the console pane, telnet does write to the socket: it negotiates its
@@ -219,8 +236,18 @@ def _capture_telnet_window(user32: ctypes.WinDLL, host: str, port: int) -> bytes
         while time.monotonic() < deadline:
             hwnd = _find_window_by_title(user32, token)
             if hwnd is not None:
+                # Sized down as it goes off screen. A terminal opens at the
+                # width the user set for their own work, and two of those side
+                # by side make an image so wide that the console text is
+                # unreadable once the report shrinks it into a cell.
+                width, height = size or (0, 0)
                 user32.SetWindowPos(
-                    hwnd, 0, *OFFSCREEN_POSITION, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+                    hwnd,
+                    0,
+                    *OFFSCREEN_POSITION,
+                    width,
+                    height,
+                    (SWP_NOSIZE if not size else 0) | SWP_NOZORDER | SWP_NOACTIVATE,
                 )
                 break
             if process.poll() is not None:
@@ -298,7 +325,9 @@ def capture_console_session(
             console_pane = _capture_window_png(hwnd)
             if console_pane is None or not with_telnet:
                 return console_pane
-            telnet_pane = _capture_telnet_window(user32, host, port)
+            telnet_pane = _capture_telnet_window(
+                user32, host, port, size=_telnet_pane_size(console_pane)
+            )
             return compose_side_by_side([console_pane, telnet_pane or b""])
         finally:
             process.terminate()
