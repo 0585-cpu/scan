@@ -1,8 +1,8 @@
+import io
 import json
 import tempfile
 import unittest
 import zipfile
-import io
 from io import BytesIO
 from pathlib import Path
 
