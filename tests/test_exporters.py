@@ -128,5 +128,66 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(workbook["Evidence"]._images[0].height, 300)
 
 
+class ExcelIllegalCharacterTests(unittest.TestCase):
+    """A raw service banner is bytes, and Excel refuses most control codes."""
+
+    def _job_and_result(self, banner):
+        job = {"id": "scan-1", "targets": "10.0.0.1", "ports": "80"}
+        result = {
+            "scan_id": "scan-1",
+            "host": "10.0.0.1",
+            "port": 3127,
+            "protocol": "tcp",
+            "state": "open",
+            "service_name": "unknown",
+            "banner": banner,
+            "evidence": None,
+            "tags": [],
+            "note": None,
+            "created_at": "2026-09-09 02:13:26",
+            "evidence_files": [],
+        }
+        return job, [result]
+
+    def test_a_banner_full_of_control_bytes_still_exports(self):
+        from netroach.exporters import format_results_xlsx
+
+        job, results = self._job_and_result(chr(0x8D) + chr(0) + chr(1) + " raw {")
+
+        book = format_results_xlsx(job, results, load_evidence=lambda _id: None)
+
+        self.assertGreater(len(book), 0)
+
+    def test_the_readable_part_of_the_banner_survives(self):
+        import io
+
+        import openpyxl
+
+        from netroach.exporters import format_results_xlsx
+
+        job, results = self._job_and_result("SSH-2.0-OpenSSH" + chr(0) + chr(0x8D) + " ready")
+
+        book = format_results_xlsx(job, results, load_evidence=lambda _id: None)
+
+        sheet = openpyxl.load_workbook(io.BytesIO(book))["Results"]
+        banner = sheet.cell(2, 7).value
+        self.assertIn("SSH-2.0-OpenSSH", banner)
+        self.assertIn("ready", banner)
+
+    def test_tabs_and_newlines_are_left_alone(self):
+        import io
+
+        import openpyxl
+
+        from netroach.exporters import format_results_xlsx
+
+        job, results = self._job_and_result("line one" + chr(10) + "line two" + chr(9) + "end")
+
+        book = format_results_xlsx(job, results, load_evidence=lambda _id: None)
+
+        sheet = openpyxl.load_workbook(io.BytesIO(book))["Results"]
+        self.assertEqual(sheet.cell(2, 7).value, "line one" + chr(10) + "line two" + chr(9) + "end")
+
+
 if __name__ == "__main__":
     unittest.main()

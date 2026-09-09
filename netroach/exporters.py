@@ -272,8 +272,20 @@ def _style_excel_header(sheet: Any, font_type: Any, fill_type: Any, alignment_ty
     sheet.row_dimensions[1].height = 24
 
 
+# Excel rejects most control codes outright, and a service banner is raw
+# bytes off a socket: a scan of one range carried fifty-six of them. openpyxl
+# raises on the first, so a single binary banner cost the whole workbook.
+_EXCEL_CONTROL_CHARACTERS = re.compile(
+    "[" + "".join(chr(code) for code in [*range(0, 9), 11, 12, *range(14, 32)]) + "]"
+)
+
+
 def _excel_text(value: Any) -> str:
     text = "" if value is None else str(value)
+    # Tab, newline and carriage return are the three Excel accepts, and a
+    # banner's line breaks are worth keeping - the rest are dropped rather
+    # than escaped, because what they carried was never text to begin with.
+    text = _EXCEL_CONTROL_CHARACTERS.sub("", text)
     if text.startswith(("=", "+", "-", "@")):
         return f"'{text}"
     return text
