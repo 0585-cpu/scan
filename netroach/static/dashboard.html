@@ -990,7 +990,7 @@
                   <div class="form-section"><h4>실행</h4>
                   <div class="form-grid">
                     <div class="field full">
-                      <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지</label>
+                      <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지<span class="helper">UDP에서는 보내는 패킷 자체가 달라집니다. 켜면 포트별 실제 요청(SNMP GetRequest, RIP 라우팅 테이블 요청 등)을 보내 열린 포트를 확정하고, 끄면 0 바이트 하나만 보내 닫힌 포트만 가려냅니다.</span></label>
                     </div>
                     <div class="field full authorization-box">
                       <label class="check-row"><input id="scanAuthorized" name="confirm_authorized" type="checkbox" required>스캔 권한을 확인했습니다</label>

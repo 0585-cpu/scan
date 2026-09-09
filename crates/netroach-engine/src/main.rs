@@ -627,14 +627,25 @@ async fn scan_udp_one(
     if let Err(err) = socket.connect(addr).await {
         return udp_error_event(scan_id, host, port, start, err, "socket connect error");
     }
-    let payload = udp_probe_payload(port);
+    // Service detection off means the neutral probe: a single zero byte,
+    // which no service can act on. The probes are real protocol requests -
+    // RIP's asks a router for its whole table, SNMP's is a GetRequest that
+    // makes an agent trap on a wrong community - and an operator who turned
+    // detection off has said they do not want that traffic. Without a probe
+    // of ours to correlate against, any reply from the peer is the answer:
+    // something is listening.
+    let payload = if service_probe {
+        udp_probe_payload(port)
+    } else {
+        vec![0]
+    };
     let mut buf = [0_u8; 2048];
     for attempt in 0..=retries {
         if let Err(err) = socket.send(&payload).await {
             return udp_error_or_closed_event(scan_id, host, port, start, err);
         }
         match timeout(timeout_duration, socket.recv(&mut buf)).await {
-            Ok(Ok(size)) if udp_response_matches(port, &payload, &buf[..size]) => {
+            Ok(Ok(size)) if udp_reply_answers(port, &payload, &buf[..size], service_probe) => {
                 let fingerprint = if service_probe {
                     classify_udp_response_with_catalog(port, &buf[..size], plugin_catalog)
                 } else {
@@ -1756,6 +1767,20 @@ fn udp_probe_payload(port: u16) -> Vec<u8> {
     }
 }
 
+/// Whether a datagram back from the peer settles that the port is open.
+///
+/// With a service probe out there the reply has to correlate with it, which is
+/// what keeps an unrelated datagram from reading as a service. The neutral
+/// probe has nothing to correlate against, so any reply from the peer is the
+/// answer: the socket is connected, and only that peer reaches it.
+fn udp_reply_answers(port: u16, request: &[u8], response: &[u8], service_probe: bool) -> bool {
+    if service_probe {
+        udp_response_matches(port, request, response)
+    } else {
+        !response.is_empty()
+    }
+}
+
 fn udp_response_matches(port: u16, request: &[u8], response: &[u8]) -> bool {
     if response.is_empty() {
         return false;
@@ -2734,6 +2759,21 @@ mod tests {
         assert_eq!(udp_probe_payload(11211), b"version\r\n");
     }
 
+    #[test]
+    fn the_neutral_probe_carries_nothing_a_service_can_act_on() {
+        // Turning service detection off has to mean it: the probes are real
+        // requests, and RIP's asks a router for its whole routing table.
+        for port in [53, 123, 161, 500, 520, 1900, 5060] {
+            assert!(udp_probe_payload(port).len() > 1);
+        }
+        // Nothing of ours to correlate against, so any reply is the answer.
+        assert!(udp_reply_answers(53, &[0], b"anything", false));
+        assert!(!udp_reply_answers(53, &[0], b"", false));
+        // And with a probe out there the correlation still decides.
+        let dns = udp_probe_payload(53);
+        assert!(udp_reply_answers(53, &dns, &[dns[0], dns[1], 0x81, 0x80], true));
+        assert!(!udp_reply_answers(53, &dns, &[b'X', b'X', 0x81, 0x80], true));
+    }
     #[test]
     fn udp_response_correlation_checks_protocol_identifiers() {
         let dns = udp_probe_payload(53);

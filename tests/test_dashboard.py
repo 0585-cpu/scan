@@ -710,6 +710,16 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("rate_limit_per_sec: 200", preset)
         self.assertIn("rate_limit_per_sec", html.split("const PRESET_FIELDS", 1)[1].split(";", 1)[0])
 
+    def test_service_detection_says_what_it_changes_on_udp(self):
+        """On UDP the tick decides what packet goes out, not merely whether the
+        reply is classified: a router asked for its whole routing table is not
+        the same scan as one zero byte."""
+        html = dashboard_html()
+
+        box = html.split('name="service_probe"', 1)[1].split("</label>", 1)[0]
+        self.assertIn("helper", box)
+        self.assertIn("RIP", box)
+
 
 if __name__ == "__main__":
     unittest.main()
