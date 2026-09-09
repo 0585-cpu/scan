@@ -2611,6 +2611,7 @@ ${health.db}` : '데이터베이스 없음';
         // this host have anything open" by the loaded page hid open hosts whose
         // rows fell outside the window, and sorted them below empty ones.
         entry.openCount = Number(summary.states?.open || 0);
+        entry.states = summary.states || {};
       });
       const rows = [...byHost.values()];
       rows.forEach((entry) => {
@@ -2639,10 +2640,22 @@ ${health.db}` : '데이터베이스 없음';
     // many are known and list the ones actually in hand.
     function hostOpenText(entry) {
       const known = Number(entry.openCount || 0);
-      if (!known) return '';
+      if (!known) return bulkStateText(entry);
       if (!entry.open.length) return `open ${known}개`;
       const missing = known - entry.open.length;
       return `open ${entry.open.join(',')}${missing > 0 ? ` 외 ${missing}개` : ''}`;
+    }
+
+    // A host with nothing open used to render a blank cell, which reads the
+    // same as a host that was never reached. Its ports are stored as a count
+    // rather than row by row, so say the count.
+    function bulkStateText(entry) {
+      return Object.entries(entry.states || {})
+        .filter(([state]) => state !== 'open')
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 2)
+        .map(([state, count]) => `${state} ${Number(count).toLocaleString()}`)
+        .join(' · ');
     }
 
     function hostRowState(entry, jobRunning, portCount) {

@@ -869,5 +869,141 @@ class MigrationCostTests(unittest.TestCase):
                 )
 
 
+class CollapsedStateTests(unittest.TestCase):
+    """Bulk closed/filtered ports are kept as a count, the way nmap does it."""
+
+    def _repo(self, tmp):
+        repo = SQLiteRepository(Path(tmp) / "netroach.db")
+        scan_id = repo.create_scan_job(targets="10.0.0.1", ports="1-3000", scope=[], params={})
+        return repo, scan_id
+
+    def _write(self, repo, scan_id, host, state, count, first_port=1):
+        repo.add_port_results(
+            [
+                PortResult(
+                    scan_id=scan_id,
+                    host=host,
+                    port=first_port + offset,
+                    protocol="tcp",
+                    state=state,
+                    latency_ms=None,
+                )
+                for offset in range(count)
+            ]
+        )
+
+    def test_a_small_group_stays_row_by_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 25)
+
+            self.assertEqual(repo.count_results_by_state(scan_id), {"filtered": 25})
+            with repo.session() as conn:
+                stored = conn.execute("SELECT count(*) FROM port_results").fetchone()[0]
+            self.assertEqual(stored, 25)
+
+    def test_a_large_group_is_replaced_by_its_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 2000)
+
+            # The count is still exact, which is what progress and the host
+            # list are built from.
+            self.assertEqual(repo.count_results_by_state(scan_id), {"filtered": 2000})
+            with repo.session() as conn:
+                stored = conn.execute("SELECT count(*) FROM port_results").fetchone()[0]
+            self.assertEqual(stored, 0)
+
+    def test_open_ports_are_never_collapsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            self._write(repo, scan_id, "10.0.0.1", "open", 100)
+
+            with repo.session() as conn:
+                stored = conn.execute("SELECT count(*) FROM port_results").fetchone()[0]
+            self.assertEqual(stored, 100)
+
+    def test_a_few_filtered_ports_survive_a_flood_of_closed_ones(self):
+        """The minority state is the interesting one - it must stay addressable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            self._write(repo, scan_id, "10.0.0.1", "closed", 2000, first_port=1)
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 3, first_port=9000)
+
+            with repo.session() as conn:
+                ports = [
+                    row["port"]
+                    for row in conn.execute("SELECT port FROM port_results ORDER BY port")
+                ]
+            self.assertEqual(ports, [9000, 9001, 9002])
+            self.assertEqual(
+                repo.count_results_by_state(scan_id), {"closed": 2000, "filtered": 3}
+            )
+
+    def test_a_row_carrying_a_banner_is_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 2000)
+            repo.add_port_results(
+                [
+                    PortResult(
+                        scan_id=scan_id,
+                        host="10.0.0.1",
+                        port=8080,
+                        protocol="tcp",
+                        state="filtered",
+                        latency_ms=None,
+                        banner="partial response",
+                    )
+                ]
+            )
+
+            with repo.session() as conn:
+                kept = conn.execute("SELECT port, banner FROM port_results").fetchall()
+            self.assertEqual([(row["port"], row["banner"]) for row in kept], [(8080, "partial response")])
+            self.assertEqual(repo.count_results_by_state(scan_id), {"filtered": 2001})
+
+    def test_the_host_list_still_reports_a_fully_filtered_host(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 2000)
+
+            summaries = repo.summarize_results_by_host(scan_id)
+            self.assertEqual(
+                summaries,
+                [{"host": "10.0.0.1", "total": 2000, "states": {"filtered": 2000}}],
+            )
+
+    def test_rerunning_a_scan_does_not_double_count(self):
+        """Recovery re-probes everything, so the counters must start over."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            repo.mark_scan_started(scan_id)
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 2000)
+
+            token = repo.claim_scan_for_recovery(scan_id, status="running", worker_token=None)
+            self.assertIsNotNone(token)
+            self.assertEqual(repo.count_results_by_state(scan_id), {})
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 2000)
+
+            self.assertEqual(repo.count_results_by_state(scan_id), {"filtered": 2000})
+
+    def test_scans_recorded_before_this_shipped_are_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            with repo.session() as conn:
+                conn.executemany(
+                    "INSERT INTO port_results(scan_id, host, port, protocol, state)"
+                    " VALUES(?, '10.0.0.1', ?, 'tcp', 'filtered')",
+                    [(scan_id, port) for port in range(1, 2001)],
+                )
+
+            self.assertEqual(repo.count_results_by_state(scan_id), {"filtered": 2000})
+            self.assertEqual(
+                repo.summarize_results_by_host(scan_id),
+                [{"host": "10.0.0.1", "total": 2000, "states": {"filtered": 2000}}],
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

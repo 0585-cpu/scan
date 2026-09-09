@@ -493,7 +493,9 @@ class ApiTests(unittest.TestCase):
                     EngineSettings(protocol="tcp"),
                 )
 
-            self.assertEqual(repo.count_results(scan_id), probes)
+            # Bulk states are stored as a count, so ask for the recorded total
+            # rather than the row count.
+            self.assertEqual(sum(repo.count_results_by_state(scan_id).values()), probes)
             # A handful of polls plus the cold checks around the scan, not one
             # per probe and certainly not two.
             self.assertLess(calls["count"], 50, f"{calls['count']} cancel checks for {probes} probes")

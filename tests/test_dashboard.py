@@ -447,6 +447,15 @@ class DashboardHostViewTests(unittest.TestCase):
         body = html.split("function groupResultsByHost(", 1)[1].split(chr(10) + "    }", 1)[0]
         self.assertIn("localeCompare(b.host", body)
 
+    def test_a_host_with_nothing_open_still_says_what_was_found(self):
+        """Its ports are stored as a count, so the row has no rows to show."""
+        html = dashboard_html()
+
+        self.assertIn("function bulkStateText(", html)
+        body = html.split("function bulkStateText(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("state !== 'open'", body)
+        self.assertIn("toLocaleString()", body)
+
     def test_open_ports_outside_the_window_are_still_reported(self):
         html = dashboard_html()
 

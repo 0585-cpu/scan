@@ -60,6 +60,14 @@ def _port_result_values(result: PortResult) -> tuple[Any, ...]:
     )
 
 
+# Above this many ports of one state on one host, the individual rows carry no
+# information the count does not already give. Below it they do: three filtered
+# ports among a thousand closed ones name the firewall rule. nmap draws the same
+# line at roughly this size.
+COLLAPSE_THRESHOLD = 25
+COLLAPSIBLE_STATES = ("closed", "filtered")
+
+
 def default_db_path() -> Path:
     system = platform.system().lower()
     if system == "windows":
@@ -203,6 +211,20 @@ class SQLiteRepository:
                     ON port_results(scan_id, state);
                 CREATE INDEX IF NOT EXISTS idx_port_results_scan_host_port
                     ON port_results(scan_id, host, port);
+                -- How many probes of one state were folded away for a host.
+                -- A scan of a firewalled range answers "filtered" hundreds of
+                -- thousands of times with nothing to distinguish one from the
+                -- next; nmap prints that as a single "Not shown" line and this
+                -- is the same idea, stored rather than printed.
+                CREATE TABLE IF NOT EXISTS scan_state_counts (
+                    scan_id TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    protocol TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    collapsed INTEGER NOT NULL,
+                    PRIMARY KEY(scan_id, host, protocol, state),
+                    FOREIGN KEY(scan_id) REFERENCES scan_jobs(id) ON DELETE CASCADE
+                );
                 CREATE TABLE IF NOT EXISTS result_evidence_files (
                     id TEXT PRIMARY KEY,
                     scan_id TEXT NOT NULL,
@@ -371,6 +393,8 @@ class SQLiteRepository:
                 """,
                 (scan_id,),
             )
+            if cursor.rowcount > 0:
+                self._forget_collapsed_counts(conn, scan_id)
         return cursor.rowcount > 0
 
     def list_recoverable_scan_jobs(self) -> list[dict[str, Any]]:
@@ -411,6 +435,8 @@ class SQLiteRepository:
                     worker_token,
                 ),
             )
+            if cursor.rowcount > 0:
+                self._forget_collapsed_counts(conn, scan_id)
         return recovery_token if cursor.rowcount > 0 else None
 
     def mark_recovered_scan_started(self, scan_id: str, recovery_token: str) -> bool:
@@ -617,11 +643,87 @@ class SQLiteRepository:
         self.add_port_results((result,))
 
     def add_port_results(self, results: Iterable[PortResult]) -> None:
-        values = [_port_result_values(result) for result in results]
+        batch = list(results)
+        values = [_port_result_values(result) for result in batch]
         if not values:
             return
         with self.session() as conn:
             conn.executemany(PORT_RESULT_INSERT_SQL, values)
+            by_scan: dict[str, set[str]] = {}
+            for result in batch:
+                if result.scan_id:
+                    by_scan.setdefault(result.scan_id, set()).add(result.host)
+            for scan_id, hosts in by_scan.items():
+                self._collapse_bulk_states(conn, scan_id, sorted(hosts))
+
+    def _collapse_bulk_states(self, conn: sqlite3.Connection, scan_id: str, hosts: list[str]) -> None:
+        """Replace uninformative runs of one state on one host with a count.
+
+        Only rows that say nothing beyond their state qualify: a banner or an
+        evidence reference makes a row worth keeping however many peers it has.
+        A host whose count already exists keeps folding, so the rows that
+        arrive after the fold do not accumulate into an arbitrary sample of
+        whichever probes happened to land last.
+        """
+        placeholders = ",".join("?" * len(hosts))
+        states = ",".join("?" * len(COLLAPSIBLE_STATES))
+        groups = conn.execute(
+            f"""
+            SELECT host, protocol, state, COUNT(*) AS count
+            FROM port_results
+            WHERE scan_id=? AND host IN ({placeholders}) AND state IN ({states})
+              AND banner IS NULL AND evidence IS NULL
+            GROUP BY host, protocol, state
+            """,
+            (scan_id, *hosts, *COLLAPSIBLE_STATES),
+        ).fetchall()
+        if not groups:
+            return
+        collapsing = {
+            (str(row["host"]), str(row["protocol"]), str(row["state"]))
+            for row in conn.execute(
+                "SELECT host, protocol, state FROM scan_state_counts"
+                f" WHERE scan_id=? AND host IN ({placeholders})",
+                (scan_id, *hosts),
+            )
+        }
+        for row in groups:
+            key = (str(row["host"]), str(row["protocol"]), str(row["state"]))
+            count = int(row["count"])
+            if count <= COLLAPSE_THRESHOLD and key not in collapsing:
+                continue
+            conn.execute(
+                """
+                INSERT INTO scan_state_counts(scan_id, host, protocol, state, collapsed)
+                VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(scan_id, host, protocol, state)
+                DO UPDATE SET collapsed=collapsed + excluded.collapsed
+                """,
+                (scan_id, *key, count),
+            )
+            conn.execute(
+                """
+                DELETE FROM port_results
+                WHERE scan_id=? AND host=? AND protocol=? AND state=?
+                  AND banner IS NULL AND evidence IS NULL
+                """,
+                (scan_id, *key),
+            )
+
+    def _collapsed_counts(
+        self, conn: sqlite3.Connection, scan_id: str
+    ) -> list[tuple[str, str, str, int]]:
+        return [
+            (str(row["host"]), str(row["protocol"]), str(row["state"]), int(row["collapsed"]))
+            for row in conn.execute(
+                "SELECT host, protocol, state, collapsed FROM scan_state_counts WHERE scan_id=?",
+                (scan_id,),
+            )
+        ]
+
+    def _forget_collapsed_counts(self, conn: sqlite3.Connection, scan_id: str) -> None:
+        """A re-run re-probes every port, so its counts must start from zero."""
+        conn.execute("DELETE FROM scan_state_counts WHERE scan_id=?", (scan_id,))
 
     def add_result_evidence(
         self,
@@ -943,14 +1045,22 @@ class SQLiteRepository:
                 """,
                 (scan_id,),
             ).fetchall()
+            collapsed = self._collapsed_counts(conn, scan_id)
         summaries: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            host = str(row["host"])
-            count = int(row["count"])
+
+        def add(host: str, state: str, count: int) -> None:
             summary = summaries.setdefault(host, {"host": host, "total": 0, "states": {}})
             summary["total"] += count
-            summary["states"][str(row["state"])] = count
-        return list(summaries.values())
+            summary["states"][state] = summary["states"].get(state, 0) + count
+
+        for row in rows:
+            add(str(row["host"]), str(row["state"]), int(row["count"]))
+        # A host whose every port was folded away has no rows at all, and
+        # dropping it here would take it out of the host picker - hiding the
+        # fact that it was scanned rather than reporting what was found.
+        for host, _protocol, state, count in collapsed:
+            add(host, state, count)
+        return sorted(summaries.values(), key=lambda summary: str(summary["host"]))
 
     def summarize_report_counts(self, scan_id: str) -> dict[str, Any]:
         """Return complete scan aggregates without loading individual results."""
@@ -992,10 +1102,15 @@ class SQLiteRepository:
                 """,
                 (scan_id,),
             ).fetchone()
+            collapsed = self._collapsed_counts(conn, scan_id)
         states = {str(row["state"]): int(row["count"]) for row in state_rows}
+        protocols = {str(row["protocol"]): int(row["count"]) for row in protocol_rows}
+        for _host, protocol, state, count in collapsed:
+            states[state] = states.get(state, 0) + count
+            protocols[protocol] = protocols.get(protocol, 0) + count
         return {
             "states": states,
-            "protocols": {str(row["protocol"]): int(row["count"]) for row in protocol_rows},
+            "protocols": protocols,
             "services": {str(row["service"]): int(row["count"]) for row in service_rows},
             "hosts_with_open_ports": int(host_row["count"]),
             "total": sum(states.values()),
@@ -1012,7 +1127,11 @@ class SQLiteRepository:
                 """,
                 (scan_id,),
             ).fetchall()
-        return {row["state"]: int(row["count"]) for row in rows}
+            collapsed = self._collapsed_counts(conn, scan_id)
+        counts = {str(row["state"]): int(row["count"]) for row in rows}
+        for _host, _protocol, state, count in collapsed:
+            counts[state] = counts.get(state, 0) + count
+        return counts
 
     def summarize_scan_results(self, scan_id: str) -> ScanSummary:
         states = self.count_results_by_state(scan_id)
