@@ -1004,6 +1004,28 @@ class CollapsedStateTests(unittest.TestCase):
                 [{"host": "10.0.0.1", "total": 2000, "states": {"filtered": 2000}}],
             )
 
+    def test_completion_counts_folded_results_as_stored(self):
+        """The check guards against lost results; folded ones are not lost."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            repo.mark_scan_started(scan_id)
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 2000)
+            summary = ScanSummary(scan_id=scan_id, total=2000, filtered=2000)
+
+            repo.complete_scan(scan_id, summary)
+
+            self.assertEqual(repo.get_job(scan_id)["status"], "completed")
+
+    def test_completion_still_rejects_results_that_went_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            repo.mark_scan_started(scan_id)
+            self._write(repo, scan_id, "10.0.0.1", "filtered", 2000)
+            summary = ScanSummary(scan_id=scan_id, total=2500, filtered=2500)
+
+            with self.assertRaisesRegex(ValueError, "summary total mismatch"):
+                repo.complete_scan(scan_id, summary)
+
 
 if __name__ == "__main__":
     unittest.main()

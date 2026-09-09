@@ -453,11 +453,19 @@ class SQLiteRepository:
 
     def complete_scan(self, scan_id: str, summary: ScanSummary) -> None:
         with self.session() as conn:
-            stored_total = conn.execute(
+            rows = conn.execute(
                 "SELECT COUNT(*) AS count FROM port_results WHERE scan_id=?",
                 (scan_id,),
             ).fetchone()["count"]
-            if int(stored_total) != summary.total:
+            # The check exists to catch results lost between the engine and
+            # this table. A folded result is recorded, not lost, so it has to
+            # count - reading rows alone fails every scan large enough to fold.
+            folded = conn.execute(
+                "SELECT COALESCE(SUM(collapsed), 0) AS count FROM scan_state_counts WHERE scan_id=?",
+                (scan_id,),
+            ).fetchone()["count"]
+            stored_total = int(rows) + int(folded)
+            if stored_total != summary.total:
                 raise ValueError(
                     f"scan summary total mismatch for {scan_id}: "
                     f"summary={summary.total} stored_results={stored_total}"
