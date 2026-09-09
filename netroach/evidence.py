@@ -18,6 +18,11 @@ from .console_capture import capture_console_session
 MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
 DEFAULT_SCREENSHOT_TIMEOUT_MS = 8_000
 DEFAULT_SCREENSHOT_MAX = 20
+# A scan of a busy range finds thousands of open ports. This was a hundred,
+# which was not a considered ceiling - and because it was checked here rather
+# than at the request, raising the API's limit alone left the capture throwing
+# on the first call and storing nothing.
+MAX_SCREENSHOT_LIMIT = 10_000
 SCREENSHOT_WIDTH = 800
 SCREENSHOT_HEIGHT = 600
 
@@ -100,8 +105,8 @@ def web_screenshot_candidates(
     *,
     maximum: int = DEFAULT_SCREENSHOT_MAX,
 ) -> list[dict[str, Any]]:
-    if maximum < 1 or maximum > 100:
-        raise ValueError("screenshot maximum must be between 1 and 100")
+    if maximum < 1 or maximum > MAX_SCREENSHOT_LIMIT:
+        raise ValueError(f"screenshot maximum must be between 1 and {MAX_SCREENSHOT_LIMIT}")
     candidates: list[dict[str, Any]] = []
     seen: set[tuple[str, int, str]] = set()
     for result in results:
@@ -133,8 +138,8 @@ def automatic_evidence_candidates(
     *,
     maximum: int = DEFAULT_SCREENSHOT_MAX,
 ) -> list[dict[str, Any]]:
-    if maximum < 1 or maximum > 100:
-        raise ValueError("screenshot maximum must be between 1 and 100")
+    if maximum < 1 or maximum > MAX_SCREENSHOT_LIMIT:
+        raise ValueError(f"screenshot maximum must be between 1 and {MAX_SCREENSHOT_LIMIT}")
     candidates: list[dict[str, Any]] = []
     seen: set[tuple[str, int, str]] = set()
     for result in results:

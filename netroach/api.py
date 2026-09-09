@@ -951,6 +951,18 @@ def _run_evidence_recapture(
             screenshot_max=screenshot_max,
             capture_console=capture_console,
         )
+    except Exception as exc:  # noqa: BLE001 - a thread's traceback goes nowhere.
+        # This runs on its own thread, so an exception here used to vanish: the
+        # dashboard had already said capture was starting, and nothing ever
+        # contradicted it. Record the reason where the scan's own evidence
+        # summary is read.
+        repo.record_evidence_capture_failures(
+            scan_id,
+            candidates=0,
+            captured=0,
+            without_evidence=0,
+            errors=[f"evidence capture failed: {exc}"],
+        )
     finally:
         if on_finished is not None:
             on_finished()

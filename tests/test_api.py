@@ -1770,6 +1770,34 @@ class RescanAndRecaptureTests(unittest.TestCase):
                         thread.join(timeout=30)
             self.assertEqual(third.status_code, 200)
 
+    def test_a_capture_limit_above_a_hundred_is_honoured(self):
+        """The limit was checked twice - once at the request and once inside
+        the capture - and only one of them was raised."""
+        from netroach.evidence import automatic_evidence_candidates, web_screenshot_candidates
+
+        results = [
+            {"host": "10.0.0.1", "port": 8000 + offset, "protocol": "tcp",
+             "state": "open", "service_name": "http"}
+            for offset in range(150)
+        ]
+
+        self.assertEqual(len(automatic_evidence_candidates(results, maximum=1200)), 150)
+        self.assertEqual(len(web_screenshot_candidates(results, maximum=1200)), 150)
+
+    def test_a_capture_that_throws_says_so_on_the_scan(self):
+        """It runs on its own thread, where a traceback goes nowhere."""
+        with tempfile.TemporaryDirectory() as tmp:
+            client, repo, scan_id = self._client_with_open_results(tmp)
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=RuntimeError("boom")):
+                client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={})
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+
+            evidence = repo.get_job(scan_id)["summary"]["evidence"]
+            self.assertTrue(any("boom" in reason for reason in evidence["errors"]))
+
     def test_a_scan_with_every_port_photographed_is_left_alone(self):
         with tempfile.TemporaryDirectory() as tmp:
             client, repo, scan_id = self._client_with_open_results(tmp)
