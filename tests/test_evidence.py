@@ -345,6 +345,38 @@ class HostRouteFilterTests(unittest.TestCase):
 class ConsoleCaptureTests(unittest.TestCase):
     """A photograph of a console, with a drawing behind it when there is none."""
 
+    def _png_bytes(self, size, colour):
+        buffer = io.BytesIO()
+        Image.new("RGB", size, colour).save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_two_windows_become_one_picture(self):
+        from netroach.console_capture import COMPOSED_PANE_GAP, compose_side_by_side
+
+        left = self._png_bytes((700, 300), (10, 20, 30))
+        right = self._png_bytes((280, 120), (200, 10, 10))
+
+        composed = compose_side_by_side([left, right])
+
+        image = Image.open(io.BytesIO(composed))
+        self.assertEqual(image.size, (700 + COMPOSED_PANE_GAP + 280, 300))
+        self.assertEqual(image.getpixel((10, 10)), (10, 20, 30))
+        self.assertEqual(image.getpixel((700 + COMPOSED_PANE_GAP + 10, 10)), (200, 10, 10))
+
+    def test_a_missing_telnet_pane_leaves_the_console_alone(self):
+        from netroach.console_capture import compose_side_by_side
+
+        left = self._png_bytes((700, 300), (10, 20, 30))
+
+        composed = compose_side_by_side([left, b""])
+
+        self.assertEqual(composed, left)
+
+    def test_nothing_captured_composes_to_nothing(self):
+        from netroach.console_capture import compose_side_by_side
+
+        self.assertIsNone(compose_side_by_side([b"", b""]))
+
     def test_the_session_shows_the_connection_still_open(self):
         from netroach.console_capture import build_connection_script
 

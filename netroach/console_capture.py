@@ -13,7 +13,9 @@ capture comes back empty rather than wrong - callers fall back to the drawing.
 from __future__ import annotations
 
 import ctypes
+import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,6 +38,11 @@ CAPTURE_POLL_INTERVAL_S = 0.2
 # Left on screen after the command finishes so the capture is of a settled
 # window rather than one still painting its last line.
 CAPTURE_SETTLE_S = 0.35
+# The client either paints quickly or is not installed at all.
+TELNET_READY_TIMEOUT_S = 6.0
+# Gap between the two panes when a telnet window joins the console one.
+COMPOSED_PANE_GAP = 12
+COMPOSED_BACKGROUND = "#0c0c0c"
 
 
 def console_capture_supported() -> bool:
@@ -148,8 +155,97 @@ def _capture_window_png(hwnd: int) -> bytes | None:
         user32.ReleaseDC(hwnd, window_dc)
 
 
-def capture_console_session(host: str, port: int, *, hold_s: float = 20.0) -> bytes | None:
+def compose_side_by_side(panes: list[bytes]) -> bytes | None:
+    """Lay captured windows out left to right, the way a report shows them.
+
+    The console proving the connection and the client sitting on it are two
+    windows in the same moment, and separating them into two evidence files
+    loses that they belong together.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    images = []
+    for pane in panes:
+        if not pane:
+            continue
+        images.append(Image.open(io.BytesIO(pane)).convert("RGB"))
+    if not images:
+        return None
+    if len(images) == 1:
+        return panes[0] if panes[0] else None
+    width = sum(image.width for image in images) + COMPOSED_PANE_GAP * (len(images) - 1)
+    height = max(image.height for image in images)
+    canvas = Image.new("RGB", (width, height), COMPOSED_BACKGROUND)
+    offset = 0
+    for image in images:
+        canvas.paste(image, (offset, 0))
+        offset += image.width + COMPOSED_PANE_GAP
+    output = io.BytesIO()
+    canvas.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
+def telnet_executable() -> str | None:
+    """Windows ships the telnet client switched off, so it is often absent."""
+    return shutil.which("telnet")
+
+
+def _capture_telnet_window(user32: ctypes.WinDLL, host: str, port: int) -> bytes | None:
+    """Open a telnet client on the port and photograph its window.
+
+    Unlike the console pane, telnet does write to the socket: it negotiates its
+    own options before anything is displayed. It still stops well short of a
+    login - nothing is typed into it and it is closed as soon as the picture is
+    taken. Windows ships the client disabled, so its absence is ordinary and
+    the console pane stands alone.
+    """
+    executable = telnet_executable()
+    if executable is None:
+        return None
+    try:
+        process = subprocess.Popen(  # noqa: S603 - fixed executable, target passed as arguments.
+            [executable, host, str(port)],
+            creationflags=CREATE_NEW_CONSOLE,
+        )
+    except OSError:
+        return None
+    try:
+        # The client titles its window after the host it dialled.
+        token = f"Telnet {host}"
+        hwnd = None
+        deadline = time.monotonic() + TELNET_READY_TIMEOUT_S
+        while time.monotonic() < deadline:
+            hwnd = _find_window_by_title(user32, token)
+            if hwnd is not None:
+                user32.SetWindowPos(
+                    hwnd, 0, *OFFSCREEN_POSITION, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+                )
+                break
+            if process.poll() is not None:
+                return None
+            time.sleep(CAPTURE_POLL_INTERVAL_S)
+        if hwnd is None:
+            return None
+        time.sleep(CAPTURE_SETTLE_S)
+        return _capture_window_png(hwnd)
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:  # pragma: no cover - the client ignored terminate.
+            process.kill()
+
+
+def capture_console_session(
+    host: str, port: int, *, hold_s: float = 20.0, with_telnet: bool = True
+) -> bytes | None:
     """Run the session in a real console and return a PNG of that window.
+
+    A telnet client is opened beside it when the system has one, and the two
+    windows are photographed into a single image: the console proving the
+    connection, the client sitting on it.
 
     Returns None whenever the console cannot be photographed - no desktop, the
     window never appeared, the pixels came back blank - so the caller can fall
@@ -199,7 +295,11 @@ def capture_console_session(host: str, port: int, *, hold_s: float = 20.0) -> by
             if hwnd is None:
                 return None
             time.sleep(CAPTURE_SETTLE_S)
-            return _capture_window_png(hwnd)
+            console_pane = _capture_window_png(hwnd)
+            if console_pane is None or not with_telnet:
+                return console_pane
+            telnet_pane = _capture_telnet_window(user32, host, port)
+            return compose_side_by_side([console_pane, telnet_pane or b""])
         finally:
             process.terminate()
             try:
