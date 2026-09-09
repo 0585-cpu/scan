@@ -481,6 +481,28 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("JSON.stringify({path})", body)
         self.assertIn("netroach-artifacts", html)
 
+    def test_evidence_can_be_recaptured_without_scanning_again(self):
+        """A scan whose capture limit was too low has the ports already; the
+        limit cost the pictures, not the findings."""
+        html = dashboard_html()
+
+        self.assertIn('id="scanRecaptureEvidence"', html)
+        self.assertIn("/evidence/recapture", html)
+        body = html.split("async function recaptureEvidence(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("screenshot_max", body)
+        self.assertIn("capture_console", body)
+
+    def test_rescanning_open_ports_fills_the_form_rather_than_starting(self):
+        """The authorization tick and the workload warning belong to every
+        scan, and a re-scan has no claim to skip them."""
+        html = dashboard_html()
+
+        self.assertIn('id="scanRescanOpen"', html)
+        body = html.split("async function fillFormWithOpenTargets(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("open-targets", body)
+        self.assertIn("$('scanTargets').value", body)
+        self.assertNotIn("/v1/scans'", body)
+
     def test_the_console_capture_option_warns_what_it_costs(self):
         """It needs a desktop and spends a second and a half per port, so the
         operator has to be told before ticking it."""

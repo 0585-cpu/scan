@@ -4,11 +4,14 @@ import ipaddress
 import json
 import sqlite3
 import tempfile
+import threading
 import time
 import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
+
+PNG_HEADER = bytes([137, 80, 78, 71, 13, 10, 26, 10]) + b"shot"
 
 
 def has_fastapi_testclient() -> bool:
@@ -1661,6 +1664,97 @@ class DatabaseMergeEndpointTests(unittest.TestCase):
             client = TestClient(create_app(str(Path(tmp) / "netroach.db")))
 
             response = client.post("/v1/db/merge", json={"path": str(junk)})
+
+            self.assertEqual(response.status_code, 400)
+
+
+@unittest.skipUnless(has_fastapi_testclient(), "fastapi TestClient dependencies are not installed")
+class RescanAndRecaptureTests(unittest.TestCase):
+    """Finishing a scan whose evidence limit was set too low."""
+
+    def _client_with_open_results(self, tmp):
+        from fastapi.testclient import TestClient
+
+        from netroach.api import create_app
+        from netroach.models import PortResult
+        from netroach.storage import SQLiteRepository
+
+        db_path = Path(tmp) / "netroach.db"
+        repo = SQLiteRepository(db_path)
+        scan_id = repo.create_scan_job(targets="10.0.0.0/24", ports="1-100", scope=[], params={})
+        repo.mark_scan_started(scan_id)
+        results = [
+            PortResult(scan_id=scan_id, host="10.0.0.2", port=80, protocol="tcp",
+                       state="open", latency_ms=1.0),
+            PortResult(scan_id=scan_id, host="10.0.0.1", port=443, protocol="tcp",
+                       state="open", latency_ms=1.0),
+        ]
+        repo.add_port_results(results)
+        repo.complete_scan(scan_id, repo.summarize_scan_results(scan_id))
+        return TestClient(create_app(str(db_path))), repo, scan_id
+
+    def test_the_open_results_come_back_as_scan_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client, _repo, scan_id = self._client_with_open_results(tmp)
+
+            payload = client.get(f"/v1/scans/{scan_id}/open-targets").json()
+
+            self.assertEqual(payload["targets"], "10.0.0.1" + chr(10) + "10.0.0.2")
+            self.assertEqual(payload["ports"], "80,443")
+            self.assertEqual(payload["hosts"], 2)
+            # Two hosts crossed with two ports, which is more than the two open
+            # ports that produced them - the caller is told so.
+            self.assertEqual(payload["probes"], 4)
+
+    def test_evidence_can_be_collected_without_scanning_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client, repo, scan_id = self._client_with_open_results(tmp)
+            captured = []
+
+            def fake_capture(results, *, store, timeout_ms, maximum, capture_console):
+                for result in list(results):
+                    captured.append((result["host"], result["port"]))
+                    store(result, PNG_HEADER, "shot.png", None, "web_screenshot", "test")
+                from netroach.evidence import ScreenshotCaptureSummary
+
+                return ScreenshotCaptureSummary(
+                    candidates=len(captured), captured=len(captured), failed=0
+                )
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=fake_capture):
+                response = client.post(
+                    f"/v1/scans/{scan_id}/evidence/recapture",
+                    json={"screenshot_max": 50, "capture_console": False},
+                )
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["pending"], 2)
+            self.assertEqual(sorted(captured), [("10.0.0.1", 443), ("10.0.0.2", 80)])
+            self.assertEqual(len(repo.list_result_evidence(scan_id, host="10.0.0.2", port=80)), 1)
+
+    def test_a_scan_with_every_port_photographed_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client, repo, scan_id = self._client_with_open_results(tmp)
+            for host, port in (("10.0.0.2", 80), ("10.0.0.1", 443)):
+                repo.add_result_evidence(
+                    scan_id, host=host, port=port, data=PNG_HEADER,
+                    file_name="shot.png", evidence_type="web_screenshot",
+                )
+
+            payload = client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={}).json()
+
+            self.assertEqual(payload["pending"], 0)
+
+    def test_a_running_scan_is_not_recaptured_underneath_itself(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client, repo, scan_id = self._client_with_open_results(tmp)
+            with repo.session() as conn:
+                conn.execute("UPDATE scan_jobs SET status='running' WHERE id=?", (scan_id,))
+
+            response = client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={})
 
             self.assertEqual(response.status_code, 400)
 

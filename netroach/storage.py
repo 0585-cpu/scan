@@ -1096,6 +1096,28 @@ class SQLiteRepository:
             self._attach_evidence_files(conn, results, scan_id)
         return results
 
+    def open_result_targets(self, scan_id: str) -> tuple[list[str], list[int]]:
+        """The hosts and ports a scan found open, ready to be scanned again.
+
+        Returned as two lists rather than pairs because that is what a scan
+        takes: it crosses every target with every port. Re-scanning a hundred
+        hosts that answered on four hundred ports between them therefore probes
+        more than it found - still a rounding error against the range the ports
+        were found in.
+        """
+        with self.session() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT host, port
+                FROM port_results
+                WHERE scan_id=? AND state='open'
+                """,
+                (scan_id,),
+            ).fetchall()
+        hosts = sorted({str(row["host"]) for row in rows})
+        ports = sorted({int(row["port"]) for row in rows})
+        return hosts, ports
+
     def count_automatic_evidence_candidates(self, scan_id: str) -> int:
         """How many ports evidence could be captured for, before any limit.
 

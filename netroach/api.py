@@ -185,6 +185,12 @@ class DatabaseMergeRequest(BaseModel):
     path: str
 
 
+class EvidenceRecaptureRequest(BaseModel):
+    screenshot_timeout_ms: int = Field(default=DEFAULT_SCREENSHOT_TIMEOUT_MS, ge=100, le=120_000)
+    screenshot_max: int = Field(default=DEFAULT_SCREENSHOT_MAX, ge=1, le=10000)
+    capture_console: bool = False
+
+
 class OastSessionCreateRequest(BaseModel):
     label: str | None = None
     base_url: str | None = None
@@ -575,6 +581,52 @@ def create_app(
             raise _not_found("scan not found")
         return progress
 
+    @app.get("/v1/scans/{scan_id}/open-targets")
+    def open_scan_targets(scan_id: str) -> dict[str, object]:
+        """What this scan found open, written as a scan's own inputs.
+
+        Returned rather than started: the caller puts them in the scan form, so
+        the authorization tick, the scope check and the workload warning are the
+        same ones every other scan goes through.
+        """
+        if not repo.get_job(scan_id):
+            raise _not_found("scan not found")
+        hosts, ports = repo.open_result_targets(scan_id)
+        return {
+            # One host per line, the form's own separator.
+            "targets": chr(10).join(hosts),
+            "ports": normalize_ports_expr(ports),
+            "hosts": len(hosts),
+            "ports_found": len(ports),
+            # A scan crosses every target with every port, so this is larger
+            # than the number of open ports the caller is looking at.
+            "probes": len(hosts) * len(ports),
+        }
+
+    @app.post("/v1/scans/{scan_id}/evidence/recapture")
+    def recapture_scan_evidence(scan_id: str, request: EvidenceRecaptureRequest) -> dict[str, object]:
+        job = repo.get_job(scan_id)
+        if not job:
+            raise _not_found("scan not found")
+        if job["status"] in {"queued", "running", "recovering", "cancel_requested"}:
+            raise _bad_request(ValueError("the scan is still running"))
+        pending = repo.count_automatic_evidence_candidates(scan_id)
+        if not pending:
+            return {"status": "nothing to capture", "pending": 0}
+        thread = threading.Thread(
+            target=_run_evidence_recapture,
+            args=(str(repo.path), scan_id),
+            kwargs={
+                "screenshot_timeout_ms": request.screenshot_timeout_ms,
+                "screenshot_max": request.screenshot_max,
+                "capture_console": request.capture_console,
+            },
+            name=f"netroach-evidence-{scan_id[:8]}",
+            daemon=True,
+        )
+        thread.start()
+        return {"status": "started", "pending": pending, "limit": request.screenshot_max}
+
     @app.post("/v1/scans/{scan_id}/cancel")
     def cancel_scan(scan_id: str) -> dict[str, object]:
         try:
@@ -860,6 +912,64 @@ def _token_matches(supplied: str | None, api_token: str) -> bool:
     if not supplied:
         return False
     return hmac.compare_digest(supplied, api_token)
+
+
+def _run_evidence_recapture(
+    db_path: str | Path,
+    scan_id: str,
+    *,
+    screenshot_timeout_ms: int,
+    screenshot_max: int,
+    capture_console: bool,
+) -> None:
+    """Collect evidence for results a finished scan already recorded.
+
+    The ports are known and stored, so nothing is probed again: this reads the
+    open results and photographs the ones that have no evidence yet. It is how
+    a scan whose capture limit was too low is completed without re-running the
+    scan behind it.
+    """
+    repo = SQLiteRepository(db_path)
+    eligible = repo.count_automatic_evidence_candidates(scan_id)
+    candidates = repo.get_automatic_evidence_candidates(scan_id, limit=screenshot_max)
+    if not candidates:
+        return
+
+    def store_evidence(
+        result: Mapping[str, Any],
+        data: bytes,
+        file_name: str,
+        source_url: str | None,
+        evidence_type: str,
+        capture_agent: str | None = None,
+    ) -> None:
+        repo.add_result_evidence(
+            scan_id,
+            host=str(result["host"]),
+            port=int(result["port"]),
+            protocol=str(result["protocol"]),
+            data=data,
+            file_name=file_name,
+            evidence_type=evidence_type,
+            source_url=source_url,
+            capture_agent=capture_agent,
+        )
+
+    summary = capture_automatic_evidence(
+        candidates,
+        store=store_evidence,
+        timeout_ms=screenshot_timeout_ms,
+        maximum=screenshot_max,
+        capture_console=capture_console,
+    )
+    repo.record_evidence_capture_failures(
+        scan_id,
+        candidates=summary.candidates,
+        captured=summary.captured,
+        without_evidence=summary.failed,
+        errors=summary.errors,
+        eligible=eligible,
+    )
 
 
 def _run_scan_job(

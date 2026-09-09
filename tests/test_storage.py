@@ -1182,5 +1182,38 @@ class EvidenceCoverageTests(unittest.TestCase):
             self.assertNotIn("evidence", repo.get_job(scan_id)["summary"])
 
 
+class OpenResultTargetsTests(unittest.TestCase):
+    """Turning what a scan found back into what a scan takes."""
+
+    def test_the_open_hosts_and_ports_come_back_as_expressions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
+            scan_id = repo.create_scan_job(targets="10.0.0.0/24", ports="1-100", scope=[], params={})
+            repo.add_port_results(
+                [
+                    PortResult(scan_id=scan_id, host="10.0.0.2", port=80, protocol="tcp",
+                               state="open", latency_ms=1.0),
+                    PortResult(scan_id=scan_id, host="10.0.0.2", port=81, protocol="tcp",
+                               state="open", latency_ms=1.0),
+                    PortResult(scan_id=scan_id, host="10.0.0.1", port=443, protocol="tcp",
+                               state="open", latency_ms=1.0),
+                    PortResult(scan_id=scan_id, host="10.0.0.9", port=22, protocol="tcp",
+                               state="closed", latency_ms=1.0),
+                ]
+            )
+
+            targets, ports = repo.open_result_targets(scan_id)
+
+            self.assertEqual(targets, ["10.0.0.1", "10.0.0.2"])
+            self.assertEqual(ports, [80, 81, 443])
+
+    def test_a_scan_with_nothing_open_gives_nothing_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
+            scan_id = repo.create_scan_job(targets="10.0.0.1", ports="1-10", scope=[], params={})
+
+            self.assertEqual(repo.open_result_targets(scan_id), ([], []))
+
+
 if __name__ == "__main__":
     unittest.main()
