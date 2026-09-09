@@ -1561,12 +1561,25 @@
     const SCAN_PRESET_MAX_COUNT = 12;
     // The authorization checkbox is deliberately absent: a restored tick would
     // defeat the gate that makes every scan a deliberate act.
-    const PRESET_FIELDS = ['ports', 'top_ports', 'protocol', 'concurrency', 'timeout_ms', 'udp_retries', 'service_probe', 'capture_screenshots', 'capture_console'];
+    const PRESET_FIELDS = ['ports', 'top_ports', 'protocol', 'concurrency', 'timeout_ms',
+      'rate_limit_per_sec', 'udp_retries', 'service_probe', 'capture_screenshots', 'capture_console'];
 
     const BUILTIN_SCAN_PRESETS = [
       {id: 'builtin-quick', name: '빠른 점검', builtin: true, values: {top_ports: 100, protocol: 'tcp', service_probe: true}},
       {id: 'builtin-web', name: '웹 포트', builtin: true, values: {ports: '80,443,8000-8090,8443', protocol: 'tcp', service_probe: true}},
-      {id: 'builtin-full', name: '전체 정밀', builtin: true, values: {ports: '1-65535', protocol: 'tcp', service_probe: true, timeout_ms: 3000, concurrency: 128}}
+      {id: 'builtin-full', name: '전체 정밀', builtin: true, values: {ports: '1-65535', protocol: 'tcp', service_probe: true, timeout_ms: 3000, concurrency: 128}},
+      // The ports the engine has a real probe for. UDP has no handshake, so a
+      // port is only confirmed open by a reply that correlates with what was
+      // sent - and everywhere else the scan can say no more than
+      // "open|filtered", which is a whole range's worth of rows that report
+      // nothing. Closed is read from the ICMP unreachable the OS hands back,
+      // and that arrives at the target's own rate limit rather than ours: at
+      // TCP speed a closed port stops answering and reads as open|filtered
+      // too, so this goes out slowly on purpose.
+      {id: 'builtin-udp', name: 'UDP 주요 포트', builtin: true, values: {
+        ports: '53,69,123,137,161,162,500,520,1434,1900,3702,5060,5353,5683,11211',
+        protocol: 'udp', service_probe: true, udp_retries: 2, timeout_ms: 3000,
+        concurrency: 32, rate_limit_per_sec: 200}}
     ];
 
     // Date.now() alone repeats within a millisecond and would collide with an

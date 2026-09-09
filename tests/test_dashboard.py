@@ -1,4 +1,6 @@
+import re
 import unittest
+from pathlib import Path
 
 from netroach.dashboard import DASHBOARD_FILE, dashboard_html
 
@@ -682,6 +684,31 @@ class DashboardHostViewTests(unittest.TestCase):
 
         body = html.split("async function fillFormWithOpenTargets() {", 1)[1]
         self.assertIn("$('scanProtocol').value = payload.protocol", body)
+
+    def test_the_udp_preset_asks_only_for_ports_that_can_answer(self):
+        """UDP confirms a port open only by a reply that correlates with what
+        was sent, so the preset is the set the engine has a probe for. Every
+        other port can say no more than open|filtered."""
+        html = dashboard_html()
+
+        preset = html.split("id: 'builtin-udp'", 1)[1].split("}}", 1)[0]
+        ports = preset.split("ports: '", 1)[1].split("'", 1)[0]
+        engine = (Path(__file__).resolve().parents[1] / "crates" / "netroach-engine" / "src" / "main.rs").read_text(
+            encoding="utf-8"
+        )
+        payloads = engine.split("fn udp_probe_payload(", 1)[1].split(chr(10) + "}", 1)[0]
+        # The match arms of that table, so "53" is not satisfied by "5353".
+        probed = {
+            number
+            for arm in re.findall(r"^\s*([0-9|\s]+)=>", payloads, re.MULTILINE)
+            for number in arm.replace("|", " ").split()
+        }
+        self.assertEqual(set(ports.split(",")) - probed, set())
+        self.assertIn("protocol: 'udp'", preset)
+        # ICMP unreachable arrives at the target's rate limit, not ours: at TCP
+        # speed a closed port stops answering and reads as open|filtered.
+        self.assertIn("rate_limit_per_sec: 200", preset)
+        self.assertIn("rate_limit_per_sec", html.split("const PRESET_FIELDS", 1)[1].split(";", 1)[0])
 
 
 if __name__ == "__main__":

@@ -1732,7 +1732,11 @@ fn udp_probe_payload(port: u16) -> Vec<u8> {
             payload
         }
         137 => netbios_status_query_payload(),
-        161 => vec![
+        // 162 is the trap port and answers the same GetRequest. It had a
+        // correlation rule and no payload, so it was probed with a single
+        // zero byte that no request id can be read out of - the rule could
+        // never match and the port could never be reported open.
+        161 | 162 => vec![
             0x30, 0x29, 0x02, 0x01, 0x00, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c',
             0xa0, 0x1c, 0x02, 0x04, 0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0x00, 0x02,
             0x01, 0x00, 0x30, 0x0e, 0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02,
@@ -2709,6 +2713,13 @@ mod tests {
     #[test]
     fn udp_probe_payloads_are_service_specific() {
         assert!(udp_probe_payload(53).len() > 12);
+        // The trap port answers the same GetRequest; a lone zero byte holds no
+        // request id, so its correlation rule could never match.
+        assert_eq!(udp_probe_payload(162), udp_probe_payload(161));
+        let snmp = udp_probe_payload(162);
+        let mut reply = snmp.clone();
+        reply[13] = 0xa2;
+        assert!(udp_response_matches(162, &snmp, &reply));
         assert!(udp_probe_payload(69).starts_with(&[0x00, 0x01]));
         assert_eq!(udp_probe_payload(123).len(), 48);
         assert!(udp_probe_payload(137).len() > 40);
