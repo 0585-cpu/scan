@@ -116,7 +116,10 @@ class ScanCreateRequest(BaseModel):
     service_probe: bool = True
     capture_screenshots: bool = False
     screenshot_timeout_ms: int = Field(default=DEFAULT_SCREENSHOT_TIMEOUT_MS, ge=1_000, le=30_000)
-    screenshot_max: int = Field(default=DEFAULT_SCREENSHOT_MAX, ge=1, le=100)
+    # A scan of a busy range finds thousands of open ports, and a hundred was
+    # not a considered ceiling - it was small enough to look like a typo cap.
+    # Each capture costs a page load, so the number is the operator's to weigh.
+    screenshot_max: int = Field(default=DEFAULT_SCREENSHOT_MAX, ge=1, le=10000)
     max_hosts: int = Field(default=65536, ge=1, le=MAX_HOSTS)
     max_attempts: int = Field(default=DEFAULT_MAX_ATTEMPTS, ge=1)
     confirm_large_scan: bool = False
@@ -868,6 +871,7 @@ def _run_scan_job(
     repo = SQLiteRepository(db_path)
     pending_results: list[PortResult] = []
     evidence_summary: ScreenshotCaptureSummary | None = None
+    eligible_evidence = 0
 
     def flush_results() -> None:
         if not pending_results:
@@ -938,6 +942,11 @@ def _run_scan_job(
             repo.mark_scan_cancelled(scan_id)
         else:
             if capture_screenshots:
+                # Counted before the limit is applied: the limit cuts the
+                # candidate list itself, so without this a scan that
+                # photographed twenty of a thousand open ports reported the
+                # same clean summary as one that photographed all of them.
+                eligible_evidence = repo.count_automatic_evidence_candidates(scan_id)
                 stored_results = repo.get_automatic_evidence_candidates(
                     scan_id,
                     limit=screenshot_max,
@@ -982,6 +991,7 @@ def _run_scan_job(
                         captured=evidence_summary.captured,
                         without_evidence=evidence_summary.failed,
                         errors=evidence_summary.errors,
+                        eligible=eligible_evidence,
                     )
     except ScanCancelled as exc:
         _flush_quietly(flush_results)

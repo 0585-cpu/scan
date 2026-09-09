@@ -536,6 +536,7 @@ class SQLiteRepository:
         captured: int,
         without_evidence: int,
         errors: Iterable[str],
+        eligible: int | None = None,
     ) -> None:
         """Attach what happened during evidence capture to the finished job.
 
@@ -550,7 +551,10 @@ class SQLiteRepository:
         error list, which is accurate and looks like a contradiction.
         """
         reasons = [str(error) for error in errors][:20]
-        if without_evidence <= 0 and not reasons:
+        # Ports the limit kept out of the candidate list were never tried, so
+        # nothing about them failed. Silence there reads as full coverage.
+        not_attempted = max(0, int(eligible) - int(candidates)) if eligible is not None else 0
+        if without_evidence <= 0 and not reasons and not not_attempted:
             return
         with self.session() as conn:
             row = conn.execute("SELECT summary_json FROM scan_jobs WHERE id=?", (scan_id,)).fetchone()
@@ -563,8 +567,10 @@ class SQLiteRepository:
             if not isinstance(summary, dict):
                 summary = {}
             summary["evidence"] = {
+                "eligible": int(eligible) if eligible is not None else int(candidates),
                 "candidates": int(candidates),
                 "captured": int(captured),
+                "not_attempted": not_attempted,
                 "without_evidence": int(without_evidence),
                 "errors": reasons,
             }
@@ -1089,6 +1095,35 @@ class SQLiteRepository:
             results = [_port_result_row_to_dict(row) for row in rows]
             self._attach_evidence_files(conn, results, scan_id)
         return results
+
+    def count_automatic_evidence_candidates(self, scan_id: str) -> int:
+        """How many ports evidence could be captured for, before any limit.
+
+        The capture limit truncates the candidate list itself, so the capture
+        summary alone cannot tell a scan that photographed everything from one
+        that photographed the first twenty of a thousand.
+        """
+        with self.session() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM port_results
+                WHERE scan_id=? AND state IN ('open', 'open|filtered')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM result_evidence_files evidence
+                      WHERE evidence.scan_id=port_results.scan_id
+                        AND evidence.host=port_results.host
+                        AND evidence.port=port_results.port
+                        AND evidence.protocol=port_results.protocol
+                        AND evidence.evidence_type IN (
+                            'web_screenshot', 'protocol_snapshot', 'terminal_transcript'
+                        )
+                  )
+                """,
+                (scan_id,),
+            ).fetchone()
+        return int(row["count"])
 
     def count_results(
         self,

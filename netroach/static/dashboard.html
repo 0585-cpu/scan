@@ -938,6 +938,11 @@
                         <label for="scanMaxAttempts">최대 시도 수</label>
                         <input id="scanMaxAttempts" name="max_attempts" type="number" min="1" value="1000000">
                       </div>
+                      <div class="field">
+                        <label for="scanScreenshotMax">증적 수집 개수</label>
+                        <input id="scanScreenshotMax" name="screenshot_max" type="number" min="1" max="10000" value="20">
+                        <span class="helper">열린 포트가 이보다 많으면 나머지는 수집하지 않습니다.</span>
+                      </div>
                       <div class="field full">
                         <label class="check-row"><input id="scanConfirmLargeScan" name="confirm_large_scan" type="checkbox">최대 시도 수를 초과하는 스캔을 승인합니다</label>
                         <span class="helper">호스트 × 포트 예상 작업량이 설정된 한도를 넘을 때만 필요합니다.</span>
@@ -1787,7 +1792,7 @@
     // input's .defaultValue/.defaultChecked already holds that (the DOM sets
     // it from the markup's value=/checked attribute and it survives later
     // .value/.checked writes), so there is nothing to snapshot separately.
-    const ADVANCED_FIELDS = ['top_ports', 'exclude', 'timeout_ms', 'concurrency', 'rate_limit_per_sec', 'udp_retries', 'max_attempts', 'confirm_large_scan'];
+    const ADVANCED_FIELDS = ['top_ports', 'exclude', 'timeout_ms', 'concurrency', 'rate_limit_per_sec', 'udp_retries', 'max_attempts', 'screenshot_max', 'confirm_large_scan'];
 
     function advancedDiffCount() {
       const form = $('scanForm');
@@ -2133,6 +2138,22 @@ ${health.db}` : '데이터베이스 없음';
         + `집계가 중복되었을 수 있으니 결과를 그대로 신뢰하지 마세요.</div>`;
     }
 
+    // Evidence capture stops at a configured number of ports, and the ones
+    // past it are never tried - so nothing fails and the scan looks complete.
+    // A range with a thousand open ports and a limit of twenty came back with
+    // twenty screenshots and no explanation anywhere.
+    function evidenceCoverageWarning() {
+      const evidence = (state.scans.find((item) => item.id === state.scanId) || {}).summary?.evidence;
+      const skipped = Number(evidence?.not_attempted || 0);
+      if (!skipped) return '';
+      const eligible = Number(evidence.eligible || 0);
+      const captured = Number(evidence.captured || 0);
+      return '<div class="metric-warning">증적을 '
+        + `${eligible.toLocaleString()}개 포트 중 ${captured.toLocaleString()}개만 수집했습니다. `
+        + `나머지 ${skipped.toLocaleString()}개는 증적 수집 개수 한도 때문에 시도하지 않았습니다. `
+        + '고급 설정에서 한도를 올린 뒤 다시 스캔하세요.</div>';
+    }
+
     function metric(label, value) {
       return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
     }
@@ -2360,7 +2381,7 @@ ${health.db}` : '데이터베이스 없음';
         metric('완료', progress.completed_results || 0),
         metric('계획', progress.planned_total || 0),
         metric('open', states.open || 0)
-      ].join('') + overRecordedWarning(progress);
+      ].join('') + overRecordedWarning(progress) + evidenceCoverageWarning();
       // Kept for renderHostRows(): port_count is the exact per-host port
       // total the server planned (from the job's own port expression), the
       // one denominator that lets a host row read "스캔 중... 41/100" instead
@@ -3191,6 +3212,7 @@ ${health.db}` : '데이터베이스 없음';
         udp_retries: Number(form.get('udp_retries') || 0),
         service_probe: form.get('service_probe') === 'on',
         capture_screenshots: form.get('capture_screenshots') === 'on',
+        screenshot_max: Number(form.get('screenshot_max') || 20),
         max_attempts: Number(form.get('max_attempts') || 1000000),
         confirm_large_scan: form.get('confirm_large_scan') === 'on'
       };

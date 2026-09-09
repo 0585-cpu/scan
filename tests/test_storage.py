@@ -1128,5 +1128,59 @@ class DatabaseMergeTests(unittest.TestCase):
                 target.import_from_database(Path(tmp) / "nothing.db")
 
 
+class EvidenceCoverageTests(unittest.TestCase):
+    """An operator has to be able to see that most ports were never tried."""
+
+    def _scan_with_open_ports(self, tmp, count):
+        repo = SQLiteRepository(Path(tmp) / "netroach.db")
+        scan_id = repo.create_scan_job(targets="10.0.0.1", ports="1-2000", scope=[], params={})
+        repo.add_port_results(
+            [
+                PortResult(
+                    scan_id=scan_id, host="10.0.0.1", port=8000 + offset, protocol="tcp",
+                    state="open", latency_ms=1.0,
+                )
+                for offset in range(count)
+            ]
+        )
+        return repo, scan_id
+
+    def test_the_eligible_count_ignores_the_capture_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._scan_with_open_ports(tmp, 100)
+
+            self.assertEqual(len(repo.get_automatic_evidence_candidates(scan_id, limit=20)), 20)
+            self.assertEqual(repo.count_automatic_evidence_candidates(scan_id), 100)
+
+    def test_a_scan_that_only_tried_some_of_its_ports_records_that(self):
+        """captured == candidates looks like success; it is not when the
+        candidate list was cut to the limit before anything was tried."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._scan_with_open_ports(tmp, 100)
+            repo.mark_scan_started(scan_id)
+            repo.complete_scan(scan_id, repo.summarize_scan_results(scan_id))
+
+            repo.record_evidence_capture_failures(
+                scan_id, candidates=20, captured=20, without_evidence=0, errors=[], eligible=100
+            )
+
+            evidence = repo.get_job(scan_id)["summary"]["evidence"]
+            self.assertEqual(evidence["eligible"], 100)
+            self.assertEqual(evidence["captured"], 20)
+            self.assertEqual(evidence["not_attempted"], 80)
+
+    def test_a_scan_that_covered_everything_records_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._scan_with_open_ports(tmp, 5)
+            repo.mark_scan_started(scan_id)
+            repo.complete_scan(scan_id, repo.summarize_scan_results(scan_id))
+
+            repo.record_evidence_capture_failures(
+                scan_id, candidates=5, captured=5, without_evidence=0, errors=[], eligible=5
+            )
+
+            self.assertNotIn("evidence", repo.get_job(scan_id)["summary"])
+
+
 if __name__ == "__main__":
     unittest.main()

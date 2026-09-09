@@ -481,6 +481,23 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("JSON.stringify({path})", body)
         self.assertIn("netroach-artifacts", html)
 
+    def test_a_scan_that_photographed_only_some_of_its_ports_says_so(self):
+        """Ports past the capture limit are never tried, so nothing fails and
+        the scan reads as complete with a twentieth of the evidence."""
+        html = dashboard_html()
+
+        self.assertIn("function evidenceCoverageWarning(", html)
+        body = html.split("function evidenceCoverageWarning(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("not_attempted", body)
+        self.assertIn("evidenceCoverageWarning()", html)
+
+    def test_the_evidence_limit_is_reachable_from_the_form(self):
+        html = dashboard_html()
+
+        self.assertIn('name="screenshot_max"', html)
+        self.assertIn("'screenshot_max'", html)
+        self.assertIn("screenshot_max: Number(form.get('screenshot_max')", html)
+
     def test_a_scan_that_recorded_more_than_it_planned_says_so(self):
         """Folded counts can double; a fifteen-million total cannot be eyeballed."""
         html = dashboard_html()
@@ -498,7 +515,8 @@ class DashboardHostViewTests(unittest.TestCase):
         html = dashboard_html()
 
         self.assertIn('data-result-tab="ports">포트 결과<', html)
-        self.assertNotIn("열린 포트", html)
+        # The phrase is fine elsewhere - what it must not be is this tab's name.
+        self.assertNotIn('data-result-tab="ports">열린 포트<', html)
 
     def test_a_host_with_nothing_open_still_says_what_was_found(self):
         """Its ports are stored as a count, so the row has no rows to show."""
