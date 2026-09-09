@@ -1111,6 +1111,25 @@ class DatabaseMergeTests(unittest.TestCase):
             self.assertEqual(len(target.list_jobs(limit=10)), 1)
             self.assertEqual(target.count_results_by_state(source_scan), {"open": 1, "filtered": 100})
 
+    def test_a_column_the_other_build_added_does_not_fail_the_whole_import(self):
+        """The database being carried in was written by whatever build ran that
+        scan, which is the reason to carry it. A newer source used to fail the
+        import outright instead of bringing across everything both sides hold."""
+        with tempfile.TemporaryDirectory() as tmp:
+            source, source_scan = self._populate(Path(tmp) / "source" / "netroach.db", host="10.0.0.1")
+            conn = sqlite3.connect(source.path)
+            try:
+                conn.execute("ALTER TABLE port_results ADD COLUMN future_note TEXT")
+                conn.execute("UPDATE port_results SET future_note='from a later build'")
+                conn.commit()
+            finally:
+                conn.close()
+            target = SQLiteRepository(Path(tmp) / "target" / "netroach.db")
+
+            target.import_from_database(source.path)
+
+            self.assertEqual(target.count_results_by_state(source_scan), {"open": 1, "filtered": 100})
+
     def test_importing_a_file_that_is_not_a_database_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = SQLiteRepository(Path(tmp) / "netroach.db")

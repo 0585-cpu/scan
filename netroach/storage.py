@@ -1709,6 +1709,10 @@ class SQLiteRepository:
             conn.execute("ATTACH DATABASE ? AS source", (f"file:{source_path.as_posix()}?mode=ro",))
             try:
                 for table in self.MERGED_TABLES:
+                    here = {
+                        str(row["name"])
+                        for row in conn.execute(f"PRAGMA main.table_info({table})").fetchall()
+                    }
                     columns = [
                         str(row["name"])
                         for row in conn.execute(f"PRAGMA source.table_info({table})").fetchall()
@@ -1718,6 +1722,12 @@ class SQLiteRepository:
                         # would silently drop the incoming one. Let SQLite
                         # assign a new one and conflict on the real key.
                         if not (row["pk"] and str(row["type"]).upper() == "INTEGER")
+                        # Only what both sides have. The database being carried
+                        # in was written by whatever build ran that scan, which
+                        # is the whole reason to carry it: a column added since
+                        # this one was built would otherwise fail the import
+                        # outright rather than bring across the rest.
+                        and str(row["name"]) in here
                     ]
                     if not columns:
                         # An older database may predate the table entirely.
@@ -1730,6 +1740,11 @@ class SQLiteRepository:
                     counts[table] = cursor.rowcount if cursor.rowcount > 0 else 0
                 conn.commit()
             finally:
+                # An import that failed part way leaves its transaction open,
+                # and DETACH then raises "database source is locked" - which
+                # replaces the real reason on the way out with a message that
+                # says nothing about what went wrong.
+                conn.rollback()
                 conn.execute("DETACH DATABASE source")
         finally:
             conn.close()
