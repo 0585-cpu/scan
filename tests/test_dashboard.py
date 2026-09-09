@@ -526,6 +526,9 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn('name="capture_console"', html)
         self.assertIn("capture_console: form.get('capture_console') === 'on'", html)
         self.assertIn("화면이 켜진 상태에서만", html)
+        # It replaces the browser screenshot on web ports, which is the one
+        # thing about it an operator would not guess.
+        self.assertIn("웹 포트도", html)
 
     def test_the_assessment_workbook_is_reachable_and_lists_findings_only(self):
         """It is the shape a report is handed in, and a closed port is not a

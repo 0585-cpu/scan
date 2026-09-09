@@ -423,6 +423,46 @@ class ConsoleCaptureTests(unittest.TestCase):
         self.assertIn("10.0.0.1''; calc; ''", script)
         self.assertNotIn("10.0.0.1'; calc; '", script)
 
+    def test_the_console_option_covers_web_ports_too(self):
+        """A browser screenshot is the better picture of a page, but it is not
+        the netstat line, and the operator asked for the console."""
+        from netroach import evidence as evidence_module
+
+        agents = []
+
+        def store(result, data, file_name, source_url, evidence_type, capture_agent=None):
+            agents.append((result["port"], evidence_type, capture_agent))
+
+        results = [
+            {"host": "10.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
+             "service_name": "http", "banner": None},
+        ]
+        with patch.object(evidence_module, "capture_web_screenshots") as web:
+            with patch.object(evidence_module, "capture_console_session", return_value=b"PNG"):
+                evidence_module.capture_automatic_evidence(
+                    results, store=store, capture_console=True, maximum=5
+                )
+
+        web.assert_not_called()
+        self.assertEqual(agents, [(80, "terminal_transcript", "windows console capture")])
+
+    def test_a_web_port_still_gets_its_screenshot_by_default(self):
+        from netroach import evidence as evidence_module
+
+        results = [
+            {"host": "10.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
+             "service_name": "http", "banner": None},
+        ]
+        with patch.object(evidence_module, "capture_web_screenshots") as web:
+            web.return_value = evidence_module.ScreenshotCaptureSummary(
+                candidates=1, captured=0, failed=0
+            )
+            evidence_module.capture_automatic_evidence(
+                results, store=lambda *a, **k: None, maximum=5
+            )
+
+        web.assert_called_once()
+
     def test_a_failed_capture_falls_back_to_the_drawing(self):
         from netroach import evidence as evidence_module
 

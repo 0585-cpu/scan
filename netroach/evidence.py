@@ -539,13 +539,21 @@ def capture_automatic_evidence(
         captured_keys.add(_result_key(result))
         return stored
 
-    web_summary = capture_web_screenshots(
-        candidates,
-        store=store_web,
-        timeout_ms=timeout_ms,
-        maximum=maximum,
-        should_stop=should_stop,
-    )
+    # A browser screenshot is the better picture of a web page, so it is taken
+    # first and its ports skip the terminal pass. But an operator who turned on
+    # the console capture asked for a console: it is what their report shows,
+    # for every port, and a page screenshot is not a substitute for the
+    # netstat line proving the port answered.
+    if capture_console:
+        web_summary = ScreenshotCaptureSummary(candidates=0, captured=0, failed=0)
+    else:
+        web_summary = capture_web_screenshots(
+            candidates,
+            store=store_web,
+            timeout_ms=timeout_ms,
+            maximum=maximum,
+            should_stop=should_stop,
+        )
     remaining = [result for result in candidates if _result_key(result) not in captured_keys]
 
     def store_transcript(
