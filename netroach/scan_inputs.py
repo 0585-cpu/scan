@@ -300,4 +300,18 @@ def normalize_targets_expr(targets: Iterable[IPAddress]) -> str:
 
 
 def normalize_ports_expr(ports: Iterable[int]) -> str:
-    return ",".join(str(port) for port in ports)
+    """Write a resolved port set the short way, as "1-1024,8080".
+
+    This string is what a scan job stores, what the job list sends on every
+    dashboard poll, and what a report prints. Spelling out every port made a
+    single 65,535-port job 382KB - a job list of fifty of them was two
+    megabytes per poll, none of it anything a reader wants to see. Every
+    parser on the way back in already reads ranges.
+    """
+    runs: list[tuple[int, int]] = []
+    for port in sorted(set(ports)):
+        if runs and port == runs[-1][1] + 1:
+            runs[-1] = (runs[-1][0], port)
+        else:
+            runs.append((port, port))
+    return ",".join(str(low) if low == high else f"{low}-{high}" for low, high in runs)

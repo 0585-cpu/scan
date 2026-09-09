@@ -140,5 +140,40 @@ class ScanInputTests(unittest.TestCase):
         self.assertEqual(workload, {"hosts": 2, "ports": 3, "attempts": 6})
 
 
+class PortExpressionSizeTests(unittest.TestCase):
+    """A scan job's port expression is stored, polled and reported verbatim."""
+
+    def test_a_full_port_range_stays_a_range(self):
+        from netroach.scan_inputs import normalize_ports_expr
+
+        self.assertEqual(normalize_ports_expr(range(1, 65536)), "1-65535")
+
+    def test_scattered_ports_are_listed(self):
+        from netroach.scan_inputs import normalize_ports_expr
+
+        self.assertEqual(normalize_ports_expr([22, 80, 443]), "22,80,443")
+
+    def test_runs_and_singles_mix(self):
+        from netroach.scan_inputs import normalize_ports_expr
+
+        self.assertEqual(normalize_ports_expr([1, 2, 3, 80, 8000, 8001]), "1-3,80,8000-8001")
+
+    def test_the_expression_still_resolves_to_what_it_came_from(self):
+        from netroach.scan_inputs import normalize_ports_expr, resolve_ports
+
+        ports = sorted({1, 2, 3, 22, 80, *range(8000, 8100), 65535})
+
+        expression = normalize_ports_expr(ports)
+        resolved, _ = resolve_ports(ports=expression)
+
+        self.assertEqual(resolved, ports)
+        self.assertLess(len(expression), 40, expression)
+
+    def test_a_full_range_no_longer_costs_a_third_of_a_megabyte(self):
+        from netroach.scan_inputs import normalize_ports_expr
+
+        self.assertLess(len(normalize_ports_expr(range(1, 65536))), 32)
+
+
 if __name__ == "__main__":
     unittest.main()
