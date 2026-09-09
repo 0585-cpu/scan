@@ -35,6 +35,7 @@ from .evidence import (
     capture_automatic_evidence,
 )
 from .exporters import (
+    format_diagnostic_report_xlsx,
     format_results_csv,
     format_results_csv_bundle,
     format_results_json,
@@ -615,8 +616,8 @@ def create_app(
         if not job:
             raise _not_found("scan not found")
         try:
-            if format not in {"json", "csv", "ndjson", "xlsx"}:
-                raise ValueError("format must be one of: json, csv, ndjson, xlsx")
+            if format not in {"json", "csv", "ndjson", "xlsx", "report-xlsx"}:
+                raise ValueError("format must be one of: json, csv, ndjson, xlsx, report-xlsx")
             _validate_result_query(
                 limit=limit,
                 offset=offset,
@@ -654,9 +655,11 @@ def create_app(
                     },
                 )
             return Response(content=format_results_csv(results), media_type="text/csv")
-        if format == "xlsx":
+        if format in {"xlsx", "report-xlsx"}:
+            builder = format_diagnostic_report_xlsx if format == "report-xlsx" else format_results_xlsx
+            filename = "netroach-report.xlsx" if format == "report-xlsx" else "netroach-results.xlsx"
             try:
-                workbook = format_results_xlsx(
+                workbook = builder(
                     job,
                     results,
                     load_evidence=repo.get_evidence_content,
@@ -666,9 +669,7 @@ def create_app(
             return Response(
                 content=workbook,
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={
-                    "Content-Disposition": 'attachment; filename="netroach-results.xlsx"'
-                },
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
             )
         if format == "ndjson":
             return Response(content=format_results_ndjson(job, results), media_type="application/x-ndjson")

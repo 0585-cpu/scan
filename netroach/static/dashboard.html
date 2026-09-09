@@ -984,6 +984,7 @@
                   <a class="action disabled" id="scanExportJson" rel="noreferrer" aria-disabled="true">JSON</a>
                   <a class="action disabled" id="scanExportCsv" rel="noreferrer" aria-disabled="true" title="증적 이미지를 포함한 CSV 묶음">CSV</a>
                   <a class="action disabled" id="scanExportXlsx" rel="noreferrer" aria-disabled="true" title="이미지가 삽입된 Excel 통합 문서">Excel</a>
+                  <a class="action disabled" id="scanExportReport" rel="noreferrer" aria-disabled="true" title="열린 포트 한 줄에 증적을 넣은 진단 결과 서식">진단 서식</a>
                   <span class="status" id="scanExportStatus" role="status"></span>
                 </div>
                 <div class="toolbar-group">
@@ -2305,7 +2306,7 @@ ${health.db}` : '데이터베이스 없음';
 
     function updateScanLinks() {
       if (!state.scanId) {
-        ['scanReportLink', 'scanExportJson', 'scanExportCsv', 'scanExportXlsx']
+        ['scanReportLink', 'scanExportJson', 'scanExportCsv', 'scanExportXlsx', 'scanExportReport']
           .forEach((id) => setScanLinkState(id, false));
         return;
       }
@@ -2325,6 +2326,8 @@ ${health.db}` : '데이터베이스 없음';
         `/v1/scans/${scan}/export?format=csv${suffix}`,
       );
       setScanLinkState('scanExportXlsx', true, `/v1/scans/${scan}/export?format=xlsx${suffix}`);
+      // The assessment workbook lists findings, and a closed port is not one.
+      setScanLinkState('scanExportReport', true, `/v1/scans/${scan}/export?format=report-xlsx&state=open`);
     }
 
     function bindScanLinkActions() {
@@ -2341,6 +2344,7 @@ ${health.db}` : '데이터베이스 없음';
         scanExportJson: exportPreview('json', 'text'),
         scanExportCsv: exportPreview('zip', 'text'),
         scanExportXlsx: exportPreview('xlsx', 'binary'),
+        scanExportReport: exportPreview('xlsx', 'binary'),
       };
       Object.entries(actions).forEach(([id, run]) => {
         const link = $(id);

@@ -246,6 +246,130 @@ def format_results_xlsx(
     return output.getvalue()
 
 
+# The deliverable these become: one row per open port with its evidence in the
+# row, matching the workbook an assessment is handed in. 구분 and 비고 are the
+# assessor's columns and are left empty on purpose.
+_REPORT_HEADERS = ("번호", "구분", "IP", "포트번호", "서비스 명", "상세내용", "증적", "비고")
+_REPORT_COLUMN_WIDTHS = {"A": 10.6, "B": 15.6, "C": 35.6, "D": 20.6, "E": 20.6, "F": 55.6, "G": 120.6, "H": 40.6}
+# The evidence box in column G, in pixels. A screenshot keeps its proportions
+# inside it rather than being stretched to fill it.
+_REPORT_EVIDENCE_BOX = (840, 260)
+_REPORT_ROW_HEIGHT = 200.1
+
+# Service names as an assessment report writes them, not as a scanner prints
+# them. Anything unrecognised is left blank: a guess in this column is worse
+# than a gap, because the reader takes it as identified.
+_REPORT_SERVICE_NAMES = {
+    "http": "WEB",
+    "https": "WEB",
+    "tls": "WEB",
+    "ssh": "SSH",
+    "msrpc": "RPC",
+    "rpcbind": "RPC",
+    "smb": "SMB",
+    "netbios-ssn": "Netbios",
+    "snmp": "SNMP",
+    "ldaps": "LDAPS",
+    "ldap": "LDAP",
+    "nfs": "NFS",
+    "telnet": "Telnet",
+    "ftp": "FTP",
+    "vnc": "VNC",
+    "winrm": "WinRM",
+    "mysql": "MySQL",
+    "mariadb": "MariaDB",
+    "oracle": "OracleDB",
+    "postgresql": "PostgreSQL",
+    "mssql": "MSSQL",
+    "redis": "Redis",
+    "elasticsearch": "Elasticsearch",
+    "slp": "SLP",
+}
+_REPORT_WEB_SERVICES = {"WEB"}
+
+
+def report_service_name(service: str | None) -> str | None:
+    return _REPORT_SERVICE_NAMES.get(str(service or "").strip().lower())
+
+
+def report_detail(service_label: str | None) -> str:
+    return "웹 서비스 오픈됨" if service_label in _REPORT_WEB_SERVICES else "포트 오픈됨"
+
+
+def format_diagnostic_report_xlsx(
+    job: dict[str, Any],
+    results: list[dict[str, Any]],
+    *,
+    load_evidence: Callable[[str], tuple[dict[str, Any], Path] | None],
+) -> bytes:
+    try:
+        from openpyxl import Workbook
+        from openpyxl.drawing.image import Image as ExcelImage
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from PIL import Image as PillowImage
+        from PIL import ImageOps
+    except ImportError as exc:
+        raise RuntimeError("Excel export requires openpyxl and Pillow; install with: pip install -e .") from exc
+
+    workbook = Workbook()
+    workbook.properties.title = f"Netroach 진단 결과 {job.get('id', '')}".strip()
+    workbook.properties.creator = "Netroach"
+    sheet = workbook.active
+    sheet.title = "진단 결과"
+    sheet.append(list(_REPORT_HEADERS))
+    _style_excel_header(sheet, Font, PatternFill, Alignment)
+    sheet.freeze_panes = "A2"
+    for column, width in _REPORT_COLUMN_WIDTHS.items():
+        sheet.column_dimensions[column].width = width
+
+    image_streams: list[io.BytesIO] = []
+    row_number = 2
+    for index, result in enumerate(public_result_dicts(results), start=1):
+        service_label = report_service_name(result.get("service_name"))
+        sheet.append(
+            [
+                index,
+                None,
+                _excel_text(result.get("host")),
+                result.get("port"),
+                service_label,
+                report_detail(service_label),
+                None,
+                None,
+            ]
+        )
+        sheet.row_dimensions[row_number].height = _REPORT_ROW_HEIGHT
+        evidence_files = result.get("evidence_files") or []
+        if evidence_files:
+            loaded = load_evidence(str(evidence_files[0].get("id") or ""))
+            if loaded:
+                try:
+                    _, source_path = loaded
+                    with PillowImage.open(source_path) as source_image:
+                        source_image.load()
+                        contained = ImageOps.contain(source_image.convert("RGB"), _REPORT_EVIDENCE_BOX)
+                        stream = io.BytesIO()
+                        contained.save(stream, format="PNG")
+                        stream.seek(0)
+                    image_streams.append(stream)
+                    excel_image = ExcelImage(stream)
+                    excel_image.width = contained.width
+                    excel_image.height = contained.height
+                    sheet.add_image(excel_image, f"G{row_number}")
+                except Exception as exc:  # noqa: BLE001 - one broken image must not cost the report.
+                    sheet.cell(row_number, 7, f"증적 사용 불가: {str(exc)[:120]}")
+        for cell in sheet[row_number]:
+            cell.alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
+        row_number += 1
+
+    if row_number == 2:
+        sheet.cell(2, 6, "열린 포트가 없습니다")
+
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
 def format_results_ndjson(job: dict[str, Any], results: list[dict[str, Any]]) -> str:
     lines = [json.dumps({"type": "job", "job": job})]
     lines.extend(

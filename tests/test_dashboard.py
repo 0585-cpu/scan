@@ -481,6 +481,14 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("JSON.stringify({path})", body)
         self.assertIn("netroach-artifacts", html)
 
+    def test_the_assessment_workbook_is_reachable_and_lists_findings_only(self):
+        """It is the shape a report is handed in, and a closed port is not a
+        finding - the link asks for open results rather than the whole scan."""
+        html = dashboard_html()
+
+        self.assertIn('id="scanExportReport"', html)
+        self.assertIn("format=report-xlsx&state=open", html)
+
     def test_a_scan_that_photographed_only_some_of_its_ports_says_so(self):
         """Ports past the capture limit are never tried, so nothing fails and
         the scan reads as complete with a twentieth of the evidence."""
