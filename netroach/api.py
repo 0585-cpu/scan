@@ -815,7 +815,10 @@ def create_app(
         report = build_scan_report(
             job,
             results,
-            total_result_count=counts["total"],
+            # Rows, not rows plus the ports folded into a count. What is left
+            # out here is what the report limit left out; a folded port has no
+            # row to leave out, and is accounted for in the state counts.
+            total_result_count=repo.count_results(scan_id),
             counts=counts,
             host_summaries=repo.summarize_results_by_host(scan_id),
         )

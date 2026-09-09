@@ -138,7 +138,10 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report["review_results"][0]["review_reasons"], ["service inferred from port"])
         self.assertIn("상세 결과 일부 생략", html)
         self.assertIn("포함된 결과: <code>1 / 5</code>", html)
-        self.assertIn("**상세 결과 일부 생략:** 보고서 한도 때문에 저장된 결과 4건", markdown)
+        # The warning names the limit and what to do about it, because that is
+        # now the only thing it can mean.
+        self.assertIn("보고서 한도(1건)를 넘어 저장된 결과 4건", markdown)
+        self.assertIn("한도를 올리면 실립니다", markdown)
 
     def test_html_report_can_embed_evidence_for_offline_viewing(self):
         job = {"id": "scan-embed", "status": "completed", "targets": "127.0.0.1", "ports": "80"}

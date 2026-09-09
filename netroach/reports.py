@@ -122,6 +122,12 @@ def build_scan_report(
         "job": job,
         "summary": summary,
         "counts": report_counts,
+        # `total_stored_results` counts stored rows. A port folded into a
+        # count has no row, so it is not something the report left out - it is
+        # in the state counts, which is where a reader looks for coverage.
+        # Keeping the two in one number made a scan well inside the limit
+        # report that the limit had dropped results, and told the reader to
+        # raise a limit that would change nothing.
         "completeness": {
             "total_stored_results": stored_count,
             "included_results": included_count,
@@ -234,7 +240,8 @@ def format_scan_report_markdown(report: dict[str, Any]) -> str:
     if completeness["truncated"]:
         lines.extend(
             [
-                f"> **상세 결과 일부 생략:** 보고서 한도 때문에 저장된 결과 {completeness['omitted_results']}건이 빠졌습니다.",
+                f"> **상세 결과 일부 생략:** 보고서 한도({completeness['included_results']}건)를 넘어 "
+                f"저장된 결과 {completeness['omitted_results']}건이 빠졌습니다. 한도를 올리면 실립니다.",
                 "> open · 검토 대상 · 주석이 있는 행을 일반 상태보다 먼저 싣습니다.",
                 "",
             ]
@@ -453,7 +460,8 @@ def format_scan_report_html(report: dict[str, Any]) -> str:
     if completeness["truncated"]:
         completeness_warning = (
             '<aside class="warning"><strong>상세 결과 일부 생략</strong>'
-            f'<span>보고서 한도 때문에 저장된 결과 {completeness["omitted_results"]}건이 빠졌습니다. '
+            f'<span>보고서 한도({completeness["included_results"]}건)를 넘어 저장된 결과 '
+            f'{completeness["omitted_results"]}건이 빠졌습니다. 한도를 올리면 실립니다. '
             "open · 검토 대상 · 주석이 있는 행을 일반 상태보다 먼저 싣습니다.</span></aside>"
         )
     return f"""<!doctype html>

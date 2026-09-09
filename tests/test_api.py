@@ -1734,6 +1734,42 @@ class RescanAndRecaptureTests(unittest.TestCase):
 
             self.assertEqual(payload["protocol"], "udp")
 
+    def test_a_folded_scan_does_not_blame_the_report_limit(self):
+        """A port folded into a count has no row, so it is not something the
+        report left out. Counting it as omitted made a scan five thousand rows
+        inside the limit report that the limit had dropped results - and told
+        the reader to raise a limit that would change nothing. Coverage lives
+        in the state counts, which still carry every folded port."""
+        with tempfile.TemporaryDirectory() as tmp:
+            from fastapi.testclient import TestClient
+
+            from netroach.api import create_app
+            from netroach.models import PortResult
+            from netroach.storage import SQLiteRepository
+
+            db_path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db_path)
+            scan_id = repo.create_scan_job(
+                targets="10.0.0.1", ports="1-199", scope=[], params={"protocol": "tcp"}
+            )
+            repo.mark_scan_started(scan_id)
+            repo.add_port_results(
+                [PortResult(scan_id=scan_id, host="10.0.0.1", port=80, protocol="tcp",
+                            state="open", latency_ms=1.0)]
+                + [PortResult(scan_id=scan_id, host="10.0.0.1", port=port, protocol="tcp",
+                              state="closed", latency_ms=1.0)
+                   for port in range(1, 200) if port != 80]
+            )
+            repo.complete_scan(scan_id, repo.summarize_scan_results(scan_id))
+            client = TestClient(create_app(str(db_path)))
+
+            report = client.get(f"/v1/scans/{scan_id}/report?format=json").json()
+
+            self.assertFalse(report["completeness"]["truncated"])
+            self.assertEqual(report["completeness"]["omitted_results"], 0)
+            # The 198 folded ports are still reported - as coverage, not as loss.
+            self.assertEqual(report["counts"]["states"]["closed"], 198)
+
     def test_evidence_can_be_collected_without_scanning_again(self):
         with tempfile.TemporaryDirectory() as tmp:
             client, repo, scan_id = self._client_with_open_results(tmp)
