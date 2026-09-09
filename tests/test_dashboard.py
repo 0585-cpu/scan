@@ -710,15 +710,23 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("rate_limit_per_sec: 200", preset)
         self.assertIn("rate_limit_per_sec", html.split("const PRESET_FIELDS", 1)[1].split(";", 1)[0])
 
-    def test_service_detection_says_what_it_changes_on_udp(self):
-        """On UDP the tick decides what packet goes out, not merely whether the
-        reply is classified: a router asked for its whole routing table is not
-        the same scan as one zero byte."""
+    def test_udp_service_detection_is_its_own_tick_and_starts_off(self):
+        """On UDP the tick decides what packet leaves the machine, not merely
+        whether a reply is named: a router asked for its whole routing table is
+        not the same scan as one zero byte. So the quiet scan is what a UDP
+        scan does unless the operator asks for the probes."""
         html = dashboard_html()
 
-        box = html.split('name="service_probe"', 1)[1].split("</label>", 1)[0]
-        self.assertIn("helper", box)
+        box = html.split('name="udp_service_probe"', 1)[1].split("</label>", 1)[0]
+        # Unticked: `checked` would fall inside this slice if it were there.
+        self.assertNotIn("checked", box)
         self.assertIn("RIP", box)
+        # A scan is one protocol, so one of the two ticks answers for it.
+        self.assertIn("form.get('protocol') === 'udp'", html)
+        self.assertIn("form.get('udp_service_probe') === 'on'", html)
+        # And the preset does not turn the probes on behind the operator.
+        preset = html.split("id: 'builtin-udp'", 1)[1].split("}}", 1)[0]
+        self.assertIn("udp_service_probe: false", preset)
 
 
 if __name__ == "__main__":

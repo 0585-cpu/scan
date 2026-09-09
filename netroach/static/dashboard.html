@@ -990,7 +990,10 @@
                   <div class="form-section"><h4>실행</h4>
                   <div class="form-grid">
                     <div class="field full">
-                      <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지<span class="helper">UDP에서는 보내는 패킷 자체가 달라집니다. 켜면 포트별 실제 요청(SNMP GetRequest, RIP 라우팅 테이블 요청 등)을 보내 열린 포트를 확정하고, 끄면 0 바이트 하나만 보내 닫힌 포트만 가려냅니다.</span></label>
+                      <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지</label>
+                    </div>
+                    <div class="field full">
+                      <label class="check-row"><input name="udp_service_probe" type="checkbox">UDP 서비스 탐지<span class="helper">UDP 스캔에만 적용됩니다. 끄면 0 바이트 하나만 보내 닫힌 포트만 가려냅니다. 켜면 포트별 실제 요청(SNMP GetRequest, RIP 라우팅 테이블 요청, SIP OPTIONS 등)을 보내 열린 포트를 확정하지만, 대상 로그와 알람에 남습니다.</span></label>
                     </div>
                     <div class="field full authorization-box">
                       <label class="check-row"><input id="scanAuthorized" name="confirm_authorized" type="checkbox" required>스캔 권한을 확인했습니다</label>
@@ -1562,7 +1565,8 @@
     // The authorization checkbox is deliberately absent: a restored tick would
     // defeat the gate that makes every scan a deliberate act.
     const PRESET_FIELDS = ['ports', 'top_ports', 'protocol', 'concurrency', 'timeout_ms',
-      'rate_limit_per_sec', 'udp_retries', 'service_probe', 'capture_screenshots', 'capture_console'];
+      'rate_limit_per_sec', 'udp_retries', 'service_probe', 'udp_service_probe',
+      'capture_screenshots', 'capture_console'];
 
     const BUILTIN_SCAN_PRESETS = [
       {id: 'builtin-quick', name: '빠른 점검', builtin: true, values: {top_ports: 100, protocol: 'tcp', service_probe: true}},
@@ -1578,7 +1582,7 @@
       // too, so this goes out slowly on purpose.
       {id: 'builtin-udp', name: 'UDP 주요 포트', builtin: true, values: {
         ports: '53,69,123,137,161,162,500,520,1434,1900,3702,5060,5353,5683,11211',
-        protocol: 'udp', service_probe: true, udp_retries: 2, timeout_ms: 3000,
+        protocol: 'udp', udp_service_probe: false, udp_retries: 2, timeout_ms: 3000,
         concurrency: 32, rate_limit_per_sec: 200}}
     ];
 
@@ -3461,7 +3465,12 @@ ${health.db}` : '데이터베이스 없음';
         concurrency: Number(form.get('concurrency') || 2000),
         rate_limit_per_sec: Number(form.get('rate_limit_per_sec') || 5000),
         udp_retries: Number(form.get('udp_retries') || 0),
-        service_probe: form.get('service_probe') === 'on',
+        // A scan is one protocol throughout, so one of the two ticks answers
+        // for it. They are separate because on UDP the tick decides what packet
+        // leaves the machine, not merely whether a reply is named.
+        service_probe: form.get('protocol') === 'udp'
+          ? form.get('udp_service_probe') === 'on'
+          : form.get('service_probe') === 'on',
         capture_screenshots: form.get('capture_screenshots') === 'on',
         capture_console: form.get('capture_console') === 'on',
         screenshot_max: Number(form.get('screenshot_max') || 20),
