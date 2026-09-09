@@ -579,6 +579,16 @@
     }
     /* The metrics row is a four-column grid, so this has to claim the whole
        width rather than sit in a cell sized for a number. */
+    .result-folded {
+      margin-top: 8px;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
     .metric-warning {
       grid-column: 1 / -1;
       border: 1px solid var(--danger-line);
@@ -1029,6 +1039,7 @@
                 <tbody id="scanResults"></tbody>
               </table>
             </div>
+            <div class="result-folded" id="scanResultFolded" hidden></div>
             <div class="result-pagination" id="scanResultPagination"></div>
               </div>
               <div class="host-rows" id="scanLogTab" hidden>
@@ -2485,17 +2496,29 @@ ${health.db}` : '데이터베이스 없음';
         offset: String(offset)
       });
       // The hosts tab is the scan-wide overview and deliberately ignores the
-      // filters: its per-host totals come from an unfiltered summary, so
-      // filtering only the rows would put two populations in one row. The
-      // filters belong to the 포트 결과 tab, which shows the rows themselves.
-      if (!usingHostView) {
+      // operator's filters: its per-host totals come from an unfiltered
+      // summary, so filtering only the rows would put two populations in one
+      // row. The filters belong to the 포트 결과 tab, which shows the rows.
+      //
+      // It does ask for open rows only, which is not one of those filters.
+      // The list renders port numbers for open ports and nothing else, and
+      // the summary it counts from is a separate field the server builds
+      // unfiltered. Asking for every state spent the whole page budget on
+      // rows this list never draws - closed and filtered outnumber open by
+      // about two thousand to one - so most hosts could only be given a
+      // count where a list of ports belonged.
+      if (usingHostView) {
+        params.set('state', 'open');
+      } else {
         if (state.scanResultHost) params.set('host', state.scanResultHost);
         if (state.scanResultState) params.set('state', state.scanResultState);
         if (state.scanResultQuery.trim()) params.set('search', state.scanResultQuery.trim());
-        // The summary is a full GROUP BY over every row of the scan and only
-        // the hosts tab renders it, so the other tabs do not ask for it.
-        params.set('include_hosts', 'false');
       }
+      // Both tabs need the summary. The ports tab builds its host picker and
+      // its state chips from it, and asking for it only on the hosts tab left
+      // both of those empty. It was skipped because it used to be a GROUP BY
+      // over every row of the scan; bulk states are a count now, so there is
+      // no longer a pile of rows for it to walk.
       try {
         const payload = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/results?${params}`);
         const hosts = Array.isArray(payload.hosts) ? payload.hosts : [];
@@ -2608,7 +2631,33 @@ ${health.db}` : '데이터베이스 없음';
       return output;
     }
 
+    // This table can only list results that kept a row of their own. Bulk
+    // closed and filtered ports are stored as a per-host count instead, so
+    // filtering to one of those states shows the handful that stayed and
+    // silently omits the thousands that did not - which reads as a scan that
+    // found almost nothing rather than a list that cannot show them.
+    function renderFoldedNotice(payload) {
+      const node = $('scanResultFolded');
+      const counts = state.scanProgress?.states || {};
+      const filtered = state.scanResultState;
+      const recorded = filtered
+        ? Number(counts[filtered] || 0)
+        : Object.values(counts).reduce((sum, value) => sum + Number(value || 0), 0);
+      const listed = Number(payload.total || 0);
+      const folded = recorded - listed;
+      // Only meaningful without a host filter: the counts are scan-wide.
+      if (folded <= 0 || state.scanResultHost || state.scanResultQuery.trim()) {
+        node.hidden = true;
+        return;
+      }
+      const label = filtered ? `${filtered} ` : '';
+      node.textContent = `${label}${folded.toLocaleString()}개는 개수로만 저장되어 이 목록에 없습니다.`
+        + ' 호스트별 개수는 호스트 탭에서 볼 수 있습니다.';
+      node.hidden = false;
+    }
+
     function renderResultPagination(payload) {
+      renderFoldedNotice(payload);
       const total = Number(payload.total || 0);
       const totalPages = Math.max(1, Math.ceil(total / state.scanResultPageSize));
       const start = total ? ((state.scanResultPage - 1) * state.scanResultPageSize) + 1 : 0;
@@ -2714,12 +2763,18 @@ ${health.db}` : '데이터베이스 없음';
     // host simply has no row at all until its first result arrives.
     // The loaded page may not carry every open port of every host, so say how
     // many are known and list the ones actually in hand.
+    // Enough ports to recognise a host by, before the row stops being a row.
+    // A web server with forty-six consecutive ports open is one fact, and
+    // spelling all forty-six of them out buries the four hosts under it.
+    const HOST_OPEN_PORTS_SHOWN = 8;
+
     function hostOpenText(entry) {
       const known = Number(entry.openCount || 0);
       if (!known) return bulkStateText(entry);
       if (!entry.open.length) return `open ${known}개`;
-      const missing = known - entry.open.length;
-      return `open ${entry.open.join(',')}${missing > 0 ? ` 외 ${missing}개` : ''}`;
+      const shown = entry.open.slice(0, HOST_OPEN_PORTS_SHOWN);
+      const missing = known - shown.length;
+      return `open ${shown.join(',')}${missing > 0 ? ` 외 ${missing}개` : ''}`;
     }
 
     // A host with nothing open used to render a blank cell, which reads the

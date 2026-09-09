@@ -447,6 +447,27 @@ class DashboardHostViewTests(unittest.TestCase):
         body = html.split("function groupResultsByHost(", 1)[1].split(chr(10) + "    }", 1)[0]
         self.assertIn("localeCompare(b.host", body)
 
+    def test_the_row_table_says_when_results_are_missing_from_it(self):
+        """Filtering to filtered showed the few rows that stayed and hid the
+        thousands stored as a count, which reads as a scan that found nothing."""
+        html = dashboard_html()
+
+        self.assertIn('id="scanResultFolded"', html)
+        self.assertIn("function renderFoldedNotice(", html)
+        body = html.split("function renderFoldedNotice(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("state.scanProgress?.states", body)
+        self.assertIn("payload.total", body)
+        # Scan-wide counts cannot be compared against a host- or search-narrowed page.
+        self.assertIn("state.scanResultHost", body)
+        self.assertIn("renderFoldedNotice(payload)", html)
+
+    def test_the_hosts_tab_spends_its_page_budget_on_open_rows(self):
+        """It draws port numbers for open ports and nothing else; closed and
+        filtered rows crowded them out of the page and left counts instead."""
+        html = dashboard_html()
+
+        self.assertIn("params.set('state', 'open')", html)
+
     def test_another_machines_database_can_be_loaded_from_the_ui(self):
         """Copying the folder in by hand needs the app closed and the paths right."""
         html = dashboard_html()
@@ -495,6 +516,9 @@ class DashboardHostViewTests(unittest.TestCase):
         body = html.split("function hostOpenText(", 1)[1].split(chr(10) + "    }", 1)[0]
         self.assertIn("open ${known}개", body)
         self.assertIn("외 ${missing}개", body)
+        # A host with dozens of open ports must not push the other hosts off
+        # the row it shares with them.
+        self.assertIn("HOST_OPEN_PORTS_SHOWN", body)
 
     def test_a_truncated_host_list_says_so(self):
         html = dashboard_html()
@@ -502,11 +526,12 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("표시 중", html)
         self.assertIn("HOST_ROW_RENDER_LIMIT", html)
 
-    def test_only_the_hosts_tab_asks_for_the_host_summary(self):
-        """It is a GROUP BY over every row; the other tabs never render it."""
+    def test_both_tabs_ask_for_the_host_summary(self):
+        """The ports tab builds its host picker and state chips from it, so
+        skipping it there left both of those empty."""
         html = dashboard_html()
 
-        self.assertIn("params.set('include_hosts', 'false')", html)
+        self.assertNotIn("include_hosts", html)
 
     def test_the_hosts_tab_does_not_apply_the_row_filters(self):
         """Its totals come from an unfiltered summary, so filtering only the
@@ -515,8 +540,17 @@ class DashboardHostViewTests(unittest.TestCase):
         html = dashboard_html()
 
         body = html.split("const usingHostView = state.resultTab === 'hosts';", 1)[1].split("try {", 1)[0]
-        self.assertIn("if (!usingHostView) {", body)
-        self.assertIn("params.set('host', state.scanResultHost)", body)
+        operator_filters = body.split("} else {", 1)[1]
+        for filter_call in (
+            "params.set('host', state.scanResultHost)",
+            "params.set('state', state.scanResultState)",
+            "params.set('search', state.scanResultQuery.trim())",
+        ):
+            self.assertIn(filter_call, operator_filters)
+        # The hosts branch sets state=open, which is not one of those - it is
+        # what the list draws, not what the operator narrowed it to.
+        hosts_branch = body.split("if (usingHostView) {", 1)[1].split("} else {", 1)[0]
+        self.assertNotIn("state.scanResult", hosts_branch)
 
 
 if __name__ == "__main__":
