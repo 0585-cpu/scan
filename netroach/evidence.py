@@ -166,16 +166,23 @@ def result_port(result: Mapping[str, Any]) -> int:
     return int(value)
 
 
-# A reply that starts an HTTP response, wherever in the banner it lands.
-_HTTP_BANNER = re.compile(r"HTTP/[0-9]")
+# What the engine writes into a banner when the reply was an HTTP response or a
+# TLS record. Both mean a browser is the right thing to point at the port,
+# whatever its number and whatever service detection made of it.
+_WEB_BANNER = re.compile(r"HTTP/[0-9]|TLS record")
 
 
 def is_web_result(result: Mapping[str, Any]) -> bool:
     """Whether a browser is the right thing to photograph this port with.
 
     The banner is consulted as well as the service name: service detection
-    misses plenty of web servers on unusual ports, and a reply beginning
-    HTTP/1.x settles it whatever the port number says.
+    misses plenty of web servers on unusual ports, and an HTTP response or a
+    TLS record settles it whatever the port number says.
+
+    Getting this wrong is not expensive in either direction. A port sent to the
+    browser that cannot be photographed falls through to the console capture
+    with everything else; a port kept from the browser gets a console capture,
+    which is what the report shows for most ports anyway.
     """
     service = str(result.get("service_name") or "").lower()
     try:
@@ -185,7 +192,7 @@ def is_web_result(result: Mapping[str, Any]) -> bool:
     if service.startswith("http") or service in {"https", "tls"} or port in _WEB_PORTS:
         return True
     banner = str(result.get("banner") or "")
-    return _HTTP_BANNER.search(banner) is not None
+    return _WEB_BANNER.search(banner) is not None
 
 
 def web_result_url(result: Mapping[str, Any]) -> str:
