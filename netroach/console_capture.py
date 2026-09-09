@@ -42,6 +42,14 @@ CAPTURE_SETTLE_S = 0.35
 TELNET_READY_TIMEOUT_S = 6.0
 # The client pane beside the console, as a share of the console's width.
 TELNET_PANE_WIDTH_RATIO = 0.36
+# Wide enough for a netstat line and the command above it, and no wider.
+CONSOLE_WINDOW_SIZE = (900, 420)
+# Rows of background left under the last line of output before cropping.
+CONTENT_MARGIN_PX = 12
+# A row counts as content only past this many differing pixels, so a stray
+# border pixel does not keep an empty console from being trimmed.
+CONTENT_ROW_PIXELS = 3
+CONTENT_COLOUR_TOLERANCE = 24
 # Gap between the two panes when a telnet window joins the console one.
 COMPOSED_PANE_GAP = 12
 COMPOSED_BACKGROUND = "#0c0c0c"
@@ -155,6 +163,47 @@ def _capture_window_png(hwnd: int) -> bytes | None:
         gdi32.DeleteObject(bitmap)
         gdi32.DeleteDC(memory_dc)
         user32.ReleaseDC(hwnd, window_dc)
+
+
+def _differs(pixel: tuple[int, ...], background: tuple[int, ...]) -> bool:
+    # strict=False on purpose: a pane may arrive as RGB while the sampled
+    # background carries an alpha channel, and the extra value decides nothing.
+    return any(
+        abs(int(value) - int(other)) > CONTENT_COLOUR_TOLERANCE
+        for value, other in zip(pixel, background, strict=False)
+    )
+
+
+def crop_to_content(png: bytes) -> bytes:
+    """Trim the empty console below the last line of output.
+
+    A console window is mostly unused space, and that space is what forces the
+    report to scale the picture down - which is paid for by the text.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return png
+    try:
+        image = Image.open(io.BytesIO(png)).convert("RGB")
+    except Exception:  # noqa: BLE001 - an image we cannot read is returned untouched.
+        return png
+    # The colour at the very bottom is the window border, not the console
+    # behind the text. Take the commonest colour of the lower half instead.
+    lower = image.crop((0, image.height // 2, image.width, image.height))
+    background = max(lower.getcolors(lower.width * lower.height) or [(0, (0, 0, 0))])[1]
+    last_row = None
+    for row in range(image.height - 1, -1, -1):
+        line = image.crop((0, row, image.width, row + 1))
+        if sum(1 for pixel in line.getdata() if _differs(pixel, background)) > CONTENT_ROW_PIXELS:
+            last_row = row
+            break
+    if last_row is None or last_row >= image.height - CONTENT_MARGIN_PX - 1:
+        return png
+    cropped = image.crop((0, 0, image.width, min(image.height, last_row + CONTENT_MARGIN_PX)))
+    output = io.BytesIO()
+    cropped.save(output, format="PNG", optimize=True)
+    return output.getvalue()
 
 
 def compose_side_by_side(panes: list[bytes]) -> bytes | None:
@@ -303,16 +352,19 @@ def capture_console_session(
                 if hwnd is None:
                     hwnd = _find_window_by_title(user32, token)
                     if hwnd is not None:
-                        # Off the visible desktop the moment it is found: the
-                        # operator should not have a window per port thrown in
-                        # front of whatever they are doing.
+                        # Off the visible desktop the moment it is found, and
+                        # sized while it is out there. A terminal opens at the
+                        # width its owner works in, which is mostly empty space
+                        # in a picture the report then shrinks to fit a cell -
+                        # the emptiness is paid for by the text. The console
+                        # host ignores the buffer-size API, so the window is
+                        # resized directly.
                         user32.SetWindowPos(
                             hwnd,
                             0,
                             *OFFSCREEN_POSITION,
-                            0,
-                            0,
-                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                            *CONSOLE_WINDOW_SIZE,
+                            SWP_NOZORDER | SWP_NOACTIVATE,
                         )
                 if done_path.exists() and hwnd is not None:
                     break
@@ -323,11 +375,15 @@ def capture_console_session(
                 return None
             time.sleep(CAPTURE_SETTLE_S)
             console_pane = _capture_window_png(hwnd)
+            if console_pane is not None:
+                console_pane = crop_to_content(console_pane)
             if console_pane is None or not with_telnet:
                 return console_pane
             telnet_pane = _capture_telnet_window(
                 user32, host, port, size=_telnet_pane_size(console_pane)
             )
+            if telnet_pane is not None:
+                telnet_pane = crop_to_content(telnet_pane)
             return compose_side_by_side([console_pane, telnet_pane or b""])
         finally:
             process.terminate()
