@@ -481,6 +481,24 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("JSON.stringify({path})", body)
         self.assertIn("netroach-artifacts", html)
 
+    def test_the_two_result_actions_sit_with_the_settings_they_read(self):
+        """One takes the evidence settings from this form, the other fills its
+        target and port fields - neither belongs in the result pane's toolbar."""
+        html = dashboard_html()
+
+        form = html.split('<form id="scanForm">', 1)[1].split("</form>", 1)[0]
+        self.assertIn('id="scanRecaptureEvidence"', form)
+        self.assertIn('id="scanRescanOpen"', form)
+        self.assertIn('id="scanSecondaryStatus"', form)
+
+    def test_a_checkbox_explanation_sits_under_its_label(self):
+        """Side by side in a 380px column, the two wrapped into fragments."""
+        html = dashboard_html()
+
+        block = html.split(".check-row {", 1)[1].split("}", 1)[0]
+        self.assertIn("display: grid", block)
+        self.assertIn(".check-row .helper {", html)
+
     def test_a_running_recapture_reports_how_far_it_has_got(self):
         """It runs on the backend's own thread; a line saying it started is
         indistinguishable from one that died."""
