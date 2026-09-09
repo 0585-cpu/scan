@@ -9,10 +9,12 @@ use std::fs;
 use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
+use tokio::sync::Semaphore;
 use tokio::time::{sleep_until, timeout, Duration, Instant};
 use tokio_native_tls::TlsConnector as TokioTlsConnector;
 use x509_parser::extensions::GeneralName;
@@ -218,6 +220,8 @@ struct SummaryEvent {
     open_filtered: usize,
     filtered: usize,
     error: usize,
+    concurrency_backoffs: usize,
+    concurrency_floor: usize,
     engine: &'static str,
     elapsed_ms: f64,
     process_rss_bytes: Option<u64>,
@@ -304,11 +308,14 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
         open_filtered: 0,
         filtered: 0,
         error: 0,
+        concurrency_backoffs: 0,
+        concurrency_floor: concurrency,
         elapsed_ms: 0.0,
         process_rss_bytes: None,
         process_peak_rss_bytes: None,
     };
 
+    let governor = Arc::new(Governor::new(concurrency));
     let scan_jobs = targets
         .into_iter()
         .flat_map(|target| ports.iter().copied().map(move |port| (target, port)));
@@ -318,9 +325,14 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
             let scan_id = scan_id.clone();
             let rate_limiter = rate_limiter.clone();
             let plugin_catalog = plugin_catalog.clone();
+            let governor = governor.clone();
             async move {
+                // The rate limiter is waited on before the permit is taken:
+                // a task asleep on its slot is not a probe in flight, and
+                // counting it as one would cap the wrong thing.
                 rate_limiter.wait().await;
-                scan_one(
+                let permit = governor.acquire().await;
+                let mut event = scan_one(
                     target,
                     port,
                     &scan_id,
@@ -330,7 +342,25 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
                     udp_retries,
                     &plugin_catalog,
                 )
-                .await
+                .await;
+                if governor.should_sample(&event) {
+                    // The retry is a fresh measurement of the same port, so it
+                    // is also the better answer to report.
+                    event = scan_one(
+                        target,
+                        port,
+                        &scan_id,
+                        timeout_duration,
+                        protocol,
+                        service_probe,
+                        udp_retries,
+                        &plugin_catalog,
+                    )
+                    .await;
+                    governor.record_sample(&event);
+                }
+                drop(permit);
+                event
             }
         })
         .buffer_unordered(concurrency);
@@ -340,6 +370,12 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
         emit(&event)?;
     }
     summary.elapsed_ms = round2(scan_started.elapsed().as_secs_f64() * 1000.0);
+    // Say so when the scan was throttled. A high filtered count is read very
+    // differently once it is known the path was dropping packets.
+    let governed = governor.lock();
+    summary.concurrency_backoffs = governed.backoffs;
+    summary.concurrency_floor = governed.floor;
+    drop(governed);
     (summary.process_rss_bytes, summary.process_peak_rss_bytes) = process_memory_bytes();
     emit(&summary)?;
     Ok(())
@@ -519,20 +555,36 @@ async fn scan_tcp_one(
 /// Map a failed TCP connect to a port state.
 ///
 /// A refusal is a real RST from the host, so the port is closed. Unreachable
-/// and administratively-prohibited answers come from a router or firewall on
-/// the path, which is filtering rather than an engine failure - reporting them
-/// as `error` hides real filtering inside the error bucket. Anything else
-/// (out of file descriptors, ephemeral port exhaustion, ...) stays an error,
-/// because it says nothing about the target.
+/// answers come from a router or firewall on the path, which is filtering
+/// rather than an engine failure - reporting them as `error` hides real
+/// filtering inside the error bucket. Anything else (out of file descriptors,
+/// ephemeral port exhaustion, ...) stays an error, because it says nothing
+/// about the target.
 fn tcp_error_state(kind: std::io::ErrorKind) -> &'static str {
     use std::io::ErrorKind;
     match kind {
         ErrorKind::ConnectionRefused => "closed",
-        ErrorKind::HostUnreachable
-        | ErrorKind::NetworkUnreachable
-        | ErrorKind::PermissionDenied
-        | ErrorKind::TimedOut => "filtered",
+        ErrorKind::HostUnreachable | ErrorKind::NetworkUnreachable | ErrorKind::TimedOut => {
+            "filtered"
+        }
+        ErrorKind::PermissionDenied => permission_denied_state(),
         _ => "error",
+    }
+}
+
+/// Where a refused permission came from decides what it means.
+///
+/// On Unix it is an ICMP administratively-prohibited reply: a device on the
+/// path dropped the packet, which is filtering and is a finding. Windows
+/// raises WSAEACCES for its own reasons - a local firewall rule denying the
+/// socket, or a restricted port - and none of them say anything about the
+/// target. Reporting that as `filtered` blames the target for a machine-local
+/// refusal, which is the one mistake a scan report cannot afford.
+fn permission_denied_state() -> &'static str {
+    if cfg!(windows) {
+        "error"
+    } else {
+        "filtered"
     }
 }
 
@@ -1423,6 +1475,133 @@ fn scan_expression_tokens(expr: &str) -> impl Iterator<Item = &str> {
         .filter(|part| !part.is_empty())
 }
 
+/// One in this many timeouts is probed a second time to see if it answers.
+const GOVERNOR_SAMPLE_EVERY: u64 = 50;
+/// How many sampled retries to gather before judging the path.
+const GOVERNOR_WINDOW: u32 = 40;
+/// Above this share of retries answering, packets are being lost.
+const GOVERNOR_BACKOFF_RATIO: f64 = 0.20;
+/// Below this share, the path is healthy and the allowance can grow back.
+const GOVERNOR_RECOVER_RATIO: f64 = 0.05;
+/// Never throttle below this, or a bad patch would stall the scan outright.
+const GOVERNOR_MIN_CONCURRENCY: usize = 32;
+
+/// Holds the in-flight probe count down when the network starts dropping.
+///
+/// A timeout means only "no answer arrived in time", and the two reasons for
+/// that need opposite responses. A firewall dropping the packet is the finding
+/// the scan exists to report, and no amount of slowing down will change it.
+/// A packet lost because we are sending faster than the path can carry is a
+/// closed or open port misreported as filtered, and slowing down fixes it.
+///
+/// Nothing about a single timeout tells the two apart - not even whether the
+/// host answered other ports, because a host with two open ports and sixty
+/// thousand filtered ones is both reachable and genuinely filtered. The only
+/// thing that separates them is asking again: a dropped packet usually gets
+/// through on a second try, a firewall rule never does. So one timeout in
+/// `GOVERNOR_SAMPLE_EVERY` is retried, and the share of retries that answer is
+/// the loss estimate the allowance follows. The retry costs two percent of the
+/// probes and its answer replaces the original, so the sample improves the
+/// results it measures.
+struct Governor {
+    permits: Arc<Semaphore>,
+    max: usize,
+    timeouts: AtomicU64,
+    state: Mutex<GovernorState>,
+}
+
+#[derive(Default)]
+struct GovernorState {
+    allowance: usize,
+    /// Shrink requests the semaphore could not satisfy because the permits
+    /// were in use; paid down at the next window rather than lost.
+    debt: usize,
+    /// Sampled retries that answered - the packet had been lost.
+    recovered: u32,
+    /// Sampled retries that timed out again - the port really is filtered.
+    confirmed: u32,
+    backoffs: usize,
+    floor: usize,
+}
+
+impl Governor {
+    fn new(concurrency: usize) -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(concurrency)),
+            max: concurrency,
+            timeouts: AtomicU64::new(0),
+            state: Mutex::new(GovernorState {
+                allowance: concurrency,
+                floor: concurrency,
+                ..GovernorState::default()
+            }),
+        }
+    }
+
+    async fn acquire(&self) -> tokio::sync::OwnedSemaphorePermit {
+        self.permits
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("the governor semaphore is never closed")
+    }
+
+    fn timed_out(event: &PortEvent) -> bool {
+        event.state == "filtered" && event.error.as_deref() == Some("timeout")
+    }
+
+    /// True when this timeout is the one in `GOVERNOR_SAMPLE_EVERY` to retry.
+    fn should_sample(&self, event: &PortEvent) -> bool {
+        if !Self::timed_out(event) {
+            return false;
+        }
+        self.timeouts
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(GOVERNOR_SAMPLE_EVERY)
+    }
+
+    /// Feed back what the retry of a sampled timeout found.
+    fn record_sample(&self, retried: &PortEvent) {
+        let mut state = self.lock();
+        if Self::timed_out(retried) {
+            state.confirmed += 1;
+        } else {
+            state.recovered += 1;
+        }
+        let judged = state.recovered + state.confirmed;
+        if judged < GOVERNOR_WINDOW {
+            return;
+        }
+        let loss = f64::from(state.recovered) / f64::from(judged);
+        state.recovered = 0;
+        state.confirmed = 0;
+        if loss > GOVERNOR_BACKOFF_RATIO && state.allowance > GOVERNOR_MIN_CONCURRENCY {
+            let allowance = (state.allowance / 2).max(GOVERNOR_MIN_CONCURRENCY);
+            let wanted = state.allowance - allowance + state.debt;
+            state.debt = wanted - self.permits.forget_permits(wanted);
+            state.allowance = allowance;
+            state.backoffs += 1;
+            state.floor = state.floor.min(allowance);
+        } else if loss < GOVERNOR_RECOVER_RATIO {
+            if state.debt > 0 {
+                let forgotten = self.permits.forget_permits(state.debt);
+                state.debt -= forgotten;
+            }
+            if state.allowance < self.max {
+                let allowance = (state.allowance + state.allowance / 2 + 1).min(self.max);
+                self.permits.add_permits(allowance - state.allowance);
+                state.allowance = allowance;
+            }
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, GovernorState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 fn observe(summary: &mut SummaryEvent, event: &PortEvent) {
     summary.total += 1;
     match event.state.as_str() {
@@ -2225,7 +2404,10 @@ mod tests {
         assert_eq!(tcp_error_state(ErrorKind::ConnectionRefused), "closed");
         assert_eq!(tcp_error_state(ErrorKind::HostUnreachable), "filtered");
         assert_eq!(tcp_error_state(ErrorKind::NetworkUnreachable), "filtered");
-        assert_eq!(tcp_error_state(ErrorKind::PermissionDenied), "filtered");
+        assert_eq!(
+            tcp_error_state(ErrorKind::PermissionDenied),
+            if cfg!(windows) { "error" } else { "filtered" },
+        );
         assert_eq!(tcp_error_state(ErrorKind::TimedOut), "filtered");
         assert_eq!(tcp_error_state(ErrorKind::OutOfMemory), "error");
     }
@@ -2375,6 +2557,121 @@ mod tests {
         let targets = parse_targets("127.0.0.1 # loopback\n127.0.0.2", 2).unwrap();
         assert_eq!(targets.len(), 2);
         assert_eq!(parse_ports("80 # http\n443").unwrap(), vec![80, 443]);
+    }
+
+    fn port_event_for(state: &str, error: Option<&str>) -> PortEvent {
+        PortEvent {
+            event: "port",
+            scan_id: "s".to_string(),
+            host: "10.0.0.1".to_string(),
+            port: 80,
+            protocol: "tcp",
+            state: state.to_string(),
+            latency_ms: None,
+            service_name: None,
+            service_confidence: None,
+            banner: None,
+            evidence: None,
+            error: error.map(str::to_string),
+        }
+    }
+
+    fn timeout_event() -> PortEvent {
+        port_event_for("filtered", Some("timeout"))
+    }
+
+    fn feed_samples(governor: &Governor, recovered: u32, confirmed: u32) {
+        for _ in 0..recovered {
+            governor.record_sample(&port_event_for("closed", None));
+        }
+        for _ in 0..confirmed {
+            governor.record_sample(&timeout_event());
+        }
+    }
+
+    #[test]
+    fn only_timeouts_are_ever_sampled() {
+        let governor = Governor::new(1024);
+
+        assert!(!governor.should_sample(&port_event_for("closed", None)));
+        assert!(!governor.should_sample(&port_event_for("open", None)));
+        // A filtered answer the host actually sent - "host unreachable" - is
+        // not a missing packet, so retrying it measures nothing.
+        assert!(!governor.should_sample(&port_event_for("filtered", Some("host unreachable"))));
+    }
+
+    #[test]
+    fn one_timeout_in_fifty_is_retried() {
+        let governor = Governor::new(1024);
+
+        let sampled = (0..GOVERNOR_SAMPLE_EVERY * 4)
+            .filter(|_| governor.should_sample(&timeout_event()))
+            .count();
+
+        assert_eq!(sampled, 4);
+    }
+
+    #[test]
+    fn a_firewalled_range_is_never_throttled() {
+        // The whole point: every retry times out again, which is the firewall
+        // answering consistently. Backing off there would punish a scan that
+        // is working perfectly and reporting the truth.
+        let governor = Governor::new(1024);
+
+        feed_samples(&governor, 0, GOVERNOR_WINDOW * 10);
+
+        let state = governor.lock();
+        assert_eq!(state.backoffs, 0);
+        assert_eq!(state.allowance, 1024);
+    }
+
+    #[test]
+    fn retries_that_answer_force_a_backoff() {
+        let governor = Governor::new(1024);
+
+        feed_samples(&governor, GOVERNOR_WINDOW / 2, GOVERNOR_WINDOW / 2);
+
+        let state = governor.lock();
+        assert_eq!(state.backoffs, 1);
+        assert_eq!(state.allowance, 512);
+        assert_eq!(state.floor, 512);
+    }
+
+    #[test]
+    fn a_healthy_window_grows_the_allowance_back() {
+        let governor = Governor::new(1024);
+        feed_samples(&governor, GOVERNOR_WINDOW / 2, GOVERNOR_WINDOW / 2);
+        assert_eq!(governor.lock().allowance, 512);
+
+        feed_samples(&governor, 0, GOVERNOR_WINDOW);
+
+        let state = governor.lock();
+        // Half again, plus the one that keeps a small allowance from standing still.
+        assert_eq!(state.allowance, 769);
+        // The low-water mark is kept, so the summary still reports that the
+        // scan was throttled at some point.
+        assert_eq!(state.floor, 512);
+    }
+
+    #[test]
+    fn the_allowance_never_falls_below_the_floor() {
+        let governor = Governor::new(64);
+
+        for _ in 0..10 {
+            feed_samples(&governor, GOVERNOR_WINDOW, 0);
+        }
+
+        assert_eq!(governor.lock().allowance, GOVERNOR_MIN_CONCURRENCY);
+    }
+
+    #[test]
+    fn a_scattering_of_recovered_probes_is_tolerated() {
+        let governor = Governor::new(1024);
+
+        feed_samples(&governor, 1, GOVERNOR_WINDOW - 1);
+
+        assert_eq!(governor.lock().backoffs, 0);
+        assert_eq!(governor.lock().allowance, 1024);
     }
 
     #[test]
