@@ -674,7 +674,37 @@ class SQLiteRepository:
         deleted = cursor.rowcount > 0
         if deleted:
             self._remove_scan_evidence_directory(scan_id)
+            self._reclaim_free_pages()
         return deleted
+
+    # ponytail: a whole-file rewrite, which is what SQLite offers. Switching the
+    # database to incremental auto-vacuum would reclaim in the background, but
+    # that setting can only be changed by a full VACUUM anyway.
+    RECLAIM_FREE_PAGE_RATIO = 0.1
+
+    def _reclaim_free_pages(self) -> None:
+        """Give the disk back after a delete, rather than only the rows.
+
+        SQLite keeps the pages a delete frees on its own free list and the file
+        stays the size it grew to - so deleting scans to recover from a
+        database that had grown to gigabytes did nothing the operator could
+        see, which is the reason they were deleting them.
+
+        Only worth the rewrite when there is something to reclaim, and only if
+        the database is free to be rewritten: a scan in progress holds it, and
+        the pages simply stay on the free list for the next delete to pick up.
+        """
+        conn = sqlite3.connect(self.path, isolation_level=None)
+        try:
+            pages = int(conn.execute("PRAGMA page_count").fetchone()[0])
+            free = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+            if not pages or free < pages * self.RECLAIM_FREE_PAGE_RATIO:
+                return
+            conn.execute("VACUUM")
+        except sqlite3.DatabaseError:
+            return
+        finally:
+            conn.close()
 
     def cleanup_scan_jobs(
         self,
@@ -710,6 +740,8 @@ class SQLiteRepository:
         if not dry_run:
             for scan_id in scan_ids:
                 self._remove_scan_evidence_directory(scan_id)
+            if scan_ids:
+                self._reclaim_free_pages()
         return {
             "older_than_days": older_than_days,
             "statuses": list(selected_statuses),

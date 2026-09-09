@@ -1152,6 +1152,35 @@ class DatabaseMergeTests(unittest.TestCase):
 
             self.assertEqual(counts["hosts_with_open_ports"], 2)
 
+    def test_deleting_a_scan_gives_the_disk_back(self):
+        """SQLite keeps the pages a delete frees and the file stays the size it
+        grew to. An operator deleting scans to recover from a database that had
+        grown to gigabytes saw nothing change - which is what they were
+        deleting them for."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = SQLiteRepository(root / "netroach.db")
+            scan_id = repo.create_scan_job(
+                targets="10.0.0.1", ports="1-4000", scope=[], params={}
+            )
+            repo.mark_scan_started(scan_id)
+            repo.add_port_results([
+                PortResult(scan_id=scan_id, host="10.0.0.1", port=port, protocol="tcp",
+                           state="open", latency_ms=1.0, banner="x" * 200)
+                for port in range(1, 4001)
+            ])
+            repo.complete_scan(scan_id, repo.summarize_scan_results(scan_id))
+            def size() -> int:
+                return sum(f.stat().st_size for f in root.glob("netroach.db*"))
+
+            before = size()
+
+            self.assertTrue(repo.delete_scan(scan_id))
+
+            self.assertLess(size(), before / 2, "the file kept the pages the delete freed")
+            # And the database still works afterwards.
+            self.assertEqual(repo.list_jobs(limit=10), [])
+
     def test_open_only_carries_the_state_a_udp_port_answers_with(self):
         """The assessment workbook is exported with this filter. A UDP port
         that did not refuse is open|filtered, and the summary, the evidence
