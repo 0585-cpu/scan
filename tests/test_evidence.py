@@ -428,6 +428,70 @@ class ConsoleCaptureTests(unittest.TestCase):
 
         self.assertIn("WindowTitle = 'Netroach 10.0.0.1:80 abc12345'", script)
 
+    def test_a_udp_port_does_not_open_a_console_that_cannot_connect(self):
+        """The console proves a held TCP socket. UDP has none, so every UDP
+        result spent a window and a full timeout failing to open one."""
+        from netroach import evidence as evidence_module
+
+        opened: list[tuple[str, int]] = []
+
+        def never(host, port, **_kwargs):
+            opened.append((host, port))
+            return
+
+        stored: list[str] = []
+        with patch.object(evidence_module, "capture_console_session", never),                 patch.object(
+                    evidence_module, "port_still_answers", lambda *_a, **_k: True
+                ), patch.object(
+                    evidence_module, "render_terminal_transcript", lambda *_a, **_k: b"png"
+                ), patch.object(
+                    evidence_module, "run_powershell_diagnostic", lambda *_a, **_k: None
+                ):
+            summary = evidence_module.capture_terminal_transcripts(
+                [
+                    {"host": "10.0.0.1", "port": 161, "protocol": "udp", "state": "open|filtered"},
+                    {"host": "10.0.0.1", "port": 22, "protocol": "tcp", "state": "open"},
+                ],
+                store=lambda result, *_rest: stored.append(str(result["protocol"])),
+                capture_console=True,
+            )
+
+        self.assertEqual(opened, [("10.0.0.1", 22)])
+        self.assertEqual(summary.captured, 2)
+        self.assertEqual(sorted(stored), ["tcp", "udp"])
+
+    def test_a_telnet_window_that_was_already_open_is_not_photographed(self):
+        """The operator's own session is not evidence of anything this scan
+        did, and a prefix match makes 10.0.0.4 answer for 10.0.0.40."""
+        from netroach.console_capture import _find_window_by_title
+
+        windows = {41: "Telnet 10.0.0.40", 7: "Telnet 10.0.0.4", 9: "Telnet 10.0.0.4"}
+
+        class FakeUser32:
+            def GetWindowTextW(self, hwnd, buffer, _size):  # noqa: N802 - the Win32 name.
+                buffer.value = windows[hwnd]
+                return len(buffer.value)
+
+            def EnumWindows(self, callback, _lparam):  # noqa: N802 - the Win32 name.
+                for hwnd in windows:
+                    callback(hwnd, 0)
+                return True
+
+        user32 = FakeUser32()
+
+        # The 10.0.0.40 window matches "Telnet 10.0.0.4" as a substring and is
+        # first in the enumeration; the exact title is the one that counts.
+        self.assertEqual(_find_window_by_title(user32, "Telnet 10.0.0.4", exact="Telnet 10.0.0.4"), 7)
+        # And the one that was standing before the client was launched is ours
+        # to skip, whatever it is titled.
+        self.assertEqual(
+            _find_window_by_title(user32, "Telnet 10.0.0.4", exclude={7}, exact="Telnet 10.0.0.4"),
+            9,
+        )
+        self.assertIsNone(
+            _find_window_by_title(user32, "Telnet 10.0.0.4", exclude={7, 9, 41}, exact="Telnet 10.0.0.4")
+        )
+
     def test_a_host_cannot_break_out_of_the_quoted_string(self):
         from netroach.console_capture import build_connection_script
 

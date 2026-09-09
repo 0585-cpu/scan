@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Container
 from ctypes import wintypes
 from pathlib import Path
 
@@ -106,19 +107,47 @@ def build_connection_script(
     )
 
 
-def _find_window_by_title(user32: ctypes.WinDLL, needle: str) -> int | None:
-    matches: list[int] = []
+def _find_windows_by_title(user32: ctypes.WinDLL, needle: str) -> list[tuple[int, str]]:
+    matches: list[tuple[int, str]] = []
 
     @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
     def visit(hwnd: int, _lparam: int) -> bool:
         buffer = ctypes.create_unicode_buffer(512)
         user32.GetWindowTextW(hwnd, buffer, 512)
         if needle in buffer.value:
-            matches.append(hwnd)
+            matches.append((hwnd, buffer.value))
         return True
 
     user32.EnumWindows(visit, 0)
-    return matches[0] if matches else None
+    return matches
+
+
+def _find_window_by_title(
+    user32: ctypes.WinDLL,
+    needle: str,
+    *,
+    exclude: Container[int] = (),
+    exact: str | None = None,
+) -> int | None:
+    """The window this capture opened, not merely one whose title looks right.
+
+    A console window cannot be traced back to the process that asked for it -
+    it belongs to the console host, whose own parent is the terminal
+    application - so the title is all there is to go on. Two things make that
+    safe enough: windows that were already there are skipped, and an exact
+    title wins over a partial one. Without the first, a telnet session the
+    operator left open on a host under scan gets photographed into the report
+    instead of ours; without the second, "Telnet 10.0.0.4" also matches the
+    window of "Telnet 10.0.0.40".
+    """
+    matches = [(hwnd, title) for hwnd, title in _find_windows_by_title(user32, needle) if hwnd not in exclude]
+    if not matches:
+        return None
+    if exact is not None:
+        for hwnd, title in matches:
+            if title.strip() == exact:
+                return hwnd
+    return matches[0][0]
 
 
 def _capture_window_png(hwnd: int) -> bytes | None:
@@ -331,6 +360,8 @@ def _capture_telnet_window(
     executable = telnet_executable()
     if executable is None:
         return None
+    # Whatever already carries this title is not ours and never becomes ours.
+    standing = {hwnd for hwnd, _ in _find_windows_by_title(user32, f"Telnet {host}")}
     try:
         process = subprocess.Popen(  # noqa: S603 - fixed executable, target passed as arguments.
             [executable, host, str(port)],
@@ -344,7 +375,7 @@ def _capture_telnet_window(
         hwnd = None
         deadline = time.monotonic() + TELNET_READY_TIMEOUT_S
         while time.monotonic() < deadline:
-            hwnd = _find_window_by_title(user32, token)
+            hwnd = _find_window_by_title(user32, token, exclude=standing, exact=token)
             if hwnd is not None:
                 # Sized down as it goes off screen. A terminal opens at the
                 # width the user set for their own work, and two of those side

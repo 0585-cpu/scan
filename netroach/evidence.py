@@ -549,11 +549,17 @@ def capture_terminal_transcripts(
         try:
             image = None
             capture_agent = f"netroach transcript renderer {SCREENSHOT_WIDTH}x{SCREENSHOT_HEIGHT}"
-            if capture_console:
+            protocol = str(result.get("protocol") or "tcp").lower()
+            if capture_console and protocol == "tcp":
                 # A photograph of a real console beats a drawing of one, but it
                 # needs a desktop to draw on. Where there is none the capture
                 # comes back empty and the drawing is used instead - an empty
                 # image is the one thing evidence must never be.
+                #
+                # TCP only: the session it photographs is a TcpClient holding a
+                # socket open, which is the proof. UDP has no handshake to
+                # hold, so every UDP port spent a console window and its whole
+                # timeout on a connection that could never open.
                 image = capture_console_session(host, int(result.get("port") or 0))
                 if image is not None:
                     capture_agent = "windows console capture"
