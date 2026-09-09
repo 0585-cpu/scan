@@ -166,13 +166,26 @@ def result_port(result: Mapping[str, Any]) -> int:
     return int(value)
 
 
+# A reply that starts an HTTP response, wherever in the banner it lands.
+_HTTP_BANNER = re.compile(r"HTTP/[0-9]")
+
+
 def is_web_result(result: Mapping[str, Any]) -> bool:
+    """Whether a browser is the right thing to photograph this port with.
+
+    The banner is consulted as well as the service name: service detection
+    misses plenty of web servers on unusual ports, and a reply beginning
+    HTTP/1.x settles it whatever the port number says.
+    """
     service = str(result.get("service_name") or "").lower()
     try:
         port = result_port(result)
     except (TypeError, ValueError):
         return False
-    return service.startswith("http") or service in {"https", "tls"} or port in _WEB_PORTS
+    if service.startswith("http") or service in {"https", "tls"} or port in _WEB_PORTS:
+        return True
+    banner = str(result.get("banner") or "")
+    return _HTTP_BANNER.search(banner) is not None
 
 
 def web_result_url(result: Mapping[str, Any]) -> str:
@@ -546,15 +559,10 @@ def capture_automatic_evidence(
         maximum=maximum,
         should_stop=should_stop,
     )
-    # Normally a port that gave up a page screenshot is finished: that is the
-    # better picture of a web service. With the console capture asked for it
-    # gets one as well - the two prove different things, and the netstat line
-    # is the half a report is built on.
-    remaining = (
-        list(candidates)
-        if capture_console
-        else [result for result in candidates if _result_key(result) not in captured_keys]
-    )
+    # A port that gave up a page screenshot is finished. That picture shows the
+    # service answering, which is what a console capture would be there to
+    # prove, and it shows what the service actually is besides.
+    remaining = [result for result in candidates if _result_key(result) not in captured_keys]
 
     def store_transcript(
         result: Mapping[str, Any],

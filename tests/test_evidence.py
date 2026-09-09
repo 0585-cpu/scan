@@ -423,43 +423,9 @@ class ConsoleCaptureTests(unittest.TestCase):
         self.assertIn("10.0.0.1''; calc; ''", script)
         self.assertNotIn("10.0.0.1'; calc; '", script)
 
-    def test_a_web_port_gets_both_pictures_when_the_console_is_asked_for(self):
-        """They prove different things: the page shows what the service is,
-        the console shows that the port answered."""
-        from netroach import evidence as evidence_module
-
-        stored = []
-
-        def store(result, data, file_name, source_url, evidence_type, capture_agent=None):
-            stored.append((result["port"], evidence_type, capture_agent))
-
-        results = [
-            {"host": "10.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
-             "service_name": "http", "banner": None},
-        ]
-
-        def fake_web(candidates, *, store, timeout_ms, maximum, should_stop=None):
-            for result in list(candidates):
-                store(result, b"PNG", "page.png", "http://10.0.0.1/", "chromium test")
-            return evidence_module.ScreenshotCaptureSummary(
-                candidates=1, captured=1, failed=0, web_screenshots=1
-            )
-
-        with patch.object(evidence_module, "capture_web_screenshots", side_effect=fake_web):
-            with patch.object(evidence_module, "capture_console_session", return_value=b"PNG"):
-                evidence_module.capture_automatic_evidence(
-                    results, store=store, capture_console=True, maximum=5
-                )
-
-        self.assertEqual(
-            stored,
-            [
-                (80, "web_screenshot", "chromium test"),
-                (80, "terminal_transcript", "windows console capture"),
-            ],
-        )
-
-    def test_a_web_port_is_finished_by_its_screenshot_by_default(self):
+    def test_a_web_port_keeps_its_page_screenshot_and_nothing_else(self):
+        """The page shows the service answering, which is what a console
+        capture would be there to prove, and what it is besides."""
         from netroach import evidence as evidence_module
 
         stored = []
@@ -467,11 +433,6 @@ class ConsoleCaptureTests(unittest.TestCase):
         def store(result, data, file_name, source_url, evidence_type, capture_agent=None):
             stored.append(evidence_type)
 
-        results = [
-            {"host": "10.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
-             "service_name": "http", "banner": None},
-        ]
-
         def fake_web(candidates, *, store, timeout_ms, maximum, should_stop=None):
             for result in list(candidates):
                 store(result, b"PNG", "page.png", "http://10.0.0.1/", "chromium test")
@@ -479,10 +440,31 @@ class ConsoleCaptureTests(unittest.TestCase):
                 candidates=1, captured=1, failed=0, web_screenshots=1
             )
 
+        results = [
+            {"host": "10.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
+             "service_name": "http", "banner": None},
+        ]
         with patch.object(evidence_module, "capture_web_screenshots", side_effect=fake_web):
-            evidence_module.capture_automatic_evidence(results, store=store, maximum=5)
+            with patch.object(evidence_module, "capture_console_session", return_value=b"PNG"):
+                evidence_module.capture_automatic_evidence(
+                    results, store=store, capture_console=True, maximum=5
+                )
 
         self.assertEqual(stored, ["web_screenshot"])
+
+    def test_a_web_server_on_an_odd_port_is_found_by_its_banner(self):
+        """Service detection misses plenty of them; the reply does not."""
+        from netroach.evidence import is_web_result
+
+        self.assertTrue(
+            is_web_result({"port": 9134, "service_name": "unknown", "banner": "HTTP/1.1 200 OK"})
+        )
+        self.assertFalse(
+            is_web_result({"port": 9134, "service_name": "unknown", "banner": "f"})
+        )
+        self.assertFalse(
+            is_web_result({"port": 22, "service_name": "ssh", "banner": "SSH-2.0-OpenSSH_8.9"})
+        )
 
     def test_a_failed_capture_falls_back_to_the_drawing(self):
         from netroach import evidence as evidence_module
