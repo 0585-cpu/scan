@@ -166,10 +166,22 @@ def result_port(result: Mapping[str, Any]) -> int:
     return int(value)
 
 
-# What the engine writes into a banner when the reply was an HTTP response or a
-# TLS record. Both mean a browser is the right thing to point at the port,
-# whatever its number and whatever service detection made of it.
-_WEB_BANNER = re.compile(r"HTTP/[0-9]|TLS record")
+# Everything the engine writes into a banner that means "a browser belongs
+# here": an HTTP status line, either shape of TLS reply, and the HTTP headers
+# it summarises when it got a page. Case matters - ncacn_http/1.0 is RPC over
+# HTTP and wants a console, not a browser.
+# TLS services a browser cannot render a page from.
+_TLS_NOT_WEB_SERVICES = {
+    "ldaps", "imaps", "pop3s", "smtps", "ftps", "ldap", "smtp", "imap", "pop3", "ftp",
+}
+
+_WEB_BANNER = re.compile(
+    r"HTTP/[0-9]"
+    r"|TLS record"
+    r"|TLS ServerHello"
+    r"|content-type=text/html"
+    r"|location=https?://"
+)
 
 
 def is_web_result(result: Mapping[str, Any]) -> bool:
@@ -191,6 +203,11 @@ def is_web_result(result: Mapping[str, Any]) -> bool:
         return False
     if service.startswith("http") or service in {"https", "tls"} or port in _WEB_PORTS:
         return True
+    # A TLS reply proves TLS, not HTTP. LDAPS and the mail services speak it
+    # and a browser can do nothing with them, so a named one is not overruled
+    # by its banner - it goes to the console capture where it belongs.
+    if service in _TLS_NOT_WEB_SERVICES:
+        return False
     banner = str(result.get("banner") or "")
     return _WEB_BANNER.search(banner) is not None
 

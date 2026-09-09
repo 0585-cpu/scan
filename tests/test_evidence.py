@@ -452,6 +452,57 @@ class ConsoleCaptureTests(unittest.TestCase):
 
         self.assertEqual(stored, ["web_screenshot"])
 
+    def test_every_web_banner_the_engine_writes_is_recognised(self):
+        """These are the four shapes it produces for a web reply."""
+        from netroach.evidence import is_web_result
+
+        for banner in (
+            "HTTP/1.1 404 Not Found; content-type=text/html",
+            "TLS record type=alert version=3.3 length=7",
+            "TLS ServerHello version=TLS1.2 cipher=0xc02f length=90",
+            "server=nginx; content-type=text/html; charset=utf-8",
+            "HTTP/1.1 302; location=http://10.0.0.1/login",
+        ):
+            self.assertTrue(
+                is_web_result({"port": 12345, "service_name": "unknown", "banner": banner}),
+                banner,
+            )
+
+    def test_banners_that_only_look_like_the_web_are_left_alone(self):
+        from netroach.evidence import is_web_result
+
+        for banner in (
+            # RPC over HTTP wants a console, and the case is what separates it.
+            "ncacn_http/1.0",
+            "IceP",
+            "RFB 003.035",
+            "220 VMware Authentication Daemon Version 1.10",
+            "inferred from port mapping",
+        ):
+            self.assertFalse(
+                is_web_result({"port": 12345, "service_name": "unknown", "banner": banner}),
+                banner,
+            )
+
+    def test_a_tls_service_a_browser_cannot_read_stays_off_the_browser(self):
+        """A TLS reply proves TLS, not HTTP - LDAPS and the mail services speak
+        it and a page cannot be rendered from any of them."""
+        from netroach.evidence import is_web_result
+
+        self.assertFalse(
+            is_web_result({"port": 636, "service_name": "ldaps",
+                           "banner": "TLS ServerHello version=TLS1.2"})
+        )
+        self.assertFalse(
+            is_web_result({"port": 993, "service_name": "imaps",
+                           "banner": "TLS record type=handshake"})
+        )
+        # An unnamed service answering TLS is still worth a browser.
+        self.assertTrue(
+            is_web_result({"port": 9999, "service_name": "unknown",
+                           "banner": "TLS ServerHello version=TLS1.2"})
+        )
+
     def test_a_web_server_on_an_odd_port_is_found_by_its_banner(self):
         """Service detection misses plenty of them; the reply does not."""
         from netroach.evidence import is_web_result
