@@ -434,6 +434,15 @@
     textarea { resize: vertical; min-height: 74px; }
     .helper { color: var(--muted); font-size: 12px; line-height: 1.4; }
     .form-intro { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
+    .form-section { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+    .form-section.first { border-top: 0; margin-top: 0; padding-top: 0; }
+    .form-section > h4 {
+      margin: 0 0 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      color: var(--muted);
+    }
     .form-actions-secondary {
       display: flex;
       align-items: center;
@@ -608,6 +617,44 @@
       font-size: 12px;
       line-height: 1.5;
     }
+    .summary-strip {
+      display: flex;
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .summary-strip .cell { padding: 9px 16px; border-right: 1px solid var(--line); min-width: 0; }
+    .summary-strip .cell:last-child { border-right: 0; }
+    .summary-strip .cell.grow { flex: 1; }
+    .summary-strip .k {
+      display: block; font-size: 11px; color: var(--muted); font-weight: 700; margin-bottom: 3px;
+    }
+    .summary-strip .v {
+      display: block; font-size: 13px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .summary-strip .v.num { font-size: 17px; }
+    /* The full target and port lists stay reachable here, as they were in the
+       panel this replaced - collapsed by default so the row keeps its height,
+       and free to be as tall as they need once opened. */
+    .summary-strip .v:has(details[open]) { white-space: normal; }
+    .summary-strip details .mono { max-height: 120px; overflow: auto; }
+    /* Progress and the counts behind it are one fact, so they share a cell -
+       split across two, the larger numbers pushed the strip into wrapping. */
+    .progress-line { display: flex; align-items: center; gap: 8px; }
+    .progress-line .track {
+      flex: 1; min-width: 60px; height: 6px; border-radius: 3px;
+      background: var(--surface-sunken); overflow: hidden;
+    }
+    .progress-line .track > i { display: block; height: 100%; background: var(--accent); }
+    .progress-line b { font-size: 13px; font-weight: 700; white-space: nowrap; }
+    .progress-line small { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .metrics-notices:empty { display: none; }
+    .result-toolbar { margin-bottom: 10px; }
     .metric-warning {
       grid-column: 1 / -1;
       border: 1px solid var(--danger-line);
@@ -874,12 +921,21 @@
               <div class="band-body">
                 <p class="form-intro">승인된 대상을 입력하고 포트를 고른 뒤, 시작 전에 아래 요약을 확인하세요.</p>
                 <form id="scanForm">
+                  <!-- Sections rather than one stack: the form asks four
+                       separate questions - where to scan, what counts as
+                       authorised, what evidence to keep, and how to run it -
+                       and running them together left the evidence settings
+                       looking like scan options. -->
+                  <div class="form-section first">
+                    <h4>프리셋</h4>
                   <div class="preset-chips" id="scanPresetChips" aria-label="스캔 프리셋"></div>
                   <div class="preset-save-row">
                     <button type="button" id="scanPresetSave">+ 저장</button>
                     <label class="check-row"><input id="scanPresetIncludeTargets" type="checkbox">대상도 함께 저장</label>
                     <span class="helper" id="scanPresetStatus"></span>
                   </div>
+                  </div>
+                  <div class="form-section"><h4>대상</h4>
                   <div class="form-grid">
                     <div class="field full">
                       <label for="scanTargets">대상</label>
@@ -907,8 +963,11 @@
                         <option value="udp">udp</option>
                       </select>
                     </div>
-                    <div class="field">
-                      <span class="field-label">범위 지정</span>
+                  </div>
+                  </div>
+                  <div class="form-section"><h4>승인 범위</h4>
+                  <div class="form-grid">
+                    <div class="field full">
                       <label class="check-row"><input id="scanScopeFromTargets" name="scope_from_targets" type="checkbox" checked>대상을 그대로 승인 범위로 사용</label>
                     </div>
                     <div class="field full">
@@ -916,18 +975,28 @@
                       <input id="scanScope" name="scope" placeholder="192.168.1.0/24" readonly>
                       <div class="preset-row"><button type="button" id="scanFillScope">대상에서 다시 채우기</button></div>
                     </div>
+                  </div>
+                  </div>
+                  <div class="form-section"><h4>증적</h4>
+                  <div class="form-grid">
                     <div class="field full">
-                      <span class="field-label">옵션</span>
-                      <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지</label>
                       <label class="check-row"><input name="capture_screenshots" type="checkbox">서비스 증적 이미지 수집</label>
                       <label class="check-row"><input name="capture_console" type="checkbox">증적을 실제 콘솔 창으로 캡처
                         <span class="helper">netstat으로 연결이 성립한 화면을 그대로 찍습니다. 웹 포트는 브라우저 화면 증적을 그대로 씁니다. 화면이 켜진 상태에서만 되고, 포트당 1~2초가 더 걸립니다.</span>
                       </label>
                     </div>
+                  </div>
+                  </div>
+                  <div class="form-section"><h4>실행</h4>
+                  <div class="form-grid">
+                    <div class="field full">
+                      <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지</label>
+                    </div>
                     <div class="field full authorization-box">
                       <label class="check-row"><input id="scanAuthorized" name="confirm_authorized" type="checkbox" required>스캔 권한을 확인했습니다</label>
                       <span class="helper">소유했거나 명시적으로 허가받은 시스템만 스캔하세요.</span>
                     </div>
+                  </div>
                   </div>
                   <details class="advanced-panel" id="scanAdvanced">
                     <summary>고급 설정<span class="advanced-badge" id="scanAdvancedBadge" hidden></span></summary>
@@ -1008,7 +1077,30 @@
                 </select>
                 <span class="status" id="scanJobCount"></span>
               </div>
-              <div class="toolbar">
+              <div class="table-wrap scan-jobs-wrap">
+                <table>
+                  <thead>
+                    <!-- Four columns, not seven: in a 380px column the other
+                         three only bought a horizontal scrollbar, and the port
+                         expression and totals are in the strip over the
+                         results the moment a row is picked. -->
+                    <tr><th>ID</th><th>상태</th><th>대상</th><th>open</th></tr>
+                  </thead>
+                  <tbody id="scanJobs"></tbody>
+                </table>
+              </div>
+            </section>
+            </div>
+            <section class="result-pane">
+              <!-- The selected scan's summary sits over the results it
+                   describes, not in the other column: it answers "what am I
+                   looking at", and the answer belongs beside the thing. -->
+              <div class="summary-strip" id="scanSummaryStrip"><div class="cell grow"><span class="v">작업을 선택하면 요약이 표시됩니다</span></div></div>
+              <div class="metrics-notices" id="scanMetrics"></div>
+              <!-- Exports and the lifecycle buttons act on the scan the strip
+                   above describes, so they sit with it rather than in the
+                   command column where they wrapped into three rows. -->
+              <div class="toolbar result-toolbar">
                 <div class="toolbar-group">
                   <span class="toolbar-label">내보내기</span>
                   <a class="action disabled" id="scanReportLink" rel="noreferrer" aria-disabled="true">보고서</a>
@@ -1024,21 +1116,6 @@
                   <button class="danger" type="button" id="scanDelete" disabled>삭제</button>
                 </div>
               </div>
-              <div class="band-body">
-                <div class="selected-summary" id="selectedScanSummary"><div>아래 표에서 스캔 작업을 선택하세요.</div></div>
-                <div class="metrics" id="scanMetrics"></div>
-              </div>
-              <div class="table-wrap scan-jobs-wrap">
-                <table>
-                  <thead>
-                    <tr><th>ID</th><th>상태</th><th>대상</th><th>포트</th><th>전체</th><th>open</th><th>생성 시각</th></tr>
-                  </thead>
-                  <tbody id="scanJobs"></tbody>
-                </table>
-              </div>
-            </section>
-            </div>
-            <section class="result-pane">
               <div class="band-head">
                 <h3>결과</h3>
                 <div class="band-head-tools">
@@ -1718,16 +1795,6 @@
       return `<span class="mono" title="${escapeHtml(value)}">${escapeHtml(compactTargetsText(value, maxItems))}</span>`;
     }
 
-    function expandableTargetsHtml(value) {
-      const items = asList(value);
-      if (items.length <= 3) return compactTargetsHtml(value, 3);
-      return `
-        <details class="ports-details">
-          <summary>${escapeHtml(compactTargetsText(value, 3))}</summary>
-          <div class="mono">${escapeHtml(text(value))}</div>
-        </details>
-      `;
-    }
 
     // The strip answers "how much is left", so it names the first target and
     // counts the rest; the full list belongs in the table and the detail panel.
@@ -1871,18 +1938,6 @@
       submit.disabled = !scanEngineAvailable() || !$('scanAuthorized').checked;
     }
 
-    function expandablePortsHtml(value) {
-      const source = text(value);
-      let count = 0;
-      try { count = parsePortExpression(source).ports.length; } catch (_) {}
-      if (count <= 8) return compactPortsHtml(source, 8);
-      return `
-        <details class="ports-details">
-          <summary>${escapeHtml(compactPortText(source, 5))}</summary>
-          <div class="mono">${escapeHtml(source)}</div>
-        </details>
-      `;
-    }
 
     function renderAvailablePortProfiles() {
       const select = $('scanProfile');
@@ -2271,13 +2326,10 @@ ${health.db}` : '데이터베이스 없음';
         <tr class="clickable ${job.id === state.scanId ? 'selected' : ''}" data-scan-row="${escapeHtml(job.id)}">
           <td class="mono" title="${escapeHtml(job.id)}">${escapeHtml(shortId(job.id))}</td>
           <td>${pill(job.status, stateClass(job.status))}</td>
-          <td class="cell-clip">${compactTargetsHtml(job.targets)}</td>
-          <td>${compactPortsHtml(job.ports, 3)}</td>
-          <td>${escapeHtml(job.summary?.total || 0)}</td>
+          <td class="cell-clip" title="${escapeHtml(formatDateTime(job.created_at))}">${compactTargetsHtml(job.targets)}</td>
           <td>${escapeHtml(job.summary?.open || 0)}</td>
-          <td>${escapeHtml(formatDateTime(job.created_at))}</td>
         </tr>
-      `).join('') || `<tr><td colspan="7" class="empty">${escapeHtml(emptyMessage)}</td></tr>`;
+      `).join('') || `<tr><td colspan="4" class="empty">${escapeHtml(emptyMessage)}</td></tr>`;
       document.querySelectorAll('[data-scan-row]').forEach((node) => {
         node.addEventListener('click', () => selectScan(node.dataset.scanRow));
       });
@@ -2292,19 +2344,52 @@ ${health.db}` : '데이터베이스 없음';
       if (!job) {
         $('selectedScanLabel').style.color = '';
         $('selectedScanLabel').textContent = '작업을 선택하면 결과가 표시됩니다';
-        $('selectedScanSummary').innerHTML = '<div>Select a scan job from the table.</div>';
+        renderSummaryStrip(null, null);
         $('scanMetrics').innerHTML = '';
         return;
       }
       $('selectedScanLabel').style.color = '';
       $('selectedScanLabel').textContent = `${shortId(job.id)} - ${job.status}`;
-      $('selectedScanSummary').innerHTML = `
-        <div><span>Scan ID</span><strong class="mono">${escapeHtml(job.id)}</strong></div>
-        <div><span>Status</span>${pill(job.status, stateClass(job.status))}</div>
-        <div><span>Targets</span>${expandableTargetsHtml(job.targets)}</div>
-        <div><span>Ports</span>${expandablePortsHtml(job.ports)}</div>
-        <div><span>Created</span>${escapeHtml(formatDateTime(job.created_at))}</div>
-        <div><span>Completed</span>${escapeHtml(formatDateTime(job.completed_at) || 'n/a')}</div>
+      renderSummaryStrip(job, state.scanProgress);
+    }
+
+    // One row over the results: what is being looked at, and how far it got.
+    // The scan id, and the created and completed times, are not here - the id
+    // was just clicked in the job list beside it, and the times are on the row
+    // there too. Five cells fit a 1100px pane without wrapping; eight did not.
+    // The strip has one line to work with, so the disclosure wears the short
+    // label - "192.0.2.1 외 249개" - and keeps the whole list inside it.
+    // A disclosure whose summary was the full range expression pushed the
+    // progress numbers over the count beside them.
+    function stripDisclosure(label, full) {
+      const whole = text(full);
+      if (!whole || whole === label) return escapeHtml(label);
+      return `<details class="ports-details"><summary>${escapeHtml(label)}</summary>`
+        + `<div class="mono">${escapeHtml(whole)}</div></details>`;
+    }
+
+    function renderSummaryStrip(job, progress) {
+      const strip = $('scanSummaryStrip');
+      if (!job) {
+        strip.innerHTML = '<div class="cell grow"><span class="v">작업을 선택하면 요약이 표시됩니다</span></div>';
+        return;
+      }
+      const percent = Number(progress?.percent || 0);
+      const done = Number(progress?.completed_results || 0);
+      const planned = Number(progress?.planned_total || 0);
+      const open = Number(progress?.states?.open || job.summary?.open || 0);
+      const counts = planned
+        ? `<small>${done.toLocaleString()} / ${planned.toLocaleString()}</small>`
+        : '';
+      strip.innerHTML = `
+        <div class="cell"><span class="k">상태</span><span class="v">${pill(job.status, stateClass(job.status))}</span></div>
+        <div class="cell grow"><span class="k">대상</span><span class="v">${stripDisclosure(stripTargetLabel(job.targets), job.targets)}</span></div>
+        <div class="cell"><span class="k">포트</span><span class="v">${stripDisclosure(stripPortLabel(job.ports), job.ports)}</span></div>
+        <div class="cell grow"><span class="k">진행률</span><div class="progress-line">
+          <div class="track"><i style="width:${Math.min(100, percent)}%"></i></div>
+          <b>${percent}%</b>${counts}
+        </div></div>
+        <div class="cell"><span class="k">open</span><span class="v num">${open.toLocaleString()}</span></div>
       `;
     }
 
@@ -2501,21 +2586,20 @@ ${health.db}` : '데이터베이스 없음';
       if (!state.scanId) {
         $('scanMetrics').innerHTML = '';
         state.scanProgress = null;
+        renderSummaryStrip(null, null);
         return;
       }
       const progress = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/progress`);
       const states = progress.states || {};
-      $('scanMetrics').innerHTML = [
-        metric('진행률', `${progress.percent || 0}%`),
-        metric('완료', progress.completed_results || 0),
-        metric('계획', progress.planned_total || 0),
-        metric('open', states.open || 0)
-      ].join('') + overRecordedWarning(progress) + evidenceCoverageWarning();
+      // The numbers live in the strip now; this element carries only the
+      // warnings, which have nowhere else to be seen.
+      $('scanMetrics').innerHTML = overRecordedWarning(progress) + evidenceCoverageWarning();
       // Kept for renderHostRows(): port_count is the exact per-host port
       // total the server planned (from the job's own port expression), the
       // one denominator that lets a host row read "스캔 중... 41/100" instead
       // of just done/not-done.
       state.scanProgress = progress;
+      renderSummaryStrip(selectedScanJob(), progress);
     }
 
     const RUNNING_STATUSES = new Set(['queued', 'running']);

@@ -397,7 +397,7 @@ class DashboardTargetCompactionTests(unittest.TestCase):
         for symbol in (
             "function compactTargetsText(",
             "function compactTargetsHtml(",
-            "function expandableTargetsHtml(",
+            "function stripDisclosure(",
             "function stripTargetLabel(",
             "function stripPortLabel(",
         ):
@@ -409,13 +409,27 @@ class DashboardTargetCompactionTests(unittest.TestCase):
         self.assertNotIn("${escapeHtml(job.targets)}</td>", html)
         self.assertNotIn("<span>Targets</span>${escapeHtml(job.targets)}", html)
 
-    def test_lists_compact_and_the_detail_row_expands(self):
+    def test_lists_compact_and_the_summary_still_expands(self):
         html = dashboard_html()
 
         # Tables get the tooltip-only form: an expanding row would make the
-        # table jump. The detail panel gets the disclosure, like Ports beside it.
-        self.assertIn("<td>${compactTargetsHtml(job.targets)}</td>", html)
-        self.assertIn("<span>Targets</span>${expandableTargetsHtml(job.targets)}", html)
+        # table jump. The summary strip keeps the disclosure the detail panel
+        # had, so a scan of 250 targets can still be read in full - but wearing
+        # the short label, since a full range expression as the summary pushed
+        # the numbers beside it out of their cell.
+        self.assertIn("compactTargetsHtml(job.targets)", html)
+        self.assertIn("stripDisclosure(stripTargetLabel(job.targets), job.targets)", html)
+        self.assertIn("stripDisclosure(stripPortLabel(job.ports), job.ports)", html)
+
+    def test_the_result_toolbar_sits_with_the_results(self):
+        """Exports and the lifecycle buttons act on the scan the strip above
+        describes; in the command column they wrapped into three rows."""
+        html = dashboard_html()
+
+        pane = html.split('<section class="result-pane">', 1)[1]
+        for control in ('id="scanExportReport"', 'id="scanCancel"', 'id="scanDelete"',
+                        'id="scanSummaryStrip"'):
+            self.assertIn(control, pane)
 
     def test_the_strip_names_one_target_and_counts_the_ports(self):
         html = dashboard_html()
