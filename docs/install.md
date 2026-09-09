@@ -83,9 +83,13 @@ TCP connect scanning and file-based PCAP analysis do not require Npcap. Live cap
 The destination PC does not require Python, Node.js, Rust, a separate browser, or internet access. The build PC requires those toolchains plus Visual Studio Build Tools with the Desktop C++ workload and internet access on the first browser/toolchain build.
 
 ```powershell
-py -3 -m pip install -e ".[desktop-build]"
-py -3 tools\build_desktop.py
+.\.venv\Scripts\python.exe -m pip install -e ".[desktop-build]"
+.\.venv\Scripts\python.exe tools\build_desktop.py
 ```
+
+Both lines name the same interpreter on purpose: the script freezes the backend and
+fetches Chromium with whichever Python is running it, so building with one that does
+not have the build dependency installed fails partway through.
 
 The default NSIS installer is written below `desktop\src-tauri\target\release\bundle\nsis`. See `docs\desktop-packaging.md` for reusable-binary options and desktop development commands.
 

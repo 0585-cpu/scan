@@ -40,12 +40,12 @@ py -3 tools\smoke_package.py dist-smoke-engine --require-engine
 py -3 tools\package.py --archive-format tar.gz --target-platform linux-x86_64 --output-dir dist-smoke-tar
 py -3 tools\smoke_package.py dist-smoke-tar
 
-py -3 -m pip install -e ".[desktop-build]"
-py -3 tools\build_desktop.py --prepare-only
-py -3 tools\build_desktop.py --skip-engine-build --skip-backend-build
+.\.venv\Scripts\python.exe -m pip install -e ".[desktop-build]"
+.\.venv\Scripts\python.exe tools\build_desktop.py --prepare-only
+.\.venv\Scripts\python.exe tools\build_desktop.py --skip-engine-build --skip-backend-build
 ```
 
-The final desktop command requires Node.js/npm, the Rust MSVC toolchain, and Visual Studio Build Tools with the Desktop C++ workload. Confirm that the NSIS installer is present under `desktop\src-tauri\target\release\bundle\nsis`.
+The final desktop command requires Node.js/npm, the Rust MSVC toolchain, and Visual Studio Build Tools with the Desktop C++ workload. Run it with the interpreter the build dependency was installed into: it freezes the backend and fetches Chromium using whichever Python is running it. Confirm that the NSIS installer is present under `desktop\src-tauri\target\release\bundle\nsis`.
 
 ## Smoke
 

@@ -96,14 +96,20 @@ The build PC needs:
 Install the Python build dependency:
 
 ```powershell
-py -3 -m pip install -e ".[desktop-build]"
+.\.venv\Scripts\python.exe -m pip install -e ".[desktop-build]"
 ```
 
 Build the NSIS installer:
 
 ```powershell
-py -3 tools\build_desktop.py
+.\.venv\Scripts\python.exe tools\build_desktop.py
 ```
+
+Run the script with the interpreter the build dependency was installed into. It
+freezes the backend with PyInstaller and fetches Playwright's Chromium using the
+interpreter that is running it, so `py -3` here, after installing into the virtual
+environment, fails partway through the build with `No module named playwright`.
+Pass `--python` to build with a different one.
 
 The command builds the Rust engine and frozen backend, downloads only Playwright's headless Chromium shell, stages the executables and browser under `desktop/src-tauri/resources`, installs the Tauri npm dependencies, and runs the Tauri bundle build. Building from an empty cache requires internet access. The installer is written under:
 
@@ -114,13 +120,13 @@ desktop/src-tauri/target/release/bundle/nsis
 To prepare and inspect the two bundled executables without running npm/Tauri:
 
 ```powershell
-py -3 tools\build_desktop.py --prepare-only
+.\.venv\Scripts\python.exe tools\build_desktop.py --prepare-only
 ```
 
 Browser downloads are cached under `target\desktop-playwright`. Reuse that cache for an offline rebuild with:
 
 ```powershell
-py -3 tools\build_desktop.py `
+.\.venv\Scripts\python.exe tools\build_desktop.py `
   --skip-engine-build `
   --skip-backend-build `
   --skip-playwright-download
@@ -129,7 +135,7 @@ py -3 tools\build_desktop.py `
 Existing binaries can be reused when iterating on the desktop shell:
 
 ```powershell
-py -3 tools\build_desktop.py `
+.\.venv\Scripts\python.exe tools\build_desktop.py `
   --engine-path .\target\release\netroach-engine.exe `
   --backend-path .\target\desktop-backend\dist\netroach-backend.exe
 ```

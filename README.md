@@ -26,7 +26,7 @@ To continue development on another PC, including the current implementation stat
 
 On another Windows x64 PC, extract the release ZIP and run `Start-Netroach.cmd`. Its menu can start Netroach, install screenshot support and start, install or update only, or run diagnostics. Normal start performs first-run setup automatically. For automation, use `Start-Netroach.cmd --start`, `--screenshots`, `--setup`, or `--diagnostics`. The lower-level `bin\setup.cmd` and `bin\start-desktop.cmd` scripts remain available for separate setup and launch steps. The destination PC needs Python 3.10+ and internet access during setup; TCP/UDP scanning itself does not require Npcap.
 
-Alternatively, install the Windows NSIS desktop package for a Python-free deployment. Build it with `py -3 tools\build_desktop.py`; see the desktop packaging guide for build prerequisites.
+Alternatively, install the Windows NSIS desktop package for a Python-free deployment. Build it with `.\.venv\Scripts\python.exe tools\build_desktop.py`, using the interpreter the build dependency was installed into; see the desktop packaging guide for build prerequisites.
 
 For development:
 
