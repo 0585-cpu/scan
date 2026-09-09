@@ -423,45 +423,66 @@ class ConsoleCaptureTests(unittest.TestCase):
         self.assertIn("10.0.0.1''; calc; ''", script)
         self.assertNotIn("10.0.0.1'; calc; '", script)
 
-    def test_the_console_option_covers_web_ports_too(self):
-        """A browser screenshot is the better picture of a page, but it is not
-        the netstat line, and the operator asked for the console."""
+    def test_a_web_port_gets_both_pictures_when_the_console_is_asked_for(self):
+        """They prove different things: the page shows what the service is,
+        the console shows that the port answered."""
         from netroach import evidence as evidence_module
 
-        agents = []
+        stored = []
 
         def store(result, data, file_name, source_url, evidence_type, capture_agent=None):
-            agents.append((result["port"], evidence_type, capture_agent))
+            stored.append((result["port"], evidence_type, capture_agent))
 
         results = [
             {"host": "10.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
              "service_name": "http", "banner": None},
         ]
-        with patch.object(evidence_module, "capture_web_screenshots") as web:
+
+        def fake_web(candidates, *, store, timeout_ms, maximum, should_stop=None):
+            for result in list(candidates):
+                store(result, b"PNG", "page.png", "http://10.0.0.1/", "chromium test")
+            return evidence_module.ScreenshotCaptureSummary(
+                candidates=1, captured=1, failed=0, web_screenshots=1
+            )
+
+        with patch.object(evidence_module, "capture_web_screenshots", side_effect=fake_web):
             with patch.object(evidence_module, "capture_console_session", return_value=b"PNG"):
                 evidence_module.capture_automatic_evidence(
                     results, store=store, capture_console=True, maximum=5
                 )
 
-        web.assert_not_called()
-        self.assertEqual(agents, [(80, "terminal_transcript", "windows console capture")])
+        self.assertEqual(
+            stored,
+            [
+                (80, "web_screenshot", "chromium test"),
+                (80, "terminal_transcript", "windows console capture"),
+            ],
+        )
 
-    def test_a_web_port_still_gets_its_screenshot_by_default(self):
+    def test_a_web_port_is_finished_by_its_screenshot_by_default(self):
         from netroach import evidence as evidence_module
+
+        stored = []
+
+        def store(result, data, file_name, source_url, evidence_type, capture_agent=None):
+            stored.append(evidence_type)
 
         results = [
             {"host": "10.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
              "service_name": "http", "banner": None},
         ]
-        with patch.object(evidence_module, "capture_web_screenshots") as web:
-            web.return_value = evidence_module.ScreenshotCaptureSummary(
-                candidates=1, captured=0, failed=0
-            )
-            evidence_module.capture_automatic_evidence(
-                results, store=lambda *a, **k: None, maximum=5
+
+        def fake_web(candidates, *, store, timeout_ms, maximum, should_stop=None):
+            for result in list(candidates):
+                store(result, b"PNG", "page.png", "http://10.0.0.1/", "chromium test")
+            return evidence_module.ScreenshotCaptureSummary(
+                candidates=1, captured=1, failed=0, web_screenshots=1
             )
 
-        web.assert_called_once()
+        with patch.object(evidence_module, "capture_web_screenshots", side_effect=fake_web):
+            evidence_module.capture_automatic_evidence(results, store=store, maximum=5)
+
+        self.assertEqual(stored, ["web_screenshot"])
 
     def test_a_failed_capture_falls_back_to_the_drawing(self):
         from netroach import evidence as evidence_module

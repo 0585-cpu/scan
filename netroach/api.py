@@ -1040,6 +1040,8 @@ def _capture_stored_evidence(
     if not candidates:
         return
 
+    cleared: set[tuple[str, int, str]] = set()
+
     def store_evidence(
         result: Mapping[str, Any],
         data: bytes,
@@ -1051,12 +1053,19 @@ def _capture_stored_evidence(
         # Replaced, not added to - and only once the new picture is in hand, so
         # a run that fails part way leaves the old ones where they were. A file
         # the operator attached is theirs and is not touched.
-        repo.delete_automatic_evidence(
-            scan_id,
-            host=str(result["host"]),
-            port=int(result["port"]),
-            protocol=str(result["protocol"]),
-        )
+        #
+        # Once per port, not once per picture: with the console capture on, a
+        # web port produces a page screenshot and a console capture, and
+        # clearing again before the second would throw away the first.
+        key = (str(result["host"]), int(result["port"]), str(result["protocol"]))
+        if key not in cleared:
+            cleared.add(key)
+            repo.delete_automatic_evidence(
+                scan_id,
+                host=key[0],
+                port=key[1],
+                protocol=key[2],
+            )
         repo.add_result_evidence(
             scan_id,
             host=str(result["host"]),

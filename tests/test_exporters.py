@@ -329,5 +329,35 @@ class DiagnosticReportWorkbookTests(unittest.TestCase):
         self.assertEqual([sheet.cell(row, 1).value for row in (2, 3)], [1, 2])
 
 
+class PrimaryEvidenceTests(unittest.TestCase):
+    """A row shows one picture, and with two taken it is the netstat one."""
+
+    def test_the_console_capture_wins_when_both_were_taken(self):
+        from netroach.exporters import primary_evidence
+
+        chosen = primary_evidence(
+            [
+                {"id": "page", "capture_agent": "chromium 151 800x600"},
+                {"id": "console", "capture_agent": "windows console capture"},
+            ]
+        )
+
+        self.assertEqual(chosen["id"], "console")
+
+    def test_the_first_is_used_when_no_console_capture_is_there(self):
+        from netroach.exporters import primary_evidence
+
+        chosen = primary_evidence(
+            [{"id": "page", "capture_agent": "chromium 151 800x600"}, {"id": "other"}]
+        )
+
+        self.assertEqual(chosen["id"], "page")
+
+    def test_no_evidence_chooses_nothing(self):
+        from netroach.exporters import primary_evidence
+
+        self.assertIsNone(primary_evidence([]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -97,6 +97,21 @@ def format_results_csv_bundle(
     return output.getvalue()
 
 
+# The picture a row shows when it has more than one. A console capture carries
+# the netstat line the report is written around; a page screenshot shows what
+# the service looks like. When both were taken, the first is the finding.
+CONSOLE_CAPTURE_AGENT = "windows console capture"
+
+
+def primary_evidence(evidence_files: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not evidence_files:
+        return None
+    for evidence in evidence_files:
+        if str(evidence.get("capture_agent") or "") == CONSOLE_CAPTURE_AGENT:
+            return evidence
+    return evidence_files[0]
+
+
 # The evidence image inside a result row, and the room a row needs for it.
 _RESULT_EVIDENCE_BOX = (1150, 260)
 _RESULT_EVIDENCE_COLUMN_WIDTH = 164.6
@@ -182,7 +197,7 @@ def format_results_xlsx(
         if evidence_files:
             # The first image is the one shown; Image Count says whether the
             # row carries more than the one on screen.
-            loaded = load_evidence(str(evidence_files[0].get("id") or ""))
+            loaded = load_evidence(str((primary_evidence(evidence_files) or {}).get("id") or ""))
             if loaded:
                 try:
                     _, source_path = loaded
@@ -307,7 +322,7 @@ def format_diagnostic_report_xlsx(
         sheet.row_dimensions[row_number].height = _REPORT_ROW_HEIGHT
         evidence_files = result.get("evidence_files") or []
         if evidence_files:
-            loaded = load_evidence(str(evidence_files[0].get("id") or ""))
+            loaded = load_evidence(str((primary_evidence(evidence_files) or {}).get("id") or ""))
             if loaded:
                 try:
                     _, source_path = loaded
