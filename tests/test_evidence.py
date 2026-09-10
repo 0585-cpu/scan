@@ -386,14 +386,19 @@ class ScreenshotRetryTests(unittest.TestCase):
         looked dead for four times the timeout the operator set."""
         from netroach.evidence import WEB_PORT_BUDGET_FACTOR, capture_web_screenshots
 
+        clock = SimpleNamespace(now=100.0)
+
         class SlowPage(FakePage):
             def goto(self, _url, **kwargs):
                 self.timeouts.append(float(kwargs.get("timeout", 0)))
-                # Spend the whole navigation budget, as an unresponsive page does.
-                time.sleep(1.0)
+                # Include known call overhead without relying on timer resolution.
+                clock.now += 1.25
 
         page = SlowPage(screenshot_failures=0)
-        with patch("playwright.sync_api.sync_playwright", return_value=FakePlaywright(page)):
+        with (
+            patch("playwright.sync_api.sync_playwright", return_value=FakePlaywright(page)),
+            patch("netroach.evidence.time.monotonic", side_effect=lambda: clock.now),
+        ):
             capture_web_screenshots(
                 [{"host": "127.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
                   "service_name": "http"}],
@@ -406,7 +411,7 @@ class ScreenshotRetryTests(unittest.TestCase):
         # again.
         self.assertEqual(page.timeouts[0], 1000)
         self.assertTrue(all(value <= 1000 for value in page.timeouts), page.timeouts)
-        self.assertLess(page.timeouts[-1], 1000, page.timeouts)
+        self.assertEqual(page.timeouts[-1], 750, page.timeouts)
         self.assertEqual(WEB_PORT_BUDGET_FACTOR, 2)
 
     def test_every_page_operation_is_bound_by_the_evidence_timeout(self):
