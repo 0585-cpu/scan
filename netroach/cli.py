@@ -71,6 +71,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--concurrency", type=int, help="maximum simultaneous scan attempts")
     scan.add_argument("--rate-limit-per-sec", type=int, help="maximum scan starts per second")
     scan.add_argument("--udp-retries", type=int, choices=range(0, 4), help="UDP retries after the initial probe (0-3)")
+    scan.add_argument("--syn-sweep", action="store_true", default=None, help="use a TCP SYN sweep instead of connect scanning")
+    scan.add_argument("--syn-retries", type=int, choices=range(0, 3), help="SYN retries after the initial probe (0-2)")
     scan.add_argument("--no-service-probe", action="store_true", help="disable service fingerprint probes")
     scan.add_argument(
         "--capture-evidence",
@@ -300,6 +302,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         service_probe=options["service_probe"],
         protocol=options["protocol"],
         udp_retries=options["udp_retries"],
+        syn_sweep=options["syn_sweep"],
+        syn_retries=options["syn_retries"],
         plugin_paths=plugin_paths,
     )
     scan_id = repo.create_scan_job(
@@ -435,6 +439,8 @@ def cli_explicit_scan_fields(args: argparse.Namespace) -> set[str]:
         "concurrency",
         "rate_limit_per_sec",
         "udp_retries",
+        "syn_sweep",
+        "syn_retries",
         "protocol",
         "max_hosts",
         "max_attempts",

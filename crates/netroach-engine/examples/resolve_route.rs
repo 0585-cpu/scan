@@ -5,10 +5,11 @@
 //!
 //! Run elevated with: cargo run --features syn-sweep --example resolve_route -- 8.8.8.8 198.51.100.254
 
-#[path = "../src/syn_sweep.rs"]
-mod syn_sweep;
+#[allow(dead_code)]
 #[path = "../src/netlink.rs"]
 mod netlink;
+#[path = "../src/syn_sweep.rs"]
+mod syn_sweep;
 
 use std::net::Ipv4Addr;
 
@@ -16,7 +17,11 @@ use netlink::resolve_route;
 use syn_sweep::LinkLayer;
 
 fn mac(bytes: [u8; 6]) -> String {
-    bytes.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join("-")
+    bytes
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 fn main() {
@@ -33,7 +38,11 @@ fn main() {
     for target in targets {
         match resolve_route(target) {
             Ok(route) => {
-                let LinkLayer::Ethernet { source_mac, next_hop_mac } = route.link else {
+                let LinkLayer::Ethernet {
+                    source_mac,
+                    next_hop_mac,
+                } = route.link
+                else {
                     println!("{target}: non-ethernet link");
                     continue;
                 };

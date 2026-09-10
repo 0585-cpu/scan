@@ -168,6 +168,27 @@ class DashboardPresetTests(unittest.TestCase):
         self.assertIn('id="scanPresetIncludeTargets"', html)
         self.assertIn("function renderScanPresets(", html)
 
+    def test_tcp_uses_syn_by_default_and_connect_only_is_explicit(self):
+        html = dashboard_html()
+
+        self.assertIn('id="scanConnectOnly" name="tcp_connect_only" type="checkbox"', html)
+        self.assertIn('id="scanSynRetries" name="syn_retries"', html)
+        self.assertIn("function updateTcpScanAvailability(", html)
+        self.assertIn("syn_sweep: tcp && form.get('tcp_connect_only') !== 'on'", html)
+        self.assertIn("syn_retries: Number(form.get('syn_retries')", html)
+
+    def test_tcp_service_detection_enables_analysis_and_both_evidence_paths(self):
+        html = dashboard_html()
+        scan_form = html.split('id="scanForm"', 1)[1].split("</form>", 1)[0]
+
+        self.assertIn('name="service_probe" type="checkbox" checked', scan_form)
+        self.assertNotIn('name="capture_screenshots"', scan_form)
+        self.assertNotIn('name="capture_console"', scan_form)
+        self.assertIn("const tcpServiceProbe = tcp && form.get('service_probe') === 'on';", html)
+        self.assertIn("service_probe: tcp ? tcpServiceProbe", html)
+        self.assertIn("capture_screenshots: tcpServiceProbe", html)
+        self.assertIn("capture_console: tcpServiceProbe", html)
+
 
 class DashboardEstimateTests(unittest.TestCase):
     def test_estimate_helpers_exist(self):
@@ -525,7 +546,7 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("/evidence/recapture", body)
         self.assertIn("증적 재수집 중", body)
         self.assertIn("progress.error", body)
-        self.assertIn("watchRecaptureProgress(state.scanId)", html)
+        self.assertIn("watchRecaptureProgress(scanId)", html)
 
     def test_evidence_can_be_recaptured_without_scanning_again(self):
         """A scan whose capture limit was too low has the ports already; the
@@ -552,16 +573,15 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("$('scanTargets').value", body)
         self.assertNotIn("/v1/scans'", body)
 
-    def test_the_console_capture_option_warns_what_it_costs(self):
-        """It needs a desktop and spends a second and a half per port, so the
-        operator has to be told before ticking it."""
+    def test_service_detection_warns_about_automatic_evidence_cost(self):
+        """Service detection owns the evidence side effects, so the warning
+        must sit beside that one checkbox."""
         html = dashboard_html()
 
-        self.assertIn('name="capture_console"', html)
-        self.assertIn("capture_console: form.get('capture_console') === 'on'", html)
+        service_row = html.split('name="service_probe"', 1)[1].split("</label>", 1)[0]
+        self.assertIn("배너", service_row)
+        self.assertIn("증적", service_row)
         self.assertIn("화면이 켜진 상태에서만", html)
-        # It replaces the browser screenshot on web ports, which is the one
-        # thing about it an operator would not guess.
         self.assertIn("웹 포트는 브라우저 화면 증적", html)
 
     def test_the_assessment_workbook_is_reachable_and_lists_findings_only(self):
@@ -725,7 +745,7 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertNotIn("checked", box)
         self.assertIn("RIP", box)
         # A scan is one protocol, so one of the two ticks answers for it.
-        self.assertIn("form.get('protocol') === 'udp'", html)
+        self.assertIn("service_probe: tcp ? tcpServiceProbe", html)
         self.assertIn("form.get('udp_service_probe') === 'on'", html)
         # And the preset does not turn the probes on behind the operator.
         preset = html.split("id: 'builtin-udp'", 1)[1].split("}}", 1)[0]

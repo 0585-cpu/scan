@@ -10,8 +10,10 @@ from unittest.mock import patch
 from netroach.engine import (
     EngineUnavailableError,
     ScanCancelled,
+    _build_rust_engine_command,
     _run_rust_engine,
     _run_rust_engine_command,
+    engine_process_environment,
     resolve_engine_path,
     run_scan,
 )
@@ -20,6 +22,61 @@ from netroach.plugins import load_plugins
 
 
 class EngineTests(unittest.TestCase):
+    def test_windows_engine_process_can_find_npcap_dlls_without_compatibility_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            windows = Path(tmp) / "Windows"
+            npcap = windows / "System32" / "Npcap"
+            npcap.mkdir(parents=True)
+
+            environment = engine_process_environment(
+                {"PATH": r"C:\existing"},
+                system="Windows",
+                windows_dir=windows,
+            )
+
+        self.assertEqual(environment["PATH"].split(os.pathsep)[0], str(npcap))
+        self.assertIn(r"C:\existing", environment["PATH"])
+
+    def test_syn_sweep_settings_append_explicit_engine_flags(self):
+        command = _build_rust_engine_command(
+            engine="netroach-engine",
+            scan_id="syn-test",
+            target_expr="192.0.2.1",
+            port_expr="80,443",
+            settings=EngineSettings(syn_sweep=True, syn_retries=2),
+        )
+
+        self.assertIn("--syn-sweep", command)
+        self.assertEqual(command[command.index("--syn-retries") + 1], "2")
+
+    def test_default_engine_command_does_not_enable_syn_sweep(self):
+        command = _build_rust_engine_command(
+            engine="netroach-engine",
+            scan_id="connect-test",
+            target_expr="192.0.2.1",
+            port_expr="80",
+            settings=EngineSettings(),
+        )
+
+        self.assertNotIn("--syn-sweep", command)
+        self.assertNotIn("--syn-retries", command)
+
+    def test_direct_engine_call_rejects_invalid_syn_settings(self):
+        for settings, message in (
+            (EngineSettings(syn_sweep=True, protocol="udp"), "TCP"),
+            (EngineSettings(syn_sweep=True, syn_retries=3), "syn_retries"),
+        ):
+            with self.subTest(settings=settings):
+                with self.assertRaisesRegex(ValueError, message):
+                    run_scan(
+                        scan_id="invalid-syn",
+                        targets=["127.0.0.1"],
+                        ports=[80],
+                        target_expr="127.0.0.1",
+                        port_expr="80",
+                        settings=settings,
+                    )
+
     def test_engine_discovery_supports_explicit_and_canonical_environment_paths(self):
         with tempfile.TemporaryDirectory() as tmp:
             engine = Path(tmp) / "netroach-engine"

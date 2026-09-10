@@ -93,6 +93,26 @@ paths = ["plugins/lab.json"]
                 explicit_fields={"concurrency"},
             )
 
+    def test_syn_sweep_options_are_resolved_for_tcp(self):
+        options = resolve_scan_options(
+            config=NetroachConfig(),
+            env=None,
+            values={"protocol": "tcp", "syn_sweep": True, "syn_retries": 2},
+            explicit_fields={"protocol", "syn_sweep", "syn_retries"},
+        )
+
+        self.assertIs(options["syn_sweep"], True)
+        self.assertEqual(options["syn_retries"], 2)
+
+    def test_syn_sweep_is_rejected_for_udp(self):
+        with self.assertRaisesRegex(ValueError, "SYN sweep.*TCP"):
+            resolve_scan_options(
+                config=NetroachConfig(),
+                env=None,
+                values={"protocol": "udp", "syn_sweep": True},
+                explicit_fields={"protocol", "syn_sweep"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

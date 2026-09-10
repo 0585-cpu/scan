@@ -49,10 +49,16 @@ fn main() {
         .open()
         .unwrap()
         .get_datalink();
-    println!("loopback datalink: {datalink:?} ({})", datalink.get_name().unwrap_or_default());
+    println!(
+        "loopback datalink: {datalink:?} ({})",
+        datalink.get_name().unwrap_or_default()
+    );
     // DLT_NULL is 0, DLT_EN10MB is 1. The loopback adapter is the former.
     let link = if datalink.0 == 1 {
-        LinkLayer::Ethernet { source_mac: ZERO_MAC, next_hop_mac: ZERO_MAC }
+        LinkLayer::Ethernet {
+            source_mac: ZERO_MAC,
+            next_hop_mac: ZERO_MAC,
+        }
     } else {
         LinkLayer::Null
     };

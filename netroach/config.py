@@ -22,6 +22,8 @@ DEFAULT_PROTOCOL = "tcp"
 DEFAULT_MAX_HOSTS = 65536
 DEFAULT_MAX_ATTEMPTS = 1_000_000
 DEFAULT_UDP_RETRIES = 1
+DEFAULT_SYN_SWEEP = False
+DEFAULT_SYN_RETRIES = 1
 MAX_TIMEOUT_MS = 60_000
 MAX_CONCURRENCY = 4_096
 MAX_RATE_LIMIT_PER_SEC = 100_000
@@ -44,6 +46,8 @@ class ScanConfig:
     max_hosts: int | None = None
     max_attempts: int | None = None
     udp_retries: int | None = None
+    syn_sweep: bool | None = None
+    syn_retries: int | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +188,8 @@ def parse_scan_config(data: dict[str, Any], *, label: str) -> ScanConfig:
         max_hosts=_optional_int(data.get("max_hosts"), f"{label}.max_hosts"),
         max_attempts=_optional_int(data.get("max_attempts"), f"{label}.max_attempts"),
         udp_retries=_optional_int(data.get("udp_retries"), f"{label}.udp_retries"),
+        syn_sweep=_optional_bool(data.get("syn_sweep"), f"{label}.syn_sweep"),
+        syn_retries=_optional_int(data.get("syn_retries"), f"{label}.syn_retries"),
     )
 
 
@@ -214,6 +220,8 @@ def merge_scan_configs(configs: Iterable[ScanConfig]) -> ScanConfig:
             max_hosts=config.max_hosts if config.max_hosts is not None else result.max_hosts,
             max_attempts=config.max_attempts if config.max_attempts is not None else result.max_attempts,
             udp_retries=config.udp_retries if config.udp_retries is not None else result.udp_retries,
+            syn_sweep=config.syn_sweep if config.syn_sweep is not None else result.syn_sweep,
+            syn_retries=config.syn_retries if config.syn_retries is not None else result.syn_retries,
         )
     return result
 
@@ -278,6 +286,20 @@ def resolve_scan_options(
             scan.udp_retries,
             DEFAULT_UDP_RETRIES,
         ),
+        "syn_sweep": _scalar_value(
+            "syn_sweep",
+            values,
+            explicit_fields,
+            scan.syn_sweep,
+            DEFAULT_SYN_SWEEP,
+        ),
+        "syn_retries": _scalar_value(
+            "syn_retries",
+            values,
+            explicit_fields,
+            scan.syn_retries,
+            DEFAULT_SYN_RETRIES,
+        ),
         "config_env": env,
         "config_path": str(config.path) if config.path else None,
     }
@@ -301,8 +323,12 @@ def validate_scan_options(options: dict[str, Any]) -> None:
         raise ValueError("max_attempts must be at least 1")
     if not 0 <= int(options["udp_retries"]) <= 3:
         raise ValueError("udp_retries must be between 0 and 3")
+    if not 0 <= int(options["syn_retries"]) <= 2:
+        raise ValueError("syn_retries must be between 0 and 2")
     if options["protocol"] not in {"tcp", "udp"}:
         raise ValueError("protocol must be 'tcp' or 'udp'")
+    if options["syn_sweep"] and options["protocol"] != "tcp":
+        raise ValueError("SYN sweep is available only for TCP")
 
 
 def _scalar_value(name: str, values: dict[str, Any], explicit_fields: set[str], configured: Any, default: Any) -> Any:

@@ -467,6 +467,71 @@ fn scan_rejects_invalid_runtime_catalog() {
         .contains("unsupported plugin catalog schema version"));
 }
 
+#[test]
+fn syn_sweep_rejects_udp_before_scanning() {
+    let output = Command::new(engine_path())
+        .arg("scan")
+        .args([
+            "--scan-id",
+            "integration-syn-udp",
+            "--targets",
+            "127.0.0.1",
+            "--ports",
+            "9",
+            "--protocol",
+            "udp",
+            "--syn-sweep",
+        ])
+        .output()
+        .expect("run invalid UDP SYN scan");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("SYN sweep is available only for TCP"));
+}
+
+#[test]
+fn syn_sweep_rejects_retry_counts_above_two() {
+    let output = Command::new(engine_path())
+        .arg("scan")
+        .args([
+            "--scan-id",
+            "integration-syn-retries",
+            "--targets",
+            "127.0.0.1",
+            "--ports",
+            "9",
+            "--syn-sweep",
+            "--syn-retries",
+            "3",
+        ])
+        .output()
+        .expect("run invalid SYN retry count");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("0..=2"));
+}
+
+#[cfg(not(all(windows, feature = "syn-sweep")))]
+#[test]
+fn syn_sweep_reports_when_the_engine_was_built_without_the_feature() {
+    let output = Command::new(engine_path())
+        .arg("scan")
+        .args([
+            "--scan-id",
+            "integration-syn-unavailable",
+            "--targets",
+            "127.0.0.1",
+            "--ports",
+            "9",
+            "--syn-sweep",
+        ])
+        .output()
+        .expect("run unavailable SYN sweep");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("built without SYN sweep support"));
+}
+
 fn run_engine_scan(args: &[&str]) -> Vec<Value> {
     let output = Command::new(engine_path())
         .arg("scan")

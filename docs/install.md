@@ -19,7 +19,7 @@ Each packaged artifact is written with a `.sha256` sidecar by default.
 Windows PowerShell:
 
 ```powershell
-$artifact = "netroach-0.1.0-windows-amd64.zip"
+$artifact = "netroach-0.2.0-windows-amd64.zip"
 $expected = (Get-Content "$artifact.sha256").Split(" ")[0]
 $actual = (Get-FileHash $artifact -Algorithm SHA256).Hash.ToLower()
 if ($actual -ne $expected) { throw "checksum mismatch" }
@@ -28,7 +28,7 @@ if ($actual -ne $expected) { throw "checksum mismatch" }
 macOS/Linux:
 
 ```sh
-sha256sum -c netroach-0.1.0-linux-x86_64.tar.gz.sha256
+sha256sum -c netroach-0.2.0-linux-x86_64.tar.gz.sha256
 ```
 
 On macOS, use `shasum -a 256 <artifact>` if `sha256sum` is not installed.
@@ -38,7 +38,7 @@ On macOS, use `shasum -a 256 <artifact>` if `sha256sum` is not installed.
 Windows:
 
 ```powershell
-Expand-Archive .\netroach-0.1.0-windows-amd64.zip -DestinationPath .\netroach
+Expand-Archive .\netroach-0.2.0-windows-amd64.zip -DestinationPath .\netroach
 .\netroach\Start-Netroach.cmd
 ```
 
@@ -58,7 +58,7 @@ macOS/Linux:
 
 ```sh
 mkdir -p netroach
-tar -xzf netroach-0.1.0-linux-x86_64.tar.gz -C netroach
+tar -xzf netroach-0.2.0-linux-x86_64.tar.gz -C netroach
 ./netroach/bin/netroach --help
 ./netroach/bin/netroach serve --check
 ```

@@ -53,6 +53,8 @@ class EngineSettings:
     service_probe: bool = True
     protocol: str = "tcp"
     udp_retries: int = 1
+    syn_sweep: bool = False
+    syn_retries: int = 1
     plugin_paths: tuple[str, ...] = ()
 
 

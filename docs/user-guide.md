@@ -25,6 +25,16 @@ netroach scan --targets 192.168.1.10 --ports 22,80,443 --scope 192.168.1.0/24 --
 netroach scan --protocol udp --udp-retries 1 --targets 192.168.1.10 --ports 53,123,161 --scope 192.168.1.0/24 --confirm-authorized
 ```
 
+On a Windows build compiled with the `syn-sweep` feature, the desktop dashboard
+uses Npcap-backed IPv4 TCP SYN scanning by default. Select **TCP Connect scan
+only** to bypass SYN. The CLI keeps SYN explicit:
+
+```powershell
+netroach scan --syn-sweep --syn-retries 1 --targets 192.168.1.0/28 --ports 1-1024 --scope 192.168.1.0/24 --confirm-authorized
+```
+
+SYN-ACK is reported as open, RST as closed, and silence after the configured 0-2 retries as filtered. With **Service detection** off, the dashboard stores that SYN result without opening a TCP connection. With it on, only SYN-open ports are connected for banner/service fingerprinting and automatic evidence collection; a failed follow-up cannot downgrade the observed SYN-open state. SYN transmission is capped at 5,000 packets per second even if a higher general rate is requested. UDP and IPv6 are rejected. The ordinary build does not link Npcap and reports that SYN support is unavailable; use the private NSIS procedure in `docs/desktop-packaging.md` for a target PC without Npcap.
+
 Targets accept IP addresses, CIDR ranges, and hostnames. A hostname is resolved before anything else runs, so the scope guard always checks the addresses that will actually be probed - a name can never carry a target past it. Every address a name resolves to is scanned, up to 16 per name, and the stored job records the resolved addresses.
 
 ```powershell
@@ -44,7 +54,7 @@ netroach scan --targets 192.168.1.10 --profile web --scope 192.168.1.0/24 --conf
 netroach scan --config .\netroach.toml --env lab --targets 192.168.1.10 --confirm-authorized
 ```
 
-To capture automatic image evidence for discovered services, enable it per scan. Web services use real browser screenshots. SSH, FTP, SMTP, DNS, SNMP, database, and other non-web services receive an 800 x 600 PowerShell terminal image containing the executed diagnostic command, its output, and the scan's service banner or protocol response:
+In the dashboard, enabling **Service detection** also captures automatic image evidence. Web services use real browser screenshots. Other TCP services use a real Windows console capture, with the existing 800 x 600 PowerShell terminal rendering as fallback. On the CLI, evidence remains explicit:
 
 ```powershell
 pip install -e ".[screenshots]"
@@ -57,6 +67,10 @@ netroach scan --targets 192.168.1.10 --ports 22,53,80,443 --scope 192.168.1.0/24
 In the dashboard, port presets and configured port profiles are selected from the same **Presets** row. **Import TXT** accepts a plain-text profile containing comma-separated ports, ranges, and `#` comments; imported profiles are validated and saved in the local dashboard browser for reuse. Enable `Use targets as authorized scope` to derive scan scope from the target field. Single IP targets become `/32` or `/128`; CIDR targets are used as-is.
 
 ## 3. Track Jobs And Results
+
+The scan form stays on the left. The searchable Jobs table sits at the top of the right column and scrolls independently after roughly five rows; the selected job summary, export actions, and results appear below it. Narrow windows stack the form and results vertically. Switching jobs or changing result filters discards outdated responses so that the displayed results stay with the current selection.
+
+**Rescan open ports** fills the form without starting a scan: it replaces previous port sources, updates automatically derived scope, and requires fresh authorization. Saved scan presets restore their port profile as well as explicit or top-port selections.
 
 Long port inventories are condensed into ranges in the dashboard Jobs table. The selected job summary can be expanded to show the complete stored port list. Result sets containing multiple hosts are separated into horizontally scrollable host tabs, with state tabs and counts for each host. Search and filters run against the complete stored result set, and the table supports 25, 50, 100, 250, or 500 rows per page with server-side pagination.
 

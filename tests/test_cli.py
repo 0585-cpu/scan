@@ -288,6 +288,39 @@ custom = [8081, 8444]
             self.assertEqual(settings.concurrency, 7)
             self.assertEqual(settings.rate_limit_per_sec, 9)
 
+    def test_scan_passes_syn_sweep_options_to_the_engine(self):
+        captured: dict[str, object] = {}
+
+        def fake_run_scan(**kwargs):
+            captured.update(kwargs)
+            return [], ScanSummary(scan_id=kwargs["scan_id"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("netroach.cli.run_scan", side_effect=fake_run_scan):
+                code = main(
+                    [
+                        "scan",
+                        "--db",
+                        str(Path(tmp) / "netroach.db"),
+                        "--targets",
+                        "127.0.0.1",
+                        "--ports",
+                        "80",
+                        "--scope",
+                        "127.0.0.0/8",
+                        "--confirm-authorized",
+                        "--syn-sweep",
+                        "--syn-retries",
+                        "2",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        settings = captured["settings"]
+        self.assertIs(settings.syn_sweep, True)
+        self.assertEqual(settings.syn_retries, 2)
+
     def test_scan_uses_plugin_port_profile_and_records_plugin_paths(self):
         captured: dict[str, object] = {}
 

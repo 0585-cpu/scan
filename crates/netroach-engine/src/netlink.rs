@@ -14,15 +14,14 @@
 //! the wrong MAC is dropped by the first switch - so the sweep resolves it once
 //! per target and caches the result.
 #![cfg(all(windows, feature = "syn-sweep"))]
-// Wired into the send loop in the next step; unused in the binary until then.
-#![allow(dead_code)]
-
 use std::net::Ipv4Addr;
 
+use windows_sys::core::GUID;
 use windows_sys::Win32::NetworkManagement::IpHelper::{
-    GetBestRoute2, GetIfEntry2, GetIpNetEntry2, ResolveIpNetEntry2, MIB_IF_ROW2, MIB_IPFORWARD_ROW2,
-    MIB_IPNET_ROW2,
+    ConvertInterfaceIndexToLuid, ConvertInterfaceLuidToGuid, GetBestRoute2, GetIfEntry2,
+    GetIpNetEntry2, ResolveIpNetEntry2, MIB_IF_ROW2, MIB_IPFORWARD_ROW2, MIB_IPNET_ROW2,
 };
+use windows_sys::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows_sys::Win32::Networking::WinSock::{AF_INET, IN_ADDR, SOCKADDR_INET};
 
 use crate::syn_sweep::LinkLayer;
@@ -43,6 +42,10 @@ pub enum RouteError {
     NoRoute(Ipv4Addr),
     NoInterfaceMac(u32),
     NoNextHopMac(Ipv4Addr),
+    NoInterfaceLuid(u32),
+    NoInterfaceGuid(u32),
+    NoPcapDevice(String),
+    AmbiguousPcapDevice(String),
 }
 
 impl std::fmt::Display for RouteError {
@@ -51,11 +54,65 @@ impl std::fmt::Display for RouteError {
             RouteError::NoRoute(ip) => write!(f, "no route to {ip}"),
             RouteError::NoInterfaceMac(index) => write!(f, "no MAC for interface {index}"),
             RouteError::NoNextHopMac(ip) => write!(f, "no MAC for next hop {ip}"),
+            RouteError::NoInterfaceLuid(index) => write!(f, "no LUID for interface {index}"),
+            RouteError::NoInterfaceGuid(index) => write!(f, "no GUID for interface {index}"),
+            RouteError::NoPcapDevice(guid) => write!(f, "no Npcap device for interface {guid}"),
+            RouteError::AmbiguousPcapDevice(guid) => {
+                write!(f, "multiple Npcap devices matched interface {guid}")
+            }
         }
     }
 }
 
 impl std::error::Error for RouteError {}
+
+fn format_guid(guid: &GUID) -> String {
+    format!(
+        "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
+        guid.data1,
+        guid.data2,
+        guid.data3,
+        guid.data4[0],
+        guid.data4[1],
+        guid.data4[2],
+        guid.data4[3],
+        guid.data4[4],
+        guid.data4[5],
+        guid.data4[6],
+        guid.data4[7],
+    )
+}
+
+fn pcap_device_for_guid(guid: &GUID, devices: &[pcap::Device]) -> Result<pcap::Device, RouteError> {
+    let guid = format_guid(guid);
+    let expected = format!(r"\Device\NPF_{guid}");
+    let mut matches = devices
+        .iter()
+        .filter(|device| device.name.eq_ignore_ascii_case(&expected));
+    let matched = matches
+        .next()
+        .cloned()
+        .ok_or_else(|| RouteError::NoPcapDevice(guid.clone()))?;
+    if matches.next().is_some() {
+        return Err(RouteError::AmbiguousPcapDevice(guid));
+    }
+    Ok(matched)
+}
+
+pub fn pcap_device_for_interface(
+    interface_index: u32,
+    devices: &[pcap::Device],
+) -> Result<pcap::Device, RouteError> {
+    let mut luid: NET_LUID_LH = unsafe { std::mem::zeroed() };
+    if unsafe { ConvertInterfaceIndexToLuid(interface_index, &mut luid) } != 0 {
+        return Err(RouteError::NoInterfaceLuid(interface_index));
+    }
+    let mut guid: GUID = unsafe { std::mem::zeroed() };
+    if unsafe { ConvertInterfaceLuidToGuid(&luid, &mut guid) } != 0 {
+        return Err(RouteError::NoInterfaceGuid(interface_index));
+    }
+    pcap_device_for_guid(&guid, devices)
+}
 
 /// An IPv4 SOCKADDR_INET. The union is zeroed and the v4 arm filled, which is
 /// all the Windows calls read for an AF_INET address.
@@ -146,14 +203,75 @@ pub fn resolve_route(dest: Ipv4Addr) -> Result<Route, RouteError> {
     // GetBestRoute2 reports an unspecified next hop when the target is on-link,
     // and the neighbour to resolve is then the target itself.
     let next_hop = read_in_addr(unsafe { route.NextHop.Ipv4.sin_addr });
-    let next_hop = if next_hop.is_unspecified() { dest } else { next_hop };
+    let next_hop = if next_hop.is_unspecified() {
+        dest
+    } else {
+        next_hop
+    };
 
-    let source_mac = interface_mac(interface_index).ok_or(RouteError::NoInterfaceMac(interface_index))?;
-    let next_hop_mac = neighbour_mac(interface_index, next_hop).ok_or(RouteError::NoNextHopMac(next_hop))?;
+    let source_mac =
+        interface_mac(interface_index).ok_or(RouteError::NoInterfaceMac(interface_index))?;
+    let next_hop_mac =
+        neighbour_mac(interface_index, next_hop).ok_or(RouteError::NoNextHopMac(next_hop))?;
 
     Ok(Route {
         source_ip,
         interface_index,
-        link: LinkLayer::Ethernet { source_mac, next_hop_mac },
+        link: LinkLayer::Ethernet {
+            source_mac,
+            next_hop_mac,
+        },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use windows_sys::core::GUID;
+
+    use super::*;
+
+    fn fixture_guid() -> GUID {
+        GUID {
+            data1: 0x0011_2233,
+            data2: 0x4455,
+            data3: 0x6677,
+            data4: [0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff],
+        }
+    }
+
+    #[test]
+    fn formats_a_windows_interface_guid_for_npcap() {
+        assert_eq!(
+            format_guid(&fixture_guid()),
+            "{00112233-4455-6677-8899-AABBCCDDEEFF}"
+        );
+    }
+
+    #[test]
+    fn matches_the_npcap_device_guid_case_insensitively() {
+        let devices = vec![pcap::Device::from(
+            r"\Device\NPF_{00112233-4455-6677-8899-aabbccddeeff}",
+        )];
+
+        let matched = pcap_device_for_guid(&fixture_guid(), &devices).unwrap();
+
+        assert_eq!(matched.name, devices[0].name);
+    }
+
+    #[test]
+    fn rejects_a_missing_npcap_device() {
+        let error = pcap_device_for_guid(&fixture_guid(), &[]).unwrap_err();
+
+        assert!(matches!(error, RouteError::NoPcapDevice(_)));
+    }
+
+    #[test]
+    fn rejects_ambiguous_npcap_device_matches() {
+        let name = r"\Device\NPF_{00112233-4455-6677-8899-AABBCCDDEEFF}";
+        let devices = vec![pcap::Device::from(name), pcap::Device::from(name)];
+
+        let error = pcap_device_for_guid(&fixture_guid(), &devices).unwrap_err();
+
+        assert!(matches!(error, RouteError::AmbiguousPcapDevice(_)));
+    }
 }

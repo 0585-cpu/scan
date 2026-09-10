@@ -44,6 +44,7 @@
       --shadow-lift: 0 6px 18px rgba(16, 24, 40, .1);
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html, body { min-height: 100%; }
     body {
       margin: 0;
@@ -331,6 +332,7 @@
     .layout-wide { display: grid; gap: 16px; align-items: start; }
     .scan-shell { display: flex; gap: 12px; align-items: flex-start; }
     .command-pane { flex: 0 0 380px; max-width: 380px; display: flex; flex-direction: column; gap: 16px; }
+    .scan-results-column { flex: 1 1 auto; min-width: 0; display: grid; gap: 12px; }
     .result-pane {
       flex: 1 1 auto;
       min-width: 0;
@@ -364,6 +366,7 @@
     @media (max-width: 1100px) {
       .scan-shell { flex-direction: column; }
       .command-pane { flex: 1 1 auto; max-width: none; width: 100%; }
+      .scan-results-column { width: 100%; }
     }
     .band {
       background: var(--surface);
@@ -691,7 +694,8 @@
       overflow-wrap: anywhere;
     }
     .table-wrap { width: 100%; overflow: auto; }
-    .scan-jobs-wrap { max-height: 430px; }
+    .scan-jobs-wrap { max-height: 230px; }
+    .scan-jobs-wrap table { min-width: 520px; }
     .scan-results-wrap { max-height: 650px; }
     table { width: 100%; border-collapse: collapse; min-width: 760px; }
     th, td {
@@ -977,20 +981,15 @@
                     </div>
                   </div>
                   </div>
-                  <div class="form-section"><h4>증적</h4>
-                  <div class="form-grid">
-                    <div class="field full">
-                      <label class="check-row"><input name="capture_screenshots" type="checkbox">서비스 증적 이미지 수집</label>
-                      <label class="check-row"><input name="capture_console" type="checkbox">증적을 실제 콘솔 창으로 캡처
-                        <span class="helper">netstat으로 연결이 성립한 화면을 그대로 찍습니다. 웹 포트는 브라우저 화면 증적을 그대로 씁니다. 화면이 켜진 상태에서만 되고, 포트당 1~2초가 더 걸립니다.</span>
-                      </label>
-                    </div>
-                  </div>
-                  </div>
                   <div class="form-section"><h4>실행</h4>
                   <div class="form-grid">
                     <div class="field full">
-                      <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지</label>
+                      <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지
+                        <span class="helper">SYN-open 포트만 TCP Connect로 재확인해 배너와 서비스를 분석하고 증적을 자동 수집합니다. 웹 포트는 브라우저 화면 증적을, 나머지는 실제 콘솔 창을 캡처합니다. 화면이 켜진 상태에서만 되고 포트당 시간이 더 걸립니다.</span>
+                      </label>
+                      <label class="check-row"><input id="scanConnectOnly" name="tcp_connect_only" type="checkbox">TCP Connect 스캔만 사용
+                        <span class="helper">기본은 Npcap 기반 SYN 스캔입니다. 선택하면 SYN을 사용하지 않고 모든 TCP 포트에 연결합니다.</span>
+                      </label>
                     </div>
                     <div class="field full">
                       <label class="check-row"><input name="udp_service_probe" type="checkbox">UDP 서비스 탐지<span class="helper">UDP 스캔에만 적용됩니다. 끄면 0 바이트 하나만 보내 닫힌 포트만 가려냅니다. 켜면 포트별 실제 요청(SNMP GetRequest, RIP 라우팅 테이블 요청, SIP OPTIONS 등)을 보내 열린 포트를 확정하지만, 대상 로그와 알람에 남습니다.</span></label>
@@ -1029,6 +1028,10 @@
                         <input id="scanUdpRetries" name="udp_retries" type="number" min="0" max="3" value="1">
                       </div>
                       <div class="field">
+                        <label for="scanSynRetries">SYN 재시도</label>
+                        <input id="scanSynRetries" name="syn_retries" type="number" min="0" max="2" value="1">
+                      </div>
+                      <div class="field">
                         <label for="scanMaxAttempts">최대 시도 수</label>
                         <input id="scanMaxAttempts" name="max_attempts" type="number" min="1" value="1000000">
                       </div>
@@ -1062,6 +1065,8 @@
                 </form>
               </div>
             </section>
+            </div>
+            <div class="scan-results-column">
             <section class="band">
               <div class="band-head">
                 <h3>작업</h3>
@@ -1084,17 +1089,13 @@
               <div class="table-wrap scan-jobs-wrap">
                 <table>
                   <thead>
-                    <!-- Four columns, not seven: in a 380px column the other
-                         three only bought a horizontal scrollbar, and the port
-                         expression and totals are in the strip over the
-                         results the moment a row is picked. -->
+                    <!-- Keep selection compact; details belong in the summary below. -->
                     <tr><th>ID</th><th>상태</th><th>대상</th><th>open</th></tr>
                   </thead>
                   <tbody id="scanJobs"></tbody>
                 </table>
               </div>
             </section>
-            </div>
             <section class="result-pane">
               <!-- The selected scan's summary sits over the results it
                    describes, not in the other column: it answers "what am I
@@ -1164,6 +1165,7 @@
                 <p class="empty">선택한 작업의 원시 로그는 아직 제공되지 않습니다.</p>
               </div>
             </section>
+            </div>
           </div>
         </section>
 
@@ -1528,6 +1530,8 @@
       scanResultPageSize: 50,
       scanResultSearchTimer: null,
       scanResultPayload: {results: [], total: 0, hosts: []},
+      scanResultsRequest: 0,
+      scanProgressRequest: 0,
       resultTab: 'hosts',
       autoScroll: true,
       newResultCount: 0,
@@ -1566,9 +1570,8 @@
     const SCAN_PRESET_MAX_COUNT = 12;
     // The authorization checkbox is deliberately absent: a restored tick would
     // defeat the gate that makes every scan a deliberate act.
-    const PRESET_FIELDS = ['ports', 'top_ports', 'protocol', 'concurrency', 'timeout_ms',
-      'rate_limit_per_sec', 'udp_retries', 'service_probe', 'udp_service_probe',
-      'capture_screenshots', 'capture_console'];
+    const PRESET_FIELDS = ['ports', 'top_ports', 'port_profile', 'protocol', 'concurrency', 'timeout_ms',
+      'rate_limit_per_sec', 'udp_retries', 'tcp_connect_only', 'syn_retries', 'service_probe', 'udp_service_probe'];
 
     const BUILTIN_SCAN_PRESETS = [
       {id: 'builtin-quick', name: '빠른 점검', builtin: true, values: {top_ports: 100, protocol: 'tcp', service_probe: true}},
@@ -1634,6 +1637,8 @@
 
     function applyScanPreset(preset) {
       const values = preset.values || {};
+      // Port sources are alternatives in this form, not additions to its old range.
+      ['ports', 'top_ports', 'port_profile'].forEach((name) => { $('scanForm').elements[name].value = ''; });
       PRESET_FIELDS.forEach((name) => {
         const node = $('scanForm').elements[name];
         if (!node) return;
@@ -1647,6 +1652,7 @@
       if (preset.targets) $('scanTargets').value = preset.targets;
       // Authorization is never restored - it must be given for each scan.
       $('scanAuthorized').checked = false;
+      updateTcpScanAvailability();
       state.activePresetId = preset.id;
       state.presetDirty = false;
       updateScanScopeMode();
@@ -2414,6 +2420,8 @@ ${health.db}` : '데이터베이스 없음';
 
     async function selectScan(scanId) {
       state.scanId = scanId;
+      state.scanProgress = null;
+      state.scanResultPayload = {results: [], total: 0, hosts: []};
       const job = selectedScanJob();
       $('selectedScanLabel').textContent = job
         ? `${shortId(job.id)} - ${job.status}${job.stalled ? ' · 응답 없음' : ''}`
@@ -2428,6 +2436,7 @@ ${health.db}` : '데이터베이스 없음';
       updateScanActionState();
       renderScanJobs();
       renderOverviewScans();
+      renderScanResults();
       await Promise.allSettled([
         refreshScanProgress(), refreshScanResults(), resumeRecaptureWatch(scanId),
       ]);
@@ -2478,15 +2487,16 @@ ${health.db}` : '데이터베이스 없음';
     async function recaptureEvidence() {
       const button = $('scanRecaptureEvidence');
       if (!state.scanId || button.disabled) return;
+      const scanId = state.scanId;
       const form = new FormData($('scanForm'));
       button.disabled = true;
       setStatus('scanSecondaryStatus', '증적 수집을 시작하는 중...');
       try {
-        const payload = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/evidence/recapture`, {
+        const payload = await api(`/v1/scans/${encodeURIComponent(scanId)}/evidence/recapture`, {
           method: 'POST',
           body: JSON.stringify({
             screenshot_max: Number(form.get('screenshot_max') || 20),
-            capture_console: form.get('capture_console') === 'on'
+            capture_console: form.get('service_probe') === 'on'
           })
         });
         if (!payload.pending) {
@@ -2495,8 +2505,8 @@ ${health.db}` : '데이터베이스 없음';
         }
         setStatus('scanSecondaryStatus',
           `증적 재수집 시작 · 열린 포트 ${Number(payload.pending).toLocaleString()}개 중 최대 ${Number(payload.limit).toLocaleString()}개. 기존 증적은 교체됩니다.`);
-        state.recapturingScanId = state.scanId;
-        watchRecaptureProgress(state.scanId);
+        state.recapturingScanId = scanId;
+        watchRecaptureProgress(scanId);
       } catch (error) {
         setStatus('scanSecondaryStatus', error.message, true);
       } finally {
@@ -2600,22 +2610,32 @@ ${health.db}` : '데이터베이스 없음';
     // through, and a re-scan has no claim to skip them.
     async function fillFormWithOpenTargets() {
       if (!state.scanId) return;
+      const scanId = state.scanId;
       setStatus('scanSecondaryStatus', '열린 포트를 불러오는 중...');
       try {
-        const payload = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/open-targets`);
+        const payload = await api(`/v1/scans/${encodeURIComponent(scanId)}/open-targets`);
+        if (scanId !== state.scanId) return;
         if (!payload.hosts) {
           setStatus('scanSecondaryStatus', '이 스캔에는 열린 포트가 없습니다.', true);
           return;
         }
         $('scanTargets').value = payload.targets;
-        $('scanPorts').value = payload.ports;
+        $('scanAuthorized').checked = false;
+        applyPortsToForm(payload.ports);
         // A scan is one protocol throughout, and these ports were found on it.
         if (payload.protocol) $('scanProtocol').value = payload.protocol;
+        state.activePresetId = null;
+        state.presetDirty = false;
+        renderScanPresets();
+        updateTcpScanAvailability();
+        updateScanScopeMode();
+        updateScanActionState();
         $('scanTargets').scrollIntoView({block: 'center'});
         setStatus('scanSecondaryStatus',
           `호스트 ${Number(payload.hosts).toLocaleString()}개 · ${String(payload.protocol || 'tcp').toUpperCase()} 포트 ${Number(payload.ports_found).toLocaleString()}개를 폼에 넣었습니다.`
           + ` 스캔은 둘을 교차하므로 ${Number(payload.probes).toLocaleString()} 프로브가 됩니다.`);
       } catch (error) {
+        if (scanId !== state.scanId) return;
         setStatus('scanSecondaryStatus', error.message, true);
       }
     }
@@ -2680,14 +2700,16 @@ ${health.db}` : '데이터베이스 없음';
     }
 
     async function refreshScanProgress() {
+      const requestId = ++state.scanProgressRequest;
+      const scanId = state.scanId;
       if (!state.scanId) {
         $('scanMetrics').innerHTML = '';
         state.scanProgress = null;
         renderSummaryStrip(null, null);
         return;
       }
-      const progress = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/progress`);
-      const states = progress.states || {};
+      const progress = await api(`/v1/scans/${encodeURIComponent(scanId)}/progress`);
+      if (requestId !== state.scanProgressRequest || scanId !== state.scanId) return;
       // The numbers live in the strip now; this element carries only the
       // warnings, which have nowhere else to be seen.
       $('scanMetrics').innerHTML = overRecordedWarning(progress) + evidenceCoverageWarning();
@@ -2808,6 +2830,8 @@ ${health.db}` : '데이터베이스 없음';
     const HOST_VIEW_RESULT_LIMIT = 500;
 
     async function refreshScanResults() {
+      const requestId = ++state.scanResultsRequest;
+      const scanId = state.scanId;
       // Poll's refreshScans() calls this every cycle whenever a job is
       // selected, regardless of which top-level view is on screen - skip
       // the network round-trip (500 rows in host view) while the operator
@@ -2851,7 +2875,9 @@ ${health.db}` : '데이터베이스 없음';
       // over every row of the scan; bulk states are a count now, so there is
       // no longer a pile of rows for it to walk.
       try {
-        const payload = await api(`/v1/scans/${encodeURIComponent(state.scanId)}/results?${params}`);
+        const payload = await api(`/v1/scans/${encodeURIComponent(scanId)}/results?${params}`);
+        // Selection, filters and pages can change while an older request is pending.
+        if (requestId !== state.scanResultsRequest || scanId !== state.scanId) return;
         const hosts = Array.isArray(payload.hosts) ? payload.hosts : [];
         if (state.scanResultHost && !hosts.some((item) => item.host === state.scanResultHost)) {
           state.scanResultHost = '';
@@ -2871,6 +2897,7 @@ ${health.db}` : '데이터베이스 없음';
         renderScanResults();
         updateScanLinks();
       } catch (err) {
+        if (requestId !== state.scanResultsRequest || scanId !== state.scanId) return;
         $('scanResults').innerHTML = `<tr><td colspan="9" class="empty">${escapeHtml(err.message)}</td></tr>`;
         $('resultCount').textContent = '결과를 불러오지 못했습니다';
         $('scanResultPagination').innerHTML = '';
@@ -3490,6 +3517,14 @@ ${health.db}` : '데이터베이스 없음';
       renderScanEstimate();
     }
 
+    function updateTcpScanAvailability() {
+      const tcp = $('scanProtocol').value === 'tcp';
+      $('scanConnectOnly').disabled = !tcp;
+      $('scanSynRetries').disabled = !tcp || $('scanConnectOnly').checked;
+      $('scanForm').elements.service_probe.disabled = !tcp;
+      if (!tcp) $('scanConnectOnly').checked = false;
+    }
+
     $('scanForm').addEventListener('submit', async (event) => {
       event.preventDefault();
       const formElement = event.currentTarget;
@@ -3499,6 +3534,8 @@ ${health.db}` : '데이터베이스 없음';
         return;
       }
       const form = new FormData(formElement);
+      const tcp = form.get('protocol') === 'tcp';
+      const tcpServiceProbe = tcp && form.get('service_probe') === 'on';
       const scopeFromTargets = form.get('scope_from_targets') === 'on';
       const scopeValues = scopeFromTargets ? scopeListFromTargets(form.get('targets')) : asList(form.get('scope'));
       if (!scopeValues.length) {
@@ -3520,14 +3557,14 @@ ${health.db}` : '데이터베이스 없음';
         concurrency: Number(form.get('concurrency') || 2000),
         rate_limit_per_sec: Number(form.get('rate_limit_per_sec') || 5000),
         udp_retries: Number(form.get('udp_retries') || 0),
+        syn_sweep: tcp && form.get('tcp_connect_only') !== 'on',
+        syn_retries: Number(form.get('syn_retries') || 1),
         // A scan is one protocol throughout, so one of the two ticks answers
         // for it. They are separate because on UDP the tick decides what packet
         // leaves the machine, not merely whether a reply is named.
-        service_probe: form.get('protocol') === 'udp'
-          ? form.get('udp_service_probe') === 'on'
-          : form.get('service_probe') === 'on',
-        capture_screenshots: form.get('capture_screenshots') === 'on',
-        capture_console: form.get('capture_console') === 'on',
+        service_probe: tcp ? tcpServiceProbe : form.get('udp_service_probe') === 'on',
+        capture_screenshots: tcpServiceProbe,
+        capture_console: tcpServiceProbe,
         screenshot_max: Number(form.get('screenshot_max') || 20),
         max_attempts: Number(form.get('max_attempts') || 1000000),
         confirm_large_scan: form.get('confirm_large_scan') === 'on'
@@ -3743,6 +3780,7 @@ ${health.db}` : '데이터베이스 없음';
     });
     $('scanTargets').addEventListener('blur', renderScanEstimate);
     $('scanAuthorized').addEventListener('change', renderScanEstimate);
+    $('scanProtocol').addEventListener('change', updateTcpScanAvailability);
     $('scanPortProfileFile').addEventListener('change', async (event) => {
       const input = event.currentTarget;
       const file = input.files?.[0];
@@ -3765,10 +3803,11 @@ ${health.db}` : '데이터베이스 없음';
       }
       renderScanEstimate();
     });
-    ['scanPorts', 'scanTopPorts', 'scanProfile', 'scanProtocol', 'scanScope', 'scanExclude', 'scanTimeout', 'scanConcurrency', 'scanRate', 'scanUdpRetries', 'scanMaxAttempts', 'scanConfirmLargeScan'].forEach((id) => {
+    ['scanPorts', 'scanTopPorts', 'scanProfile', 'scanProtocol', 'scanScope', 'scanExclude', 'scanTimeout', 'scanConcurrency', 'scanRate', 'scanUdpRetries', 'scanConnectOnly', 'scanSynRetries', 'scanMaxAttempts', 'scanConfirmLargeScan'].forEach((id) => {
       $(id).addEventListener('input', renderScanEstimate);
       $(id).addEventListener('change', renderScanEstimate);
     });
+    $('scanConnectOnly').addEventListener('change', updateTcpScanAvailability);
     $('scanFillScope').addEventListener('click', () => {
       $('scanScope').value = scopeListFromTargets($('scanTargets').value).join(', ');
       renderScanEstimate();
@@ -3776,6 +3815,7 @@ ${health.db}` : '데이터베이스 없음';
     $('scanScopeFromTargets').addEventListener('change', updateScanScopeMode);
     $('scanReset').addEventListener('click', () => {
       $('scanForm').reset();
+      updateTcpScanAvailability();
       $('scanAdvanced').open = false;
       setStatus('scanStatus', '');
       setStatus('scanProfileStatus', 'TXT는 쉼표로 구분한 포트, 범위, # 주석을 지원합니다.');
@@ -3930,6 +3970,7 @@ ${health.db}` : '데이터베이스 없음';
     state.scanPresets = loadScanPresets();
     renderScanPresets();
     updatePacketFields();
+    updateTcpScanAvailability();
     updateScanScopeMode();
     updateScanActionState();
     renderScanResults();

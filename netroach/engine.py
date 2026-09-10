@@ -23,6 +23,24 @@ ENGINE_INLINE_INPUT_LIMIT = 16_000 if os.name == "nt" else 120_000
 ENGINE_EVENT_QUEUE_SIZE = 10_000
 
 
+def engine_process_environment(
+    base: dict[str, str] | None = None,
+    *,
+    system: str | None = None,
+    windows_dir: str | Path | None = None,
+) -> dict[str, str]:
+    """Put Npcap's native DLL directory on the child search path on Windows."""
+    environment = dict(base if base is not None else os.environ)
+    if (system or os.name).lower() not in {"nt", "windows"}:
+        return environment
+    root = Path(windows_dir or environment.get("WINDIR", r"C:\Windows"))
+    npcap = root / "System32" / "Npcap"
+    if npcap.is_dir():
+        current = environment.get("PATH")
+        environment["PATH"] = os.pathsep.join(part for part in (str(npcap), current) if part)
+    return environment
+
+
 class EngineError(RuntimeError):
     """Raised when the external scan engine fails."""
 
@@ -80,6 +98,10 @@ def _validate_engine_settings(settings: EngineSettings, planned_attempts: int) -
         raise ValueError("protocol must be 'tcp' or 'udp'")
     if not 0 <= settings.udp_retries <= 3:
         raise ValueError("udp_retries must be between 0 and 3")
+    if not 0 <= settings.syn_retries <= 2:
+        raise ValueError("syn_retries must be between 0 and 2")
+    if settings.syn_sweep and settings.protocol != "tcp":
+        raise ValueError("SYN sweep is available only for TCP")
     if planned_attempts > ABSOLUTE_MAX_SCAN_ATTEMPTS:
         raise ValueError(
             f"planned scan attempts exceed absolute safety limit ({ABSOLUTE_MAX_SCAN_ATTEMPTS})"
@@ -222,6 +244,8 @@ def _build_rust_engine_command(
         command.extend(["--protocol", settings.protocol])
     if settings.service_probe:
         command.append("--service-probe")
+    if settings.syn_sweep:
+        command.extend(["--syn-sweep", "--syn-retries", str(settings.syn_retries)])
     if plugin_catalog_file is not None:
         command.extend(["--plugin-catalog-file", str(plugin_catalog_file)])
     return command
@@ -241,6 +265,7 @@ def _run_rust_engine_command(
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
+        env=engine_process_environment(),
     )
     results: list[PortResult] = []
     summary = ScanSummary(scan_id=scan_id)

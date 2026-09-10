@@ -36,7 +36,10 @@ const TCP_FLAG_ACK: u8 = 0x10;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkLayer {
     /// Ethernet (DLT_EN10MB): dst MAC, src MAC, ethertype.
-    Ethernet { source_mac: [u8; 6], next_hop_mac: [u8; 6] },
+    Ethernet {
+        source_mac: [u8; 6],
+        next_hop_mac: [u8; 6],
+    },
     /// BSD loopback (DLT_NULL): a four-byte protocol family in host order.
     Null,
 }
@@ -45,7 +48,10 @@ impl LinkLayer {
     /// The bytes that precede the IP packet on this link.
     fn header(&self) -> Vec<u8> {
         match self {
-            LinkLayer::Ethernet { source_mac, next_hop_mac } => {
+            LinkLayer::Ethernet {
+                source_mac,
+                next_hop_mac,
+            } => {
                 let mut header = Vec::with_capacity(ETHERNET_HEADER_LEN);
                 header.extend_from_slice(next_hop_mac);
                 header.extend_from_slice(source_mac);
@@ -67,7 +73,10 @@ impl LinkLayer {
             }
             LinkLayer::Null => {
                 let family = u32::from_le_bytes([
-                    *frame.get(0)?, *frame.get(1)?, *frame.get(2)?, *frame.get(3)?,
+                    *frame.get(0)?,
+                    *frame.get(1)?,
+                    *frame.get(2)?,
+                    *frame.get(3)?,
                 ]);
                 // 2 is AF_INET everywhere; 24/28/30 are what some BSDs use, but
                 // Npcap's loopback is 2, so only that is accepted.
@@ -96,9 +105,10 @@ pub struct SynAnswer {
 
 /// The sequence number that identifies one probe.
 ///
-/// Replies are matched by arithmetic rather than by lookup, so the sweep holds
-/// no per-probe state. The secret is drawn once per run: without one, anybody
-/// could compute the number that makes a forged reply look genuine.
+/// Replies are matched by arithmetic rather than a per-probe lookup table. The
+/// runner keeps only two result bits per probe so retries can skip answers. The
+/// secret is drawn once per run: without one, anybody could compute the number
+/// that makes a forged reply look genuine.
 pub fn syn_cookie(secret: u64, host: Ipv4Addr, port: u16, source_port: u16) -> u32 {
     let mut value = secret;
     value ^= u64::from(u32::from_be_bytes(host.octets()));
@@ -265,7 +275,10 @@ mod tests {
     const SECRET: u64 = 0x0123_4567_89AB_CDEF;
 
     fn eth() -> LinkLayer {
-        LinkLayer::Ethernet { source_mac: SOURCE_MAC, next_hop_mac: NEXT_HOP_MAC }
+        LinkLayer::Ethernet {
+            source_mac: SOURCE_MAC,
+            next_hop_mac: NEXT_HOP_MAC,
+        }
     }
 
     fn source() -> Ipv4Addr {
@@ -281,8 +294,13 @@ mod tests {
     #[test]
     fn a_built_frame_checks_out_where_it_is_received() {
         let frame = build_syn_frame(
-            eth(), source(), target(), 40000, 445,
-            syn_cookie(SECRET, target(), 445, 40000), 0x1234,
+            eth(),
+            source(),
+            target(),
+            40000,
+            445,
+            syn_cookie(SECRET, target(), 445, 40000),
+            0x1234,
         );
         let ip = &frame[ETHERNET_HEADER_LEN..ETHERNET_HEADER_LEN + IPV4_MIN_HEADER_LEN];
         assert_eq!(checksum16(&[ip]), 0, "the IP header does not verify");
@@ -294,21 +312,26 @@ mod tests {
         pseudo.push(0);
         pseudo.push(IP_PROTO_TCP);
         pseudo.extend_from_slice(&(tcp.len() as u16).to_be_bytes());
-        assert_eq!(checksum16(&[&pseudo, tcp]), 0, "the TCP header does not verify");
+        assert_eq!(
+            checksum16(&[&pseudo, tcp]),
+            0,
+            "the TCP header does not verify"
+        );
     }
 
     #[test]
     fn the_frame_says_what_it_should_to_a_reader() {
-        let frame = build_syn_frame(
-            eth(), source(), target(), 40000, 445, 0xDEAD_BEEF, 7,
-        );
+        let frame = build_syn_frame(eth(), source(), target(), 40000, 445, 0xDEAD_BEEF, 7);
         assert_eq!(&frame[0..6], &NEXT_HOP_MAC, "destination is the next hop");
         assert_eq!(&frame[6..12], &SOURCE_MAC);
         assert_eq!(u16::from_be_bytes([frame[12], frame[13]]), ETHERTYPE_IPV4);
         let tcp = &frame[ETHERNET_HEADER_LEN + IPV4_MIN_HEADER_LEN..];
         assert_eq!(u16::from_be_bytes([tcp[0], tcp[1]]), 40000);
         assert_eq!(u16::from_be_bytes([tcp[2], tcp[3]]), 445);
-        assert_eq!(u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]), 0xDEAD_BEEF);
+        assert_eq!(
+            u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]),
+            0xDEAD_BEEF
+        );
         assert_eq!(tcp[13], TCP_FLAG_SYN, "a sweep sends SYN and nothing else");
     }
 
@@ -351,7 +374,11 @@ mod tests {
         );
         assert_eq!(
             answer,
-            Some(SynAnswer { host: target(), port: 445, reply: SynReply::Open })
+            Some(SynAnswer {
+                host: target(),
+                port: 445,
+                reply: SynReply::Open
+            })
         );
     }
 
@@ -365,7 +392,11 @@ mod tests {
         );
         assert_eq!(
             answer,
-            Some(SynAnswer { host: target(), port: 8080, reply: SynReply::Closed })
+            Some(SynAnswer {
+                host: target(),
+                port: 8080,
+                reply: SynReply::Closed
+            })
         );
     }
 
@@ -375,12 +406,23 @@ mod tests {
         // forgery. Believing it would put a port in the report that was never
         // found, which is worse than missing one.
         let flags = TCP_FLAG_SYN | TCP_FLAG_ACK;
-        assert_eq!(parse_syn_reply(eth(), &reply_frame(target(), 445, 40000, flags, 12345), SECRET), None);
+        assert_eq!(
+            parse_syn_reply(
+                eth(),
+                &reply_frame(target(), 445, 40000, flags, 12345),
+                SECRET
+            ),
+            None
+        );
 
         // Right cookie, but computed for a different port than it arrived on.
         let elsewhere = syn_cookie(SECRET, target(), 22, 40000).wrapping_add(1);
         assert_eq!(
-            parse_syn_reply(eth(), &reply_frame(target(), 445, 40000, flags, elsewhere), SECRET),
+            parse_syn_reply(
+                eth(),
+                &reply_frame(target(), 445, 40000, flags, elsewhere),
+                SECRET
+            ),
             None
         );
 
@@ -388,13 +430,21 @@ mod tests {
         let other_host = Ipv4Addr::new(163, 163, 41, 112);
         let ours = syn_cookie(SECRET, target(), 445, 40000).wrapping_add(1);
         assert_eq!(
-            parse_syn_reply(eth(), &reply_frame(other_host, 445, 40000, flags, ours), SECRET),
+            parse_syn_reply(
+                eth(),
+                &reply_frame(other_host, 445, 40000, flags, ours),
+                SECRET
+            ),
             None
         );
 
         // And a run with a different secret does not accept the other run's.
         assert_eq!(
-            parse_syn_reply(eth(), &reply_frame(target(), 445, 40000, flags, ours), SECRET ^ 1),
+            parse_syn_reply(
+                eth(),
+                &reply_frame(target(), 445, 40000, flags, ours),
+                SECRET ^ 1
+            ),
             None
         );
     }
@@ -414,14 +464,22 @@ mod tests {
 
         // A plain SYN is somebody connecting to us, not answering us.
         assert_eq!(
-            parse_syn_reply(eth(), &reply_frame(target(), 445, 40000, TCP_FLAG_SYN, ack), SECRET),
+            parse_syn_reply(
+                eth(),
+                &reply_frame(target(), 445, 40000, TCP_FLAG_SYN, ack),
+                SECRET
+            ),
             None
         );
 
         // Truncated frames must not panic.
         for cut in 0..54 {
             let short = reply_frame(target(), 445, 40000, TCP_FLAG_SYN | TCP_FLAG_ACK, ack);
-            assert_eq!(parse_syn_reply(eth(), &short[..cut], SECRET), None, "cut at {cut}");
+            assert_eq!(
+                parse_syn_reply(eth(), &short[..cut], SECRET),
+                None,
+                "cut at {cut}"
+            );
         }
     }
 
@@ -437,7 +495,11 @@ mod tests {
         framed.extend_from_slice(&base[ETHERNET_HEADER_LEN + IPV4_MIN_HEADER_LEN..]);
         assert_eq!(
             parse_syn_reply(eth(), &framed, SECRET),
-            Some(SynAnswer { host: target(), port: 445, reply: SynReply::Open })
+            Some(SynAnswer {
+                host: target(),
+                port: 445,
+                reply: SynReply::Open
+            })
         );
     }
 
@@ -445,10 +507,22 @@ mod tests {
     fn the_cookie_separates_probes_that_differ_in_any_one_field() {
         let base = syn_cookie(SECRET, target(), 445, 40000);
         assert_ne!(base, syn_cookie(SECRET, target(), 446, 40000), "port");
-        assert_ne!(base, syn_cookie(SECRET, target(), 445, 40001), "source port");
-        assert_ne!(base, syn_cookie(SECRET, Ipv4Addr::new(163, 163, 41, 112), 445, 40000), "host");
+        assert_ne!(
+            base,
+            syn_cookie(SECRET, target(), 445, 40001),
+            "source port"
+        );
+        assert_ne!(
+            base,
+            syn_cookie(SECRET, Ipv4Addr::new(163, 163, 41, 112), 445, 40000),
+            "host"
+        );
         assert_ne!(base, syn_cookie(SECRET ^ 1, target(), 445, 40000), "secret");
-        assert_eq!(base, syn_cookie(SECRET, target(), 445, 40000), "and is stable");
+        assert_eq!(
+            base,
+            syn_cookie(SECRET, target(), 445, 40000),
+            "and is stable"
+        );
     }
 
     #[test]

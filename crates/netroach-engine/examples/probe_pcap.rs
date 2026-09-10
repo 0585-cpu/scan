@@ -17,20 +17,37 @@ fn main() {
     println!("interfaces: {}", devices.len());
     for device in &devices {
         let description = device.desc.as_deref().unwrap_or("");
-        let addresses: Vec<String> = device.addresses.iter().map(|a| a.addr.to_string()).collect();
-        println!("  {} [{}] {}", device.name, description, addresses.join(", "));
+        let addresses: Vec<String> = device
+            .addresses
+            .iter()
+            .map(|a| a.addr.to_string())
+            .collect();
+        println!(
+            "  {} [{}] {}",
+            device.name,
+            description,
+            addresses.join(", ")
+        );
     }
 
     // The loopback device carries a frame back to us without touching the wire,
     // which is how the sweep is tested without a network.
     let loopback = devices.iter().find(|d| {
-        d.desc.as_deref().is_some_and(|desc| desc.contains("Loopback") || desc.contains("Adapter for loopback"))
+        d.desc
+            .as_deref()
+            .is_some_and(|desc| desc.contains("Loopback") || desc.contains("Adapter for loopback"))
             || d.name.to_lowercase().contains("loopback")
     });
     match loopback {
         Some(device) => {
-            println!("loopback: {} [{}]", device.name, device.desc.as_deref().unwrap_or(""));
-            match pcap::Capture::from_device(device.clone()).and_then(|c| c.immediate_mode(true).open()) {
+            println!(
+                "loopback: {} [{}]",
+                device.name,
+                device.desc.as_deref().unwrap_or("")
+            );
+            match pcap::Capture::from_device(device.clone())
+                .and_then(|c| c.immediate_mode(true).open())
+            {
                 Ok(_) => println!("opened the loopback device"),
                 Err(error) => {
                     eprintln!("could not open the loopback device: {error}");

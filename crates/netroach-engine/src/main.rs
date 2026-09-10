@@ -1,6 +1,8 @@
-mod syn_sweep;
 #[cfg(all(windows, feature = "syn-sweep"))]
 mod netlink;
+#[cfg(all(windows, feature = "syn-sweep"))]
+mod syn_runner;
+mod syn_sweep;
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use futures::stream::{self, StreamExt};
@@ -10,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
+#[cfg(all(windows, feature = "syn-sweep"))]
+use std::net::Ipv4Addr;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -77,6 +81,10 @@ struct ScanArgs {
     protocol: Protocol,
     #[arg(long, default_value_t = false)]
     service_probe: bool,
+    #[arg(long, default_value_t = false)]
+    syn_sweep: bool,
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(0..=2))]
+    syn_retries: u8,
     #[arg(long, hide = true)]
     plugin_catalog_file: Option<PathBuf>,
 }
@@ -260,6 +268,13 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 
 async fn run_scan(args: ScanArgs) -> Result<()> {
     let scan_started = Instant::now();
+    if args.syn_sweep && args.protocol != Protocol::Tcp {
+        return Err(anyhow!("SYN sweep is available only for TCP"));
+    }
+    #[cfg(not(all(windows, feature = "syn-sweep")))]
+    if args.syn_sweep {
+        return Err(anyhow!("this engine was built without SYN sweep support"));
+    }
     if args.timeout_ms == 0 || args.timeout_ms > 60_000 {
         return Err(anyhow!("--timeout-ms must be between 1 and 60000"));
     }
@@ -300,6 +315,23 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
     let service_probe = args.service_probe;
     let concurrency = args.concurrency;
     let udp_retries = args.udp_retries;
+
+    #[cfg(all(windows, feature = "syn-sweep"))]
+    if args.syn_sweep {
+        return run_syn_scan(
+            targets,
+            ports,
+            scan_id,
+            timeout_duration,
+            args.rate_limit_per_sec,
+            concurrency,
+            args.syn_retries,
+            service_probe,
+            plugin_catalog,
+            scan_started,
+        )
+        .await;
+    }
 
     let mut summary = SummaryEvent {
         event: "summary",
@@ -382,6 +414,202 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
     (summary.process_rss_bytes, summary.process_peak_rss_bytes) = process_memory_bytes();
     emit(&summary)?;
     Ok(())
+}
+
+#[cfg(all(windows, feature = "syn-sweep"))]
+#[allow(clippy::too_many_arguments)]
+async fn run_syn_scan(
+    targets: Vec<IpAddr>,
+    ports: Vec<u16>,
+    scan_id: Arc<str>,
+    timeout_duration: Duration,
+    rate_limit_per_sec: u64,
+    concurrency: usize,
+    syn_retries: u8,
+    service_probe: bool,
+    plugin_catalog: Arc<RuntimePluginCatalog>,
+    scan_started: Instant,
+) -> Result<()> {
+    use syn_runner::{run_syn_sweep, ProbeState, SynSweepConfig};
+
+    let mut raw_targets = Vec::<Ipv4Addr>::new();
+    let mut connect_targets = Vec::<IpAddr>::new();
+    for target in targets {
+        match target {
+            IpAddr::V4(ip) if !ip.is_loopback() => raw_targets.push(ip),
+            IpAddr::V4(_) => connect_targets.push(target),
+            IpAddr::V6(_) => {
+                return Err(anyhow!("SYN sweep supports IPv4 targets only"));
+            }
+        }
+    }
+
+    let raw_states = run_syn_sweep(
+        &raw_targets,
+        &ports,
+        SynSweepConfig {
+            timeout: timeout_duration,
+            rate_limit_per_sec,
+            retries: syn_retries,
+        },
+    )
+    .await?;
+
+    let mut summary = SummaryEvent {
+        event: "summary",
+        scan_id: scan_id.to_string(),
+        engine: "rust",
+        total: 0,
+        open: 0,
+        closed: 0,
+        open_filtered: 0,
+        filtered: 0,
+        error: 0,
+        concurrency_backoffs: 0,
+        concurrency_floor: 1,
+        elapsed_ms: 0.0,
+        process_rss_bytes: None,
+        process_peak_rss_bytes: None,
+    };
+
+    let mut follow_up_jobs = Vec::<(IpAddr, u16, bool)>::new();
+    for index in syn_runner::probe_indices(raw_targets.len(), ports.len()) {
+        let (host_index, port_index) = syn_runner::probe_coordinates(index, raw_targets.len());
+        let target = raw_targets[host_index];
+        let port = ports[port_index];
+        let event = match raw_states.get(index) {
+            ProbeState::Open if service_probe => {
+                follow_up_jobs.push((IpAddr::V4(target), port, true));
+                continue;
+            }
+            ProbeState::Open => syn_open_event(IpAddr::V4(target), port, &scan_id),
+            ProbeState::Closed => PortEvent {
+                event: "port",
+                scan_id: scan_id.to_string(),
+                host: target.to_string(),
+                port,
+                protocol: "tcp",
+                state: "closed".to_string(),
+                latency_ms: None,
+                service_name: None,
+                service_confidence: None,
+                banner: None,
+                evidence: Some("RST observed in SYN sweep".to_string()),
+                error: None,
+            },
+            ProbeState::Unanswered => PortEvent {
+                event: "port",
+                scan_id: scan_id.to_string(),
+                host: target.to_string(),
+                port,
+                protocol: "tcp",
+                state: "filtered".to_string(),
+                latency_ms: None,
+                service_name: None,
+                service_confidence: None,
+                banner: None,
+                evidence: None,
+                error: Some("no SYN reply after configured attempts".to_string()),
+            },
+        };
+        observe(&mut summary, &event);
+        emit(&event)?;
+    }
+
+    for target in connect_targets {
+        for &port in &ports {
+            follow_up_jobs.push((target, port, false));
+        }
+    }
+
+    let follow_up_limiter = RateLimiter::new(syn_runner::effective_rate(rate_limit_per_sec));
+    let mut follow_ups = stream::iter(follow_up_jobs)
+        .map(|(target, port, syn_open)| {
+            let scan_id = scan_id.clone();
+            let plugin_catalog = plugin_catalog.clone();
+            let limiter = follow_up_limiter.clone();
+            async move {
+                limiter.wait().await;
+                let event = scan_tcp_one(
+                    target,
+                    port,
+                    &scan_id,
+                    timeout_duration,
+                    service_probe,
+                    &plugin_catalog,
+                )
+                .await;
+                if syn_open {
+                    preserve_syn_open(event, target, port, &scan_id)
+                } else {
+                    event
+                }
+            }
+        })
+        .buffer_unordered(concurrency);
+
+    while let Some(event) = follow_ups.next().await {
+        observe(&mut summary, &event);
+        emit(&event)?;
+    }
+
+    summary.elapsed_ms = round2(scan_started.elapsed().as_secs_f64() * 1000.0);
+    summary.concurrency_floor = concurrency;
+    (summary.process_rss_bytes, summary.process_peak_rss_bytes) = process_memory_bytes();
+    emit(&summary)?;
+    Ok(())
+}
+
+#[cfg(all(windows, feature = "syn-sweep"))]
+fn syn_open_event(target: IpAddr, port: u16, scan_id: &str) -> PortEvent {
+    PortEvent {
+        event: "port",
+        scan_id: scan_id.to_string(),
+        host: target.to_string(),
+        port,
+        protocol: "tcp",
+        state: "open".to_string(),
+        latency_ms: None,
+        service_name: None,
+        service_confidence: None,
+        banner: None,
+        evidence: Some("SYN-ACK observed".to_string()),
+        error: None,
+    }
+}
+
+#[cfg(all(windows, feature = "syn-sweep"))]
+fn preserve_syn_open(
+    mut follow_up: PortEvent,
+    target: IpAddr,
+    port: u16,
+    scan_id: &str,
+) -> PortEvent {
+    if follow_up.state == "open" {
+        follow_up.evidence = Some(match follow_up.evidence {
+            Some(existing) => format!("SYN-ACK observed; {existing}"),
+            None => "SYN-ACK observed".to_string(),
+        });
+        return follow_up;
+    }
+
+    let follow_up_state = follow_up.state.clone();
+    PortEvent {
+        event: "port",
+        scan_id: scan_id.to_string(),
+        host: target.to_string(),
+        port,
+        protocol: "tcp",
+        state: "open".to_string(),
+        latency_ms: None,
+        service_name: None,
+        service_confidence: None,
+        banner: None,
+        evidence: Some("SYN-ACK observed; follow-up connect did not complete".to_string()),
+        error: follow_up.error.or(Some(format!(
+            "follow-up connect returned {follow_up_state}"
+        ))),
+    }
 }
 
 /// Sleeps shorter than this are not worth attempting: OS timers round up to a
@@ -2631,6 +2859,47 @@ mod tests {
         }
     }
 
+    #[cfg(all(windows, feature = "syn-sweep"))]
+    #[test]
+    fn service_probe_off_emits_the_syn_open_without_connect_data() {
+        let event = syn_open_event("10.0.0.1".parse().unwrap(), 80, "s");
+
+        assert_eq!(event.state, "open");
+        assert_eq!(event.evidence.as_deref(), Some("SYN-ACK observed"));
+        assert_eq!(event.latency_ms, None);
+        assert_eq!(event.service_name, None);
+        assert_eq!(event.banner, None);
+    }
+
+    #[cfg(all(windows, feature = "syn-sweep"))]
+    #[test]
+    fn a_successful_follow_up_keeps_the_syn_observation() {
+        let event = preserve_syn_open(
+            port_event_for("open", None),
+            "10.0.0.1".parse().unwrap(),
+            80,
+            "s",
+        );
+
+        assert_eq!(event.state, "open");
+        assert_eq!(event.evidence.as_deref(), Some("SYN-ACK observed"));
+    }
+
+    #[cfg(all(windows, feature = "syn-sweep"))]
+    #[test]
+    fn a_failed_follow_up_does_not_downgrade_a_syn_open() {
+        let event = preserve_syn_open(
+            port_event_for("closed", Some("refused")),
+            "10.0.0.1".parse().unwrap(),
+            80,
+            "s",
+        );
+
+        assert_eq!(event.state, "open");
+        assert!(event.evidence.unwrap().contains("SYN-ACK"));
+        assert_eq!(event.error.as_deref(), Some("refused"));
+    }
+
     fn timeout_event() -> PortEvent {
         port_event_for("filtered", Some("timeout"))
     }
@@ -2809,8 +3078,18 @@ mod tests {
         assert!(!udp_reply_answers(53, &[0], b"", false));
         // And with a probe out there the correlation still decides.
         let dns = udp_probe_payload(53);
-        assert!(udp_reply_answers(53, &dns, &[dns[0], dns[1], 0x81, 0x80], true));
-        assert!(!udp_reply_answers(53, &dns, &[b'X', b'X', 0x81, 0x80], true));
+        assert!(udp_reply_answers(
+            53,
+            &dns,
+            &[dns[0], dns[1], 0x81, 0x80],
+            true
+        ));
+        assert!(!udp_reply_answers(
+            53,
+            &dns,
+            &[b'X', b'X', 0x81, 0x80],
+            true
+        ));
     }
     #[test]
     fn udp_response_correlation_checks_protocol_identifiers() {

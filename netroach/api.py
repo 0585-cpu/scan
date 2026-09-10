@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from .auth import API_TOKEN_COOKIE, require_active_authorization
 from .config import (
     DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_SYN_RETRIES,
     DEFAULT_UDP_RETRIES,
     MAX_CONCURRENCY,
     MAX_HOSTS,
@@ -103,6 +104,40 @@ def _cancel_watcher(repo: SQLiteRepository, scan_id: str) -> Callable[[], bool]:
     return cancel_requested
 
 
+def _start_scan_heartbeat(
+    db_path: str | Path,
+    scan_id: str,
+) -> tuple[Callable[[], None], Callable[[], None]]:
+    """Keep a running job alive even while its engine emits no events."""
+    stop = threading.Event()
+    failures: list[Exception] = []
+
+    def beat() -> None:
+        heartbeat_repo = SQLiteRepository(db_path)
+        while not stop.wait(SCAN_HEARTBEAT_INTERVAL_S):
+            try:
+                heartbeat_repo.record_scan_heartbeat(scan_id)
+            except Exception as exc:  # noqa: BLE001 - the owner must stop if liveness cannot be recorded.
+                failures.append(exc)
+                return
+
+    thread = threading.Thread(target=beat, name=f"scan-heartbeat-{scan_id[:8]}", daemon=True)
+    thread.start()
+
+    def check() -> None:
+        if failures:
+            raise RuntimeError(f"scan heartbeat failed: {failures[0]}") from failures[0]
+
+    def finish() -> None:
+        stop.set()
+        thread.join(timeout=max(1.0, SCAN_HEARTBEAT_INTERVAL_S + 1.0))
+        if thread.is_alive():
+            raise RuntimeError("scan heartbeat thread did not stop")
+        check()
+
+    return check, finish
+
+
 class ScanCreateRequest(BaseModel):
     targets: str
     ports: str | None = None
@@ -118,6 +153,8 @@ class ScanCreateRequest(BaseModel):
     concurrency: int = Field(default=2000, ge=1, le=MAX_CONCURRENCY)
     rate_limit_per_sec: int = Field(default=5000, ge=1, le=MAX_RATE_LIMIT_PER_SEC)
     udp_retries: int = Field(default=DEFAULT_UDP_RETRIES, ge=0, le=3)
+    syn_sweep: bool = False
+    syn_retries: int = Field(default=DEFAULT_SYN_RETRIES, ge=0, le=2)
     service_probe: bool = True
     capture_screenshots: bool = False
     screenshot_timeout_ms: int = Field(default=DEFAULT_SCREENSHOT_TIMEOUT_MS, ge=1_000, le=30_000)
@@ -410,6 +447,8 @@ def create_app(
             service_probe=options["service_probe"],
             protocol=options["protocol"],
             udp_retries=options["udp_retries"],
+            syn_sweep=options["syn_sweep"],
+            syn_retries=options["syn_retries"],
             plugin_paths=resolved_plugin_paths,
         )
         scan_id = repo.create_scan_job(
@@ -1246,16 +1285,15 @@ def _run_scan_job(
     repo.record_scan_heartbeat(scan_id)
 
     cancel_requested = _cancel_watcher(repo, scan_id)
-    last_heartbeat = [time.monotonic()]
+    heartbeat_check, heartbeat_finish = _start_scan_heartbeat(db_path, scan_id)
+
+    def should_stop() -> bool:
+        heartbeat_check()
+        return cancel_requested()
 
     def on_event(event: dict[str, object]) -> None:
-        if cancel_requested():
+        if should_stop():
             raise ScanCancelled(f"scan cancelled: {scan_id}")
-        # A slow sweep can go minutes between flushes; without this the job
-        # would look abandoned to a second instance while it is still working.
-        if time.monotonic() - last_heartbeat[0] >= SCAN_HEARTBEAT_INTERVAL_S:
-            last_heartbeat[0] = time.monotonic()
-            repo.record_scan_heartbeat(scan_id)
         if event.get("event") != "port":
             return
         from .engine import _port_result_from_event
@@ -1263,7 +1301,7 @@ def _run_scan_job(
         pending_results.append(_port_result_from_event(event))
         if len(pending_results) >= 250:
             flush_results()
-        if cancel_requested():
+        if should_stop():
             flush_results()
             raise ScanCancelled(f"scan cancelled: {scan_id}")
 
@@ -1271,7 +1309,7 @@ def _run_scan_job(
         completed_keys = repo.get_result_keys(scan_id, protocol=settings.protocol)
         pending_groups = _group_pending_scan_work(targets, ports, completed_keys)
         for pending_ports, pending_targets in pending_groups:
-            if cancel_requested():
+            if should_stop():
                 raise ScanCancelled(f"scan cancelled: {scan_id}")
             run_scan(
                 scan_id=scan_id,
@@ -1282,10 +1320,11 @@ def _run_scan_job(
                 settings=settings,
                 on_event=on_event,
                 collect_results=False,
-                should_stop=cancel_requested,
+                should_stop=should_stop,
             )
         flush_results()
         if repo.is_scan_cancel_requested(scan_id):
+            heartbeat_finish()
             repo.mark_scan_cancelled(scan_id)
         else:
             if capture_screenshots:
@@ -1324,9 +1363,10 @@ def _run_scan_job(
                     store=store_screenshot,
                     timeout_ms=screenshot_timeout_ms,
                     maximum=screenshot_max,
-                    should_stop=cancel_requested,
+                    should_stop=should_stop,
                     capture_console=capture_console,
                 )
+            heartbeat_finish()
             if repo.is_scan_cancel_requested(scan_id):
                 repo.mark_scan_cancelled(scan_id)
             else:
@@ -1342,12 +1382,14 @@ def _run_scan_job(
                         eligible=eligible_evidence,
                     )
     except ScanCancelled as exc:
+        _finish_heartbeat_quietly(heartbeat_finish)
         _flush_quietly(flush_results)
         repo.mark_scan_cancelled(scan_id, str(exc))
     except Exception as exc:  # noqa: BLE001
         # The final flush must never decide whether the job gets marked. When it
         # raised here the thread died with the job still reading 'running', and
         # nothing afterwards could correct it.
+        _finish_heartbeat_quietly(heartbeat_finish)
         _flush_quietly(flush_results)
         repo.fail_scan(scan_id, str(exc))
 
@@ -1356,6 +1398,13 @@ def _flush_quietly(flush: Callable[[], None]) -> None:
     try:
         flush()
     except Exception:  # noqa: BLE001 - losing a last batch beats losing the job's status.
+        pass
+
+
+def _finish_heartbeat_quietly(finish: Callable[[], None]) -> None:
+    try:
+        finish()
+    except Exception:  # noqa: BLE001 - the original terminal state wins during cleanup.
         pass
 
 
@@ -1386,6 +1435,8 @@ def _scan_params(request: ScanCreateRequest, options: dict[str, Any]) -> dict[st
             "concurrency": options["concurrency"],
             "rate_limit_per_sec": options["rate_limit_per_sec"],
             "udp_retries": options["udp_retries"],
+            "syn_sweep": options["syn_sweep"],
+            "syn_retries": options["syn_retries"],
             "service_probe": options["service_probe"],
             "protocol": options["protocol"],
             "max_hosts": options["max_hosts"],
@@ -1457,6 +1508,8 @@ def _start_scan_recovery(db_path) -> list[threading.Thread]:
                 service_probe=bool(params.get("service_probe", True)),
                 protocol=str(params.get("protocol", "tcp")),
                 udp_retries=int(params.get("udp_retries", DEFAULT_UDP_RETRIES)),
+                syn_sweep=bool(params.get("syn_sweep", False)),
+                syn_retries=int(params.get("syn_retries", DEFAULT_SYN_RETRIES)),
                 plugin_paths=tuple(str(path) for path in params.get("plugins", ())),
             )
             thread = threading.Thread(

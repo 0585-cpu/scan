@@ -2,7 +2,17 @@
 
 All notable Netroach changes are tracked here.
 
-## 0.1.0 - Unreleased
+## 0.2.0 - 2026-09-11
+
+- Added the optional Windows IPv4 TCP SYN scan runner, bounded retries and rate, adapter-specific route/capture handling, and CLI/API configuration. Loopback targets use TCP connect; SYN scanning rejects UDP and IPv6.
+- Made SYN the default TCP mode in the desktop dashboard, with an explicit TCP Connect-only checkbox. Service detection enables SYN-open Connect rechecking, service/banner analysis, and automatic browser/console evidence; disabling it preserves the SYN result without a service connection.
+- Preserved observed SYN-open results when follow-up Connect fails, and kept long-running scans alive through an independent heartbeat with cancellation and recovery support.
+- Added personal-use NSIS packaging with signature-verified Npcap input and a Npcap 1.88+/AdminOnly=0 installation check. Npcap-containing bundles are not for external redistribution.
+- Moved the searchable Jobs table above the selected job's summary, exports, results, and evidence, with an independently scrolling compact job list.
+- Fixed stale job/search responses replacing current results, old port sources leaking into open-port rescans, missing saved port-profile restoration, recapture tracking changing with job selection, and hidden controls incorrectly displaying.
+- Added isolated Chromium/API regression coverage for scan options, job selection, evidence previews, rescan scope, profile restoration, recapture controls, and out-of-order responses.
+
+## 0.1.0 - 2026-09-08
 
 - Added the authorization-first CLI, local REST API, SQLite storage, and Postman collection.
 - Added the Rust `netroach-engine` TCP/UDP scanner with NDJSON streaming output.

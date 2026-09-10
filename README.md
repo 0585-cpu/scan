@@ -2,7 +2,7 @@
 
 `netroach` is an authorization-first network diagnostics toolkit that combines:
 
-- High-throughput TCP connect and UDP response-based scanning through the required `netroach-engine`
+- High-throughput TCP connect, optional Windows IPv4 SYN, and UDP response-based scanning through the required `netroach-engine`
 - Service fingerprinting for common TCP, TLS, and UDP services, including normalized greetings, HTTP metadata, and TLS certificate details
 - Streaming PCAP/PCAPNG analysis with ARP, ICMP, DHCP, DNS, HTTP, TLS ClientHello, and conversation metadata
 - Bounded live packet capture to PCAP with optional automatic analysis
@@ -27,6 +27,8 @@ To continue development on another PC, including the current implementation stat
 On another Windows x64 PC, extract the release ZIP and run `Start-Netroach.cmd`. Its menu can start Netroach, install screenshot support and start, install or update only, or run diagnostics. Normal start performs first-run setup automatically. For automation, use `Start-Netroach.cmd --start`, `--screenshots`, `--setup`, or `--diagnostics`. The lower-level `bin\setup.cmd` and `bin\start-desktop.cmd` scripts remain available for separate setup and launch steps. The destination PC needs Python 3.10+ and internet access during setup; TCP/UDP scanning itself does not require Npcap.
 
 Alternatively, install the Windows NSIS desktop package for a Python-free deployment. Build it with `.\.venv\Scripts\python.exe tools\build_desktop.py`, using the interpreter the build dependency was installed into; see the desktop packaging guide for build prerequisites.
+
+A private Windows NSIS build can include SYN scanning and launch an explicitly supplied Npcap installer on a PC where Npcap is absent. It requires Npcap 1.88+ with `AdminOnly=0`; see [the SYN handoff](docs/syn-sweep-handoff.md) and [desktop packaging guide](docs/desktop-packaging.md). Npcap Free Edition is limited to five systems and cannot be externally redistributed, so do not distribute a personal bundle containing it.
 
 For development:
 
@@ -105,6 +107,18 @@ Scan a small subnet with JSON output:
 ```powershell
 netroach scan --targets 192.168.1.0/28 --ports 1-1024 --scope 192.168.1.0/24 --json --confirm-authorized
 ```
+
+Run the optional Windows IPv4 SYN scan (the engine must be built with `syn-sweep` and Npcap must permit non-administrator access):
+
+```powershell
+netroach scan --targets 192.168.1.0/28 --ports 1-1024 --scope 192.168.1.0/24 --confirm-authorized --syn-sweep --syn-retries 1
+```
+
+In the SYN-enabled desktop dashboard, TCP uses SYN by default. **TCP Connect
+scan only** bypasses SYN. With **Service detection** off, SYN-open ports are
+reported directly without a connection; with it on, only SYN-open ports are
+connected for fingerprinting and automatic browser/console image evidence.
+The command-line and API `syn_sweep` field remain explicit for compatibility.
 
 Read targets and ports from files, exclude a host, and include a named profile:
 
@@ -310,6 +324,8 @@ Example scan request:
   "concurrency": 2000,
   "rate_limit_per_sec": 5000,
   "udp_retries": 1,
+  "syn_sweep": false,
+  "syn_retries": 1,
   "max_hosts": 65536,
   "max_attempts": 1000000,
   "confirm_large_scan": false,
@@ -436,9 +452,9 @@ Example health response includes diagnostics:
   "status": "ok",
   "db": "C:\\Users\\you\\AppData\\Roaming\\Netroach\\netroach.db",
   "diagnostics": {
-    "app_version": "0.1.0",
+    "app_version": "0.2.0",
     "rust_engine_available": true,
-    "rust_engine_version": "netroach-engine 0.1.0",
+    "rust_engine_version": "netroach-engine 0.2.0",
     "scapy_available": true,
     "packet_driver": "Npcap",
     "packet_driver_available": true,

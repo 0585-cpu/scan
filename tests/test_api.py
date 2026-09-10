@@ -404,6 +404,92 @@ class ApiTests(unittest.TestCase):
             run.assert_not_called()
             self.assertEqual(repo.get_job(scan_id)["status"], "running")
 
+    def test_a_silent_engine_keeps_the_scan_heartbeat_alive(self):
+        """A SYN sweep can run for minutes before it emits its first result."""
+        from netroach.api import _run_scan_job
+        from netroach.engine import EngineSettings
+        from netroach.models import ScanSummary
+        from netroach.storage import SQLiteRepository
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db_path)
+            scan_id = repo.create_scan_job(
+                targets="192.0.2.1", ports="1-100", scope=["192.0.2.1/32"], params={"protocol": "tcp"}
+            )
+            heartbeats = []
+            heartbeat_ready = threading.Event()
+            real_heartbeat = SQLiteRepository.record_scan_heartbeat
+
+            def counting_heartbeat(self, sid):
+                result = real_heartbeat(self, sid)
+                heartbeats.append(time.monotonic())
+                if len(heartbeats) >= 3:
+                    heartbeat_ready.set()
+                return result
+
+            def silent_run_scan(**_kwargs):
+                # SQLite writes and Windows scheduling can exceed a 60 ms sleep.
+                self.assertTrue(heartbeat_ready.wait(2), "silent engine received no periodic heartbeat")
+                return [], ScanSummary(scan_id=scan_id, total=100)
+
+            with (
+                patch("netroach.api.SCAN_HEARTBEAT_INTERVAL_S", 0.01),
+                patch("netroach.api.run_scan", side_effect=silent_run_scan),
+                patch.object(SQLiteRepository, "record_scan_heartbeat", counting_heartbeat),
+            ):
+                _run_scan_job(
+                    str(db_path),
+                    scan_id,
+                    [ipaddress.ip_address("192.0.2.1")],
+                    list(range(1, 101)),
+                    EngineSettings(protocol="tcp", syn_sweep=True),
+                )
+
+            self.assertGreaterEqual(len(heartbeats), 3)
+            self.assertEqual(repo.get_job(scan_id)["status"], "completed")
+
+    def test_a_silent_engine_is_terminated_when_the_live_job_is_cancelled(self):
+        from netroach.api import _run_scan_job
+        from netroach.engine import EngineSettings, ScanCancelled
+        from netroach.storage import SQLiteRepository
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db_path)
+            scan_id = repo.create_scan_job(
+                targets="192.0.2.1", ports="1-100", scope=["192.0.2.1/32"], params={"protocol": "tcp"}
+            )
+            engine_started = threading.Event()
+            engine_stopped = threading.Event()
+
+            def silent_run_scan(**kwargs):
+                engine_started.set()
+                while not kwargs["should_stop"]():
+                    time.sleep(0.005)
+                engine_stopped.set()
+                raise ScanCancelled("cancelled by test")
+
+            with patch("netroach.api.run_scan", side_effect=silent_run_scan):
+                worker = threading.Thread(
+                    target=_run_scan_job,
+                    args=(
+                        str(db_path),
+                        scan_id,
+                        [ipaddress.ip_address("192.0.2.1")],
+                        list(range(1, 101)),
+                        EngineSettings(protocol="tcp", syn_sweep=True),
+                    ),
+                )
+                worker.start()
+                self.assertTrue(engine_started.wait(timeout=2))
+                repo.request_scan_cancel(scan_id)
+                worker.join(timeout=3)
+
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(engine_stopped.is_set())
+            self.assertEqual(repo.get_job(scan_id)["status"], "cancelled")
+
     def test_recovery_takes_over_a_job_whose_worker_stopped_beating(self):
         from netroach.api import _start_scan_recovery
         from netroach.storage import SQLiteRepository
@@ -805,6 +891,61 @@ rate_limit_per_sec = 13
             self.assertEqual(settings.timeout_ms, 111)
             self.assertEqual(settings.concurrency, 12)
             self.assertEqual(settings.rate_limit_per_sec, 13)
+
+    def test_scan_api_passes_syn_sweep_options_to_the_engine(self):
+        from fastapi.testclient import TestClient
+
+        from netroach.api import create_app
+        from netroach.models import ScanSummary
+
+        captured: dict[str, object] = {}
+
+        def fake_run_scan(**kwargs):
+            captured.update(kwargs)
+            return [], ScanSummary(scan_id=kwargs["scan_id"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
+            with patch("netroach.api.run_scan", side_effect=fake_run_scan):
+                response = client.post(
+                    "/v1/scans",
+                    json={
+                        "targets": "127.0.0.1",
+                        "ports": "80",
+                        "scope": ["127.0.0.0/8"],
+                        "confirm_authorized": True,
+                        "protocol": "tcp",
+                        "syn_sweep": True,
+                        "syn_retries": 2,
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        settings = captured["settings"]
+        self.assertIs(settings.syn_sweep, True)
+        self.assertEqual(settings.syn_retries, 2)
+
+    def test_scan_api_rejects_syn_sweep_for_udp(self):
+        from fastapi.testclient import TestClient
+
+        from netroach.api import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(f"{tmp}/netroach.db"))
+            response = client.post(
+                "/v1/scans",
+                json={
+                    "targets": "127.0.0.1",
+                    "ports": "53",
+                    "scope": ["127.0.0.0/8"],
+                    "confirm_authorized": True,
+                    "protocol": "udp",
+                    "syn_sweep": True,
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("TCP", response.json()["detail"]["error"])
 
     def test_scan_uses_plugin_profile_and_lists_plugins(self):
         from fastapi.testclient import TestClient

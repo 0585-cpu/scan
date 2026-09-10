@@ -1,226 +1,126 @@
-# SYN 스윕 — 개발 인수인계
+# SYN 스윕 — 구현 및 인수인계
 
-이어서 개발할 때 이 문서 하나로 재개할 수 있도록 정리한 것. 패킷 층과 라우트
-해석은 완성·검증됐고, 송신 루프부터가 남았다.
+## 현재 상태
 
----
+Windows IPv4 TCP SYN 스윕은 `syn-sweep` Cargo feature 뒤에서 구현되어 있다.
+일반 CLI/API는 기존 호환성을 위해 `syn_sweep`를 명시적으로 선택하지만,
+SYN 전용 개인용 NSIS 빌드의 대시보드는 TCP에서 SYN을 기본으로 사용한다.
+`TCP Connect 스캔만 사용`을 선택하면 기존 connect 경로만 사용한다. 개인용
+NSIS 빌드는 Npcap SDK로 엔진을 링크하고 공식 Npcap 설치 파일을 설치본 안에
+포함한다.
 
-## 1. 왜 만드는가
+SYN 스윕은 다음 결과를 낸다.
 
-현재 엔진은 connect 스캔(`TcpStream::connect`)이라 포트마다 소켓을 타임아웃
-동안 붙잡는다. 그래서 응답 없는 포트가 대부분인 대역에서 처리량은
-`동시성 ÷ 타임아웃`이 상한이다. 고객사 `/24 × 10,000포트` 스캔이 **약 2시간**,
-그리고 8GB PC에서 동시 소켓 수천 개가 메모리를 바닥내 **PC 전체가 멈췄다**.
+- SYN-ACK: `open`; 서비스 탐지가 켜진 경우에만 기존 connect 경로로 서비스와
+  이미지/콘솔 증적을 보강하고, 꺼져 있으면 연결 없이 SYN 결과를 기록한다.
+- RST: `closed`.
+- 모든 전송 및 재시도 뒤 무응답: `filtered`.
+- Npcap 열기·캡처·송신 오류: 스캔 실패. 결과를 추측해서 만들지 않는다.
 
-SYN 스윕은 포트당 패킷 하나만 보내고 **프로브별 상태를 전혀 안 든다**. 열린
-포트만 기존 connect 경로로 넘겨 배너·서비스 식별·콘솔 증적을 그대로 얻는다.
-목표: **1,600만 프로브를 5,000pps로 약 53분**, 메모리 문제 없음.
+## 구현 구조
 
-속도가 목적이 아니다. 레이트는 **5,000pps로 고정**한다 — 수만 pps는 노후
-OT/임베디드 장비를 멈추게 할 수 있다. 이점은 "소켓·상태를 안 드는 것"이지
-속도가 아니다.
+- `syn_sweep.rs`: SYN 프레임 작성, 쿠키 생성, SYN-ACK/RST 검증과 파싱.
+- `netlink.rs`: Windows 라우트·MAC 해석 및 인터페이스 인덱스에서 정확한
+  `\Device\NPF_{GUID}` Npcap 장치로의 fail-closed 매핑.
+- `syn_runner.rs`: 어댑터별 송신 핸들·수신 스레드, BPF 필터, 재시도,
+  5,000pps 상한, 결과 집계. 수신 큐 포화·스레드 panic·캡처 오류는 스캔을
+  실패시키며 로컬 인터페이스 주소를 원격 raw 대상으로 오인하지 않는다.
+- `main.rs`: `--syn-sweep`, `--syn-retries 0..2`, 결과 이벤트와 기존 서비스
+  탐지 경로 연결. 루프백은 connect 스캔으로 처리한다.
+- Python CLI/API/대시보드: 옵션을 `EngineSettings`와 Rust 엔진까지 전달한다.
+  API heartbeat는 결과 이벤트와 독립된 스레드에서 유지되어, 결과를 마지막에
+  일괄 출력하는 장시간 SYN 스윕도 중단된 작업으로 오인하지 않는다.
 
----
+쿠키가 외부 패킷을 거르고 응답을 `(host, port)`에 연결한다. 재시도 때 이미
+응답한 프로브를 제외하기 위해 프로브당 2비트 상태만 유지한다. 따라서
+16,000,000 프로브는 약 4MiB, 절대 상한 100,000,000 프로브는 약 25MiB이다.
+프로브별 소켓·작업·타이머·객체는 만들지 않는다. 순서는 포트 우선이라 같은
+호스트에 패킷이 연속 집중되지 않는다.
 
-## 2. 빌드 환경 (이 PC에 이미 설치됨)
+## 개발 빌드와 테스트
 
-SYN 작업은 Npcap이 필요하다 (XP SP2 이후 일반 소켓으로 raw 송신 불가).
+이 PC의 SDK 라이브러리는 `C:\npcap-sdk\Lib\x64`에 있다.
 
-**이미 설치된 상태:**
-- Npcap 1.88 런타임 — 드라이버 `npcap` Running, `C:\Windows\System32\Npcap\wpcap.dll`
-- Npcap SDK 1.16 — `C:\npcap-sdk\` (`Lib\x64\wpcap.lib`, `Include\pcap.h`)
-
-**빌드/테스트 (SDK lib을 LIB에 올려야 함):**
 ```powershell
 $env:LIB = "C:\npcap-sdk\Lib\x64;$env:LIB"
-cargo build --manifest-path crates\netroach-engine\Cargo.toml --features syn-sweep
-cargo test  --manifest-path crates\netroach-engine\Cargo.toml --features syn-sweep syn_sweep
+cargo test -p netroach-engine --features syn-sweep
+cargo build -p netroach-engine --features syn-sweep
 ```
 
-`pcap`, `windows-sys`는 **`syn-sweep` 기능 뒤 optional**이다
-(`Cargo.toml`: `syn-sweep = ["dep:pcap", "dep:windows-sys"]`,
-`windows-sys` features는 `Win32_NetworkManagement_IpHelper`, `_Ndis`,
-`Win32_Networking_WinSock`, `Win32_Foundation`). 기능 없는 기본 빌드는 둘 다
-링크하지 않고 SDK도 필요 없다 — `cargo build`(플래그 없이)로 확인.
-**패키징 데스크톱 빌드에는 절대 `syn-sweep`를 켜지 말 것.**
+기본 빌드는 Npcap SDK 없이 가능해야 한다.
 
-**어느 파일이 언제 컴파일되는가** (혼동 주의):
-- `syn_sweep.rs` (순수 로직)는 **기능과 무관하게 항상 컴파일**된다. 의존성이
-  없어 무해하고, 기본 빌드에서는 아무도 안 써서 최적화로 제거된다
-  (`#![allow(dead_code)]`).
-- `netlink.rs`는 `#![cfg(all(windows, feature = "syn-sweep"))]`이라 **기능을
-  켤 때만** 컴파일된다 (windows-sys를 쓰므로).
-- 예제 3개는 `Cargo.toml`에서 `required-features = ["syn-sweep"]`로 묶여 있어
-  기본 `cargo test`가 건드리지 않는다. **새 예제가 pcap을 쓰면 여기에도 추가**할 것.
-
-빌드 스크립트는 없다 (`build.rs` 없음). pcap의 링크는 위 `LIB` 환경변수 하나로
-해결된다.
-
-**raw 캡처 실행은 관리자 권한 필요.** UAC + 출력 캡처를 함께 쓰려면 cmd 래퍼로:
 ```powershell
-$exe = (Resolve-Path "target\debug\examples\loopback_roundtrip.exe")
-"`"$exe`" > `"$env:TEMP\out.txt`" 2>&1" | Set-Content -Encoding ascii "$env:TEMP\run.cmd"
-Start-Process cmd.exe -ArgumentList "/c","$env:TEMP\run.cmd" -Verb RunAs -Wait
-Get-Content "$env:TEMP\out.txt"
-```
-(라우트 해석 `resolve_route`는 IP Helper 호출뿐이라 권한 불필요.)
-
-Npcap 라이선스는 개인·사내 무료. 설치본은 Netroach에 **재배포하지 않고** 각
-PC에 별도 설치한다.
-
----
-
-## 3. 완성된 것과 검증 방법
-
-### `crates/netroach-engine/src/syn_sweep.rs` — 패킷 층 (커밋 5bbafe7)
-
-순수 바이트 함수, I/O 없음. 유닛 테스트 9개(`--features syn-sweep syn_sweep`).
-
-```rust
-pub enum LinkLayer { Ethernet { source_mac: [u8;6], next_hop_mac: [u8;6] }, Null }
-pub enum SynReply { Open, Closed }
-pub struct SynAnswer { pub host: Ipv4Addr, pub port: u16, pub reply: SynReply }
-
-pub fn syn_cookie(secret: u64, host: Ipv4Addr, port: u16, source_port: u16) -> u32
-pub fn build_syn_frame(link: LinkLayer, source_ip: Ipv4Addr, host: Ipv4Addr,
-                       source_port: u16, port: u16, sequence: u32, ip_id: u16) -> Vec<u8>
-pub fn parse_syn_reply(link: LinkLayer, frame: &[u8], secret: u64) -> Option<SynAnswer>
+cargo test -p netroach-engine
+cargo build -p netroach-engine
 ```
 
-- **`syn_cookie`** = TCP 시퀀스 번호에 넣는 keyed hash. 응답의 ack가 `쿠키+1`일
-  때만 우리 것으로 인정 → **상태를 전혀 안 드는 근거**이자 위조/외부 패킷
-  차단. 송신 시 `sequence`에 이 값을 넣고, 수신 시 `parse_syn_reply`가 검증.
-- **`LinkLayer`** — 유선은 Ethernet(14바이트 + MAC), 루프백은 Null(DLT_NULL,
-  4바이트 family). 프레이밍이 틀리면 응답이 아예 안 온다.
+실행 예:
 
-**종단 검증:** `examples/loopback_roundtrip.rs`가 루프백 어댑터로 SYN을 주입.
-열린 포트(리스닝)→SYN-ACK, 닫힌 포트→RST를 커널이 실제로 응답했고 파서가
-분류. 즉 우리가 만든 프레임이 실제 전송되고 실제 스택이 받아들인다.
 ```powershell
-cargo run --features syn-sweep --example loopback_roundtrip   # 관리자 권한
+netroach scan --targets 192.168.1.0/24 --ports 1-1000 `
+  --scope 192.168.1.0/24 --confirm-authorized `
+  --syn-sweep --syn-retries 1
 ```
 
-### `crates/netroach-engine/src/netlink.rs` — 라우트 해석 (커밋 588c885)
+SYN 스캔은 TCP/IPv4 전용이다. 요청 속도가 5,000pps보다 크더라도 SYN 송신은
+5,000pps로 제한된다. 여러 어댑터를 사용하는 대상은 각각 정확한 Npcap 장치와
+라우트가 확인되어야 시작된다.
 
-Windows IP Helper (`windows-sys`).
+## 개인용 Npcap 포함 설치본
 
-```rust
-pub struct Route { pub source_ip: Ipv4Addr, pub link: LinkLayer, pub interface_index: u32 }
-pub enum RouteError { NoRoute(Ipv4Addr), NoInterfaceMac(u32), NoNextHopMac(Ipv4Addr) }
-pub fn resolve_route(dest: Ipv4Addr) -> Result<Route, RouteError>
-```
+무료 Npcap 설치 파일은 저장소에 넣거나 자동 다운로드하지 않는다. 공식
+사이트에서 직접 받은 설치 파일을 명시적으로 지정한다.
 
-`GetBestRoute2`(다음 홉·인터페이스·소스) → `GetIfEntry2`(소스 MAC) →
-`GetIpNetEntry2`/`ResolveIpNetEntry2`(다음 홉 MAC, 캐시 미스 시 ARP). 같은
-대역이면 대상 자신을, 다른 대역이면 게이트웨이를 ARP.
-
-**실제 테이블 검증:** `8.8.8.8`(대역 밖)과 게이트웨이가 둘 다 게이트웨이 MAC으로,
-on-link 이웃은 자기 MAC으로 해석됨 — 혼합 대역 스캔이 의존하는 분기.
 ```powershell
-cargo run --features syn-sweep --example resolve_route -- 8.8.8.8 <게이트웨이> <로컬IP>
+.\.venv\Scripts\python.exe tools\build_desktop.py `
+  --syn-sweep `
+  --npcap-sdk-lib C:\npcap-sdk\Lib\x64 `
+  --npcap-installer C:\path\to\npcap-installer.exe `
+  --bundles nsis
 ```
-(자기 자신 IP는 loopback 라우팅이라 next-hop MAC이 `00:..:00`으로 나온다.
-self-target은 스캔 대상이 아니므로 통합 시 감지해 제외하거나 connect로 처리.)
 
-### 재검증용 예제 3개 (`--features syn-sweep`, 셋 다 관리자 권한)
+빌드는 공급자가 Nmap Software LLC이고 상태가 Valid인 Authenticode 서명을 먼저
+확인한 뒤 설치 파일을 무시되는 staging 경로에 복사하고 SHA-256을 출력한다.
+설치 훅은 Npcap 1.88 이상과 `AdminOnly=0`을 먼저 검사한다. 조건을 만족하지
+않으면 포함된 Npcap 설치 UI를 실행하며 사용자는
+`Restrict Npcap driver's access to Administrators only`를 선택하지 않아야 한다.
+설치가 끝난 뒤 조건을 다시 만족하지 않으면 Netroach 설치도 중단된다.
 
-각 계층을 독립적으로 다시 확인하는 최소 프로그램. 새 개발 PC에서 환경이
-맞는지 위→아래 순으로 돌려 보면 어디서 어긋나는지 바로 잡힌다.
+NSIS 빌드가 성공하거나 실패하면 private staging 설치 파일을 제거하고 기본
+connect-scan 엔진을 다시 staging한다. 따라서 다음 일반 빌드가 개인용 Npcap
+설치 파일이나 feature 엔진을 우연히 재사용하지 않는다.
+성공한 Windows 설치본에는 현재 파일과 일치하는 `.sha256` sidecar를 다시 쓴다.
 
-| 예제 | 무엇을 증명 | 실패 시 의미 |
-|------|-------------|--------------|
-| `probe_pcap` | Npcap 드라이버·SDK·pcap 크레이트가 물려 있고 루프백 어댑터가 열린다 | LIB 경로 또는 Npcap 설치 문제 (송신 이전) |
-| `resolve_route` | IP Helper 라우트 해석 (권한 불필요) | 라우팅 테이블 해석 로직 |
-| `loopback_roundtrip` | 프레임이 실제 전송·수신되고 파서가 open/closed를 가른다 | 프레이밍 또는 파서 |
+Netroach 제거 프로그램은 공유 시스템 드라이버인 Npcap을 제거하지 않는다.
+무료 Npcap은 예외 용도를 제외하면 최대 5대에서만 사용할 수 있고 외부
+재배포할 수 없다. 설치 파일이 포함된 결과물은 이 사용자의 개인용 설치본으로만
+취급하며 게시·전달하지 않는다. 다른 사용자나 고객에게 배포하려면 Npcap OEM
+재배포 권한과 그에 맞는 설치 방식을 사용해야 한다.
 
----
+## 남은 수동 검증 게이트
 
-## 4. 남은 작업
+- 관리자 전용이 아닌 Npcap을 사용한 비관리자 실제 LAN open/closed/filtered 검사.
+- 동일 대상에 대한 SYN 결과와 connect 결과의 열린 포트 교차검증.
+- Npcap이 없는 깨끗한 Windows VM에서 포함 설치, 취소, 잘못된 AdminOnly 설정,
+  재실행 및 제거 동작 검증.
+- 설치 훅을 실제로 실행하는 clean-VM 설치 및 제거 검증.
 
-### 3단계 — 송신 루프 + 수신 스레드 (다음, 가장 큰 조각)
+이 게이트를 직접 실행하기 전에는 실제 네트워크 및 최종 설치본 인수를
+`UNVERIFIED`로 표시한다.
 
-**먼저 풀어야 할 유일한 미해결점: `interface_index` → pcap 디바이스 매핑.**
-`resolve_route`가 주는 인터페이스 인덱스(예: 10)를 pcap의
-`\Device\NPF_{GUID}` 이름과 연결해야 올바른 어댑터로 송신한다.
-- `ConvertInterfaceIndexToLuid(index, &luid)` → `ConvertInterfaceLuidToGuid(&luid, &guid)`
-  → GUID 문자열(`{XXXX...}`)을 pcap `Device::list()`의 `name`에서 매칭
-  (`name.contains(&guid_string)`).
-- 둘 다 `windows-sys` IpHelper에 있음. GUID 포맷은 `StringFromGUID2` 또는
-  직접 `{:08X}-{:04X}-...` 조립.
-- **현재 features로 이미 컴파일 가능** (`Win32_NetworkManagement_IpHelper`에
-  포함) — Cargo.toml을 건드릴 필요 없이 바로 쓰면 된다. 확인됨.
+## 2026-09-10 개인용 빌드 증적
 
-**송신:** 대상 목록을 `(host, port)`로 펼치고(순서는 호스트를 가로질러
-인터리빙하는 게 방화벽 호스트당 제한을 피함 — main.rs의 현재 순서는 호스트
-우선이라 다름), 각각에 대해:
-1. 라우트 캐시에서 `Route` 조회 (`resolve_route`는 대상 IP당 1회, HashMap 캐시).
-2. `syn_cookie(secret, host, port, source_port)` → `build_syn_frame(route.link,
-   route.source_ip, host, source_port, port, cookie, ip_id)`.
-3. 해당 어댑터의 pcap 핸들로 `sendpacket(&frame)`.
-4. **레이트 제한**: 5,000pps 상한. main.rs의 `RateLimiter`(spacing 방식)를
-   재사용하거나 동일 패턴으로.
-- `source_port`는 런당 고정(예: 40000+) 하나로 두면 BPF 필터가 단순해진다.
-  포트별로 바꾸면 쿠키에 이미 들어가니 상관없지만 필터가 복잡.
+- Npcap 입력: 1.88, Authenticode `Valid`, 서명자 `Nmap Software LLC`.
+- Npcap 입력 SHA-256:
+  `a2f4ec1e5ea353ff67efd24b2ebf081ba44532410fae8d5e146af0310aa4f56b`.
+- NSIS 설치본: `desktop/src-tauri/target/release/bundle/nsis/Netroach_0.1.0_x64-setup.exe`.
+- 크기: 430,240,347 bytes.
+- 설치본 SHA-256:
+  `2f07f139bbfc346180b046183c92743ff506f74e24a7b93969eb4c879a3d812c`.
+- `.sha256` sidecar 일치 확인 완료.
+- 설치본 자체의 Authenticode 상태: `NotSigned`.
+- NSIS 완료 뒤 private Npcap staging 제거 및 표준 connect 엔진 복원 확인 완료.
 
-**수신:** 별도 스레드에서 pcap 캡처, BPF `tcp and dst port <source_port>`,
-프레임마다 `parse_syn_reply(route_link_of_that_adapter, frame, secret)`.
-`SynAnswer`를 채널로 메인에 전달. 어댑터가 여럿이면(혼합 대역이 서로 다른
-인터페이스로 나가면) 어댑터마다 수신 스레드.
-
-**어댑터 datalink → LinkLayer:** 캡처 핸들의 `get_datalink()`으로 판정
-(loopback=DLT_NULL=`Linktype(0)`, 유선=DLT_EN10MB=`Linktype(1)`). 유선이면
-`resolve_route`가 준 MAC으로 Ethernet, 아니면 Null.
-
-**실 인터페이스에서 처음 보게 될 것 (루프백에선 안 보임):** 우리 호스트 커널은
-자기가 연 적 없는 source_port로 도착한 SYN-ACK를 보고 **스스로 RST를 쏜다**
-(반쯤 열린 연결 정리). 이건 정상이고 우리 분류에 영향 없다 — pcap이 SYN-ACK를
-커널의 RST와 무관하게 먼저 읽기 때문. 대상 입장에서 잔여 RST를 하나 받지만
-half-open이라 무해하다. 커널이 우리 SYN-ACK를 삼켜 캡처가 못 받는 것처럼
-보이면 이 순서를 의심할 것 — 이 때문에 시간 버리기 쉬움.
-
-### 4단계 — 재전송
-
-SYN이나 응답 유실 = **조용한 미탐**(connect는 OS가 재전송해줘서 이 문제 없음).
-무응답 포트를 1~2회 재전송. 이게 진단에 쓸 수 있는 신뢰성의 핵심.
-- 1차 스윕 후 응답 못 받은 `(host,port)`를 모아 2차, (필요시) 3차.
-
-### 5단계 — 교차검증 + 통합
-
-**쓰기 전 필수:** 같은 대역을 SYN·connect로 각각 돌려 **열린 포트 목록이
-일치하는지** 확인. 불일치 = 재전송 횟수 상향. 이게 안 되면 진단에 못 쓴다.
-
-통합: `ScanArgs`에 `--syn-sweep` 플래그 추가. 기본은 현재 connect 스캔 유지.
-켜지면 SYN 스윕 먼저 → 열린 포트만 기존 `scan_tcp_one` 경로로. 결과는
-`PortEvent`(main.rs:201)로 emit — SYN에서 무응답은 `filtered`, RST는 `closed`,
-SYN-ACK는 `open`. 플래그로 두면 문제 시 끄면 되므로 되돌릴 것이 없다.
-
----
-
-## 5. 확정된 설계 결정
-
-- **5,000pps 상한** — 충분하고(15M/53분) 노후 장비에 안전. 이점은 무상태.
-- **쿠키 기반 무상태 매칭** — 1,600만 프로브 상태를 들 곳이 없고, 위조 방지도 됨.
-- **어댑터별 `LinkLayer`** — 대상 IP당 1회 해석·캐시.
-- **feature-gated** — 기본 빌드·배포는 pcap/windows-sys를 안 링크.
-- **IPv4 전용** (당분간).
-
----
-
-## 6. 배포 상태
-
-SYN 스윕 자체는 **미완성**(기반만, 동작하는 스윕 없음)이고 feature-gated라,
-지금까지 어떤 배포 빌드에도 들어간 적이 없다. 기본 빌드는 `netlink.rs`를
-컴파일조차 안 하므로, `syn-sweep`를 켜지 않는 한 패키징 빌드에 새는 일이
-없다 — 5단계 교차검증 통과 전까지 **절대 `--features syn-sweep`로 패키징하지
-말 것.**
-
-**릴리스 설치본은 웹 뷰포트 커밋 `d53a4ee`까지 반영됨** (sha256
-`a6752e3b9f92...`, 2026-09-10 빌드). SYN 커밋(`5bbafe7`, `588c885`)과 이 문서는
-`origin/main`에는 있으나 배포 빌드에는 없다 (feature-gated라 자동 제외).
-
-`origin/main`과 릴리스가 이렇게 갈리는 게 정상이다: 소스는 SYN 개발분을 담고,
-설치본은 기본 빌드라 SYN이 빠진다. 다음에 배포 가능한 수정이 쌓이면 기본
-빌드로 자산 교체하면 되고, 그때도 SYN은 자동으로 빠진다.
-
-예제 3개(`probe_pcap`, `loopback_roundtrip`, `resolve_route`)로 각 계층을
-언제든 재검증할 수 있다.
+이 기록은 패키지 생성·무결성 증적이다. Npcap이 없는 깨끗한 Windows VM에서
+실제 설치 UI, `AdminOnly=0`, 비관리자 SYN 스캔과 제거 동작은 아직
+`UNVERIFIED`이다.

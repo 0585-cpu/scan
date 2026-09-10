@@ -45,6 +45,13 @@ class DesktopTests(unittest.TestCase):
         self.assertNotIn(r'RMDir /r "$INSTDIR"', hooks)
         self.assertNotIn(r'RMDir /r "$INSTDIR\resources\bin"', hooks)
 
+    def test_npcap_installer_requests_elevation_from_current_user_installer(self):
+        root = Path(__file__).resolve().parents[1] / "desktop" / "src-tauri"
+        hooks = (root / "installer-hooks.nsh").read_text(encoding="utf-8")
+
+        self.assertIn(r'ExecShellWait "runas" "$PLUGINSDIR\npcap-installer.exe"', hooks)
+        self.assertNotIn(r'ExecWait \'"$PLUGINSDIR\npcap-installer.exe"\'', hooks)
+
     def test_build_desktop_url_normalizes_path(self):
         self.assertEqual(build_desktop_url("127.0.0.1", 8765), "http://127.0.0.1:8765/dashboard")
         self.assertEqual(build_desktop_url("localhost", 9000, "dashboard"), "http://localhost:9000/dashboard")
