@@ -191,6 +191,7 @@ class FakePage:
         self.goto_calls = 0
         self.screenshot_calls = 0
         self.timeouts: list[float] = []
+        self.evaluated: list[str] = []
 
     def set_default_timeout(self, timeout_ms):
         self.timeouts.append(float(timeout_ms))
@@ -201,7 +202,11 @@ class FakePage:
             raise RuntimeError("net::ERR_CONNECTION_REFUSED")
 
     def add_style_tag(self, **_kwargs):
-        pass
+        raise AssertionError("add_style_tag never returns on a page with no head")
+
+    def evaluate(self, script, *_args):
+        self.evaluated.append(script)
+        return True
 
     def screenshot(self, **_kwargs):
         self.screenshot_calls += 1
@@ -276,6 +281,31 @@ class ScreenshotRetryTests(unittest.TestCase):
                 store=lambda *args: stored.append(args),
             )
         return summary, stored
+
+    def test_a_page_with_no_head_cannot_stop_the_run(self):
+        """add_style_tag appends the element to document.head and waits for it
+        to load. An XML document - a feed, a SOAP endpoint, a config file
+        served as application/xml - has no head, so that wait never ends, and
+        it does not end on the timeout either: the call is outside every
+        deadline Playwright honours. One such port stopped a whole run, and the
+        cancel with it, because the stop is only read between ports."""
+        from netroach.evidence import capture_web_screenshots
+
+        page = FakePage(screenshot_failures=0)
+        with patch("playwright.sync_api.sync_playwright", return_value=FakePlaywright(page)):
+            summary = capture_web_screenshots(
+                [{"host": "127.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
+                  "service_name": "http"}],
+                store=lambda *args: None,
+                timeout_ms=2000,
+            )
+
+        # The style goes in through evaluate, which the page timeout bounds,
+        # and add_style_tag - which it does not - is never called.
+        self.assertEqual(summary.captured, 1)
+        self.assertEqual(len(page.evaluated), 1)
+        self.assertIn("document.head", page.evaluated[0])
+        self.assertIn("animation:none", page.evaluated[0])
 
     def test_one_port_cannot_spend_the_timeout_four_times_over(self):
         """Given to every call separately, a page that used the whole timeout

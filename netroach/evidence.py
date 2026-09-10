@@ -262,6 +262,29 @@ def _screenshot_with_one_retry(page: Any, remaining_ms: Callable[[], float] | No
         return bytes(page.screenshot(type="png", full_page=False))
 
 
+# Injected rather than added with add_style_tag, which appends the element to
+# document.head and waits for it to load. An XML document - a feed, a SOAP
+# endpoint, a config file served as application/xml - has no head, so that wait
+# never ends, and it does not end on the timeout either: the call is outside
+# every deadline Playwright honours. One such port stopped a whole run, and the
+# cancel with it, because the stop is only read between ports. Injecting it
+# ourselves is bounded by the page timeout like any other evaluate, and does
+# nothing at all where there is no head to attach to.
+_STILL_ANIMATIONS_JS = """() => {
+  if (!document.head) return false;
+  const style = document.createElement('style');
+  style.textContent =
+    '*,*::before,*::after{animation:none!important;transition:none!important}';
+  document.head.appendChild(style);
+  return true;
+}"""
+
+
+def _still_the_animations(page: Any) -> bool:
+    """Stop animations so the picture is the same one on a second look."""
+    return bool(page.evaluate(_STILL_ANIMATIONS_JS))
+
+
 def host_route_filter(allowed_host: str) -> Callable[[Any], None]:
     """Build the request filter that confines a capture to one host.
 
@@ -359,9 +382,7 @@ def capture_web_screenshots(
                         page = context.new_page()
                         page.goto(url, wait_until="domcontentloaded", timeout=min(timeout_ms, left_ms()) or 1)
                         page.set_default_timeout(left_ms() or 1)
-                        page.add_style_tag(
-                            content="*,*::before,*::after{animation:none!important;transition:none!important}"
-                        )
+                        _still_the_animations(page)
                         page.set_default_timeout(left_ms() or 1)
                         image = _screenshot_with_one_retry(page, left_ms)
                         filename_host = re.sub(r"[^A-Za-z0-9_.-]+", "_", host)
