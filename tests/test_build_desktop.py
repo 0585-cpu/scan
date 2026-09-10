@@ -57,18 +57,20 @@ class DesktopBuildToolTests(unittest.TestCase):
         )
 
     def test_syn_build_enables_feature_and_prepends_npcap_sdk_library(self):
+        sdk = Path(tempfile.gettempdir()).resolve() / "npcap-sdk" / "Lib" / "x64"
+        existing = str(Path(tempfile.gettempdir()).resolve() / "existing")
         args = argparse.Namespace(
             cargo="cargo",
             cargo_toolchain=None,
             cargo_target=None,
             engine_profile="release",
             syn_sweep=True,
-            npcap_sdk_lib=Path(r"C:\npcap-sdk\Lib\x64"),
+            npcap_sdk_lib=sdk,
         )
 
         self.assertEqual(cargo_build_command(args)[-2:], ["--features", "syn-sweep"])
-        environment = engine_build_environment(args, {"LIB": r"C:\existing"})
-        self.assertEqual(environment["LIB"], rf"C:\npcap-sdk\Lib\x64{os.pathsep}C:\existing")
+        environment = engine_build_environment(args, {"LIB": existing})
+        self.assertEqual(environment["LIB"], f"{sdk}{os.pathsep}{existing}")
 
     def test_personal_npcap_build_requires_paired_inputs_and_nsis(self):
         with tempfile.TemporaryDirectory() as tmp:
