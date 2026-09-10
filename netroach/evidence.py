@@ -320,6 +320,15 @@ def capture_web_screenshots(
                         on_examined(result)
                     url = web_result_url(result)
                     host = str(result["host"]).strip("[]").lower()
+                    began = time.monotonic()
+                    # Named before the attempt, not after it. Three calls here
+                    # are outside any timeout Playwright lets us set - opening
+                    # the context, closing it, and closing the browser - so a
+                    # port that wedges one of them stops the run inside a call
+                    # that never returns, where the cancel is never read. The
+                    # line written first is then the only record of which port
+                    # it was.
+                    logger.debug("evidence: web %s", url)
                     context = browser.new_context(
                         ignore_https_errors=True,
                         viewport={"width": SCREENSHOT_WIDTH, "height": SCREENSHOT_HEIGHT},
@@ -343,8 +352,10 @@ def capture_web_screenshots(
                         captured += 1
                     except Exception as exc:  # noqa: BLE001 - one failed web service must not stop other captures.
                         errors.append(f"{url}: {str(exc)[:240]}")
+                        logger.warning("evidence: web %s failed: %s", url, str(exc)[:160])
                     finally:
                         context.close()
+                        _log_if_slow(host, result.get("port"), began, timeout_ms)
             finally:
                 browser.close()
     except Exception as exc:  # noqa: BLE001 - missing browser binaries should not invalidate a port scan.
