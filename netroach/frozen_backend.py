@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import multiprocessing
 import os
 from collections.abc import Sequence
@@ -54,6 +55,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     import uvicorn
 
     from netroach.api import create_app
+
+    # uvicorn configures its own loggers and leaves the root alone, so without
+    # this the application's own records go nowhere: the window has no console
+    # and backend.log held nothing but the startup banner. Evidence capture is
+    # the part that runs for the better part of an hour with nothing else to
+    # show for itself, which is exactly when a log is the only way to tell a
+    # run that is working from one that has stopped.
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+    app_logger = logging.getLogger("netroach")
+    app_logger.setLevel(args.log_level.upper() if args.log_level != "trace" else "DEBUG")
+    app_logger.addHandler(handler)
+    app_logger.propagate = False
 
     uvicorn.run(
         create_app(

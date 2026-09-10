@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 import shutil
@@ -18,6 +19,11 @@ from .console_capture import capture_console_session
 
 MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
 DEFAULT_SCREENSHOT_TIMEOUT_MS = 8_000
+# One line per captured port would be a thousand lines of nothing; a port that
+# took several times the timeout it was given is the one worth naming, because
+# a handful of those is what a run that looks stopped is actually doing.
+SLOW_PORT_FACTOR = 3
+logger = logging.getLogger(__name__)
 DEFAULT_SCREENSHOT_MAX = 20
 # A scan of a busy range finds thousands of open ports. This was a hundred,
 # which was not a considered ceiling - and because it was checked here rather
@@ -539,6 +545,18 @@ def render_terminal_transcript(
     return output.getvalue()
 
 
+def _log_if_slow(host: str, port: object, began: float, timeout_ms: int) -> None:
+    """Name a port that held the run far longer than it was allowed to.
+
+    A run of a thousand ports has no room for a line each, and the ones worth
+    reading are the few that took minutes - which is what a run that looks
+    stopped is really made of.
+    """
+    spent = time.monotonic() - began
+    if spent > (timeout_ms / 1000) * SLOW_PORT_FACTOR:
+        logger.warning("evidence: %s:%s took %.1fs", host, port, spent)
+
+
 def capture_terminal_transcripts(
     results: Iterable[Mapping[str, Any]],
     *,
@@ -557,6 +575,7 @@ def capture_terminal_transcripts(
             break
         if on_examined is not None:
             on_examined(result)
+        began = time.monotonic()
         host = str(result.get("host") or "")
         # Ask whether the port still answers before photographing anything. A
         # scan re-run from a machine that cannot reach the targets would
@@ -565,6 +584,7 @@ def capture_terminal_transcripts(
         # replaces the capture taken where the port did answer.
         if not port_still_answers(result, timeout_ms=timeout_ms):
             errors.append(f"{host}:{result.get('port')}: 연결되지 않아 증적을 남기지 않았습니다")
+            logger.warning("evidence: %s:%s did not answer, skipped", host, result.get("port"))
             continue
         try:
             image = None
@@ -596,8 +616,10 @@ def capture_terminal_transcripts(
                 capture_agent,
             )
             captured += 1
+            _log_if_slow(host, result.get("port"), began, timeout_ms)
         except Exception as exc:  # noqa: BLE001 - one malformed result must not stop other transcripts.
             errors.append(f"{host}:{result.get('port')}: {str(exc)[:240]}")
+            logger.warning("evidence: %s:%s failed: %s", host, result.get("port"), exc)
     return ScreenshotCaptureSummary(
         candidates=len(candidates),
         captured=captured,

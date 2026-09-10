@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -67,6 +68,8 @@ from .version import __version__
 # A worker stamps the job it is running so recovery can tell a live peer from a
 # dead process. The interval is well under the staleness window, so a busy scan
 # is always inside it and the extra write is one small UPDATE per minute.
+logger = logging.getLogger(__name__)
+
 SCAN_HEARTBEAT_INTERVAL_S = 20.0
 SCAN_HEARTBEAT_STALE_S = 120.0
 # Asking the database whether a scan was cancelled costs a fresh connection,
@@ -663,6 +666,12 @@ def create_app(
         def finished() -> None:
             state["running"] = False
             state["finished_at"] = _now_iso()
+            logger.info(
+                "recapture %s %s: %s stored of %s examined, %s planned%s",
+                scan_id[:8], "cancelled" if state["cancelled"] else "finished",
+                state["captured"], state["examined"], state["total"],
+                f", error: {state['error']}" if state["error"] else "",
+            )
             _release_recapture(recapture_lock, recapture_running, scan_id)
 
         def captured_one() -> None:
@@ -698,6 +707,11 @@ def create_app(
             daemon=True,
         )
         thread.start()
+        logger.info(
+            "recapture %s started: %d open ports, limit %d, console=%s, timeout %dms",
+            scan_id[:8], pending, request.screenshot_max,
+            request.capture_console, request.screenshot_timeout_ms,
+        )
         return {"status": "started", "pending": pending, "limit": request.screenshot_max}
 
     @app.delete("/v1/scans/{scan_id}/evidence/recapture")

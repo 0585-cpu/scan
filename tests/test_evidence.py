@@ -1,4 +1,5 @@
 import io
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -372,6 +373,13 @@ class HostRouteFilterTests(unittest.TestCase):
             self.assertEqual(calls, ["continue"], url)
 
 
+def _slow_for_8080(host, port, **_kwargs):
+    """A capture that behaves, except on one port that takes far too long."""
+    if int(port) == 8080:
+        time.sleep(0.5)
+    return b"png-bytes"
+
+
 class ConsoleCaptureTests(unittest.TestCase):
     """A photograph of a console, with a drawing behind it when there is none."""
 
@@ -531,6 +539,51 @@ class ConsoleCaptureTests(unittest.TestCase):
         self.assertEqual(opened, [("10.0.0.1", 22)])
         self.assertEqual(summary.captured, 2)
         self.assertEqual(sorted(stored), ["tcp", "udp"])
+
+    def test_the_log_names_the_port_that_held_the_run(self):
+        """The window has no console and backend.log held nothing but the
+        startup banner, so a run that appeared to stop could only be guessed
+        at. A run of a thousand ports has no room for a line each - the ones
+        worth reading are the few that took minutes."""
+        import logging
+
+        from netroach import evidence as evidence_module
+
+        records: list[str] = []
+
+        class Collect(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        handler = Collect()
+        evidence_module.logger.addHandler(handler)
+        try:
+            with patch.object(
+                evidence_module, "port_still_answers",
+                lambda result, **_k: int(result["port"]) != 443,
+            ), patch.object(
+                evidence_module, "capture_console_session", _slow_for_8080
+            ), patch.object(
+                evidence_module, "render_terminal_transcript", lambda *_a, **_k: b"png"
+            ), patch.object(
+                evidence_module, "run_powershell_diagnostic", lambda *_a, **_k: None
+            ):
+                evidence_module.capture_terminal_transcripts(
+                    [
+                        {"host": "10.0.0.1", "port": port, "protocol": "tcp", "state": "open"}
+                        for port in (80, 443, 8080)
+                    ],
+                    store=lambda *_a: None,
+                    capture_console=True,
+                    timeout_ms=100,
+                )
+        finally:
+            evidence_module.logger.removeHandler(handler)
+
+        self.assertTrue(any("10.0.0.1:443 did not answer" in line for line in records), records)
+        self.assertTrue(any("10.0.0.1:8080 took" in line for line in records), records)
+        # The port that behaved is not worth a line.
+        self.assertFalse(any("10.0.0.1:80 " in line for line in records), records)
 
     def test_a_window_that_rendered_nothing_is_not_stored_as_a_capture(self):
         """PrintWindow reports success and hands back a blank bitmap where the
