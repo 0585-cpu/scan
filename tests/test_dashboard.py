@@ -731,19 +731,29 @@ class DashboardHostViewTests(unittest.TestCase):
         preset = html.split("id: 'builtin-udp'", 1)[1].split("}}", 1)[0]
         self.assertIn("udp_service_probe: false", preset)
 
-    def test_the_recapture_button_becomes_the_way_to_stop_it(self):
-        """A capture of a thousand ports runs for the better part of an hour.
-        Leaving the button disabled for the duration left no way to stop one
-        started on the wrong scan."""
+    def test_the_stop_is_its_own_button_not_the_start_one_relabelled(self):
+        """One control that swaps between two opposite actions meant a second
+        click where the first had been - the ordinary way to retry something
+        that looked stuck - cancelled the run instead of starting it."""
         html = dashboard_html()
 
-        self.assertIn("async function cancelRecapture(", html)
-        self.assertIn("method: 'DELETE'", html.split("async function cancelRecapture(", 1)[1])
-        # It stays live while a capture runs, and reads as a stop.
-        self.assertIn("'증적 재수집 중지' : '증적 재수집'", html)
-        self.assertIn("recapturing ? false : (!job || active)", html)
-        # And it knows which scan to stop even after the operator moved on.
-        self.assertIn("state.recapturingScanId", html.split("async function cancelRecapture(", 1)[1])
+        self.assertIn('id="scanStopRecapture"', html)
+        self.assertIn("$('scanRecaptureEvidence').addEventListener('click', recaptureEvidence)", html)
+        self.assertIn("$('scanStopRecapture').addEventListener('click', cancelRecapture)", html)
+        # The start button never becomes a stop.
+        self.assertNotIn("'증적 재수집 중지' : '증적 재수집'", html)
+        # It is hidden until a capture is running, and the start is out while it is.
+        self.assertIn("$('scanStopRecapture').hidden = !recapturing;", html)
+        self.assertIn("$('scanRecaptureEvidence').disabled = recapturing || !job || active;", html)
+
+    def test_stopping_a_run_that_already_finished_is_not_an_error(self):
+        """A capture can finish between the last poll and the click, and the
+        raw API message said nothing an operator could use."""
+        html = dashboard_html()
+
+        body = html.split("async function cancelRecapture(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("이미 끝난 재수집입니다.", body)
+        self.assertNotIn("error.message", body)
 
 
 if __name__ == "__main__":

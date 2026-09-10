@@ -1055,6 +1055,7 @@
                   <div class="form-actions-secondary">
                     <span class="toolbar-label">선택한 스캔으로</span>
                     <button type="button" id="scanRecaptureEvidence" disabled title="스캔하지 않고 열린 포트의 증적을 위 설정으로 다시 수집합니다. 기존 증적은 교체되고, 직접 첨부한 파일은 유지됩니다">증적 재수집</button>
+                    <button type="button" id="scanStopRecapture" class="danger" hidden title="진행 중인 포트까지 마치고 멈춥니다">재수집 중지</button>
                     <button type="button" id="scanRescanOpen" disabled title="이 스캔이 찾은 열린 포트를 위 대상·포트 칸에 채웁니다">열린 포트 재스캔</button>
                     <span class="status" id="scanSecondaryStatus" role="status"></span>
                   </div>
@@ -2510,7 +2511,11 @@ ${health.db}` : '데이터베이스 없음';
         setStatus('scanSecondaryStatus',
           `중지 요청됨 · 진행 중인 포트까지 마치고 멈춥니다 (${Number(payload.captured || 0).toLocaleString()}건 수집).`);
       } catch (error) {
-        setStatus('scanSecondaryStatus', error.message, true);
+        // The run can finish between the last poll and the click. That is not
+        // a failure, and the raw message said nothing an operator could use.
+        state.recapturingScanId = null;
+        updateScanActionState();
+        setStatus('scanSecondaryStatus', '이미 끝난 재수집입니다.');
       }
     }
 
@@ -2641,10 +2646,13 @@ ${health.db}` : '데이터베이스 없음';
       $('scanDelete').disabled = !job || active;
       // Both work off results a finished scan left behind, so neither makes
       // sense while it is still producing them.
+      // The stop is its own button rather than the start button relabelled.
+      // Swapping one control between two opposite actions meant a second click
+      // where the first had been - the ordinary way to retry - cancelled the
+      // run instead of starting it.
       const recapturing = Boolean(state.recapturingScanId);
-      $('scanRecaptureEvidence').textContent = recapturing ? '증적 재수집 중지' : '증적 재수집';
-      $('scanRecaptureEvidence').classList.toggle('danger', recapturing);
-      $('scanRecaptureEvidence').disabled = recapturing ? false : (!job || active);
+      $('scanStopRecapture').hidden = !recapturing;
+      $('scanRecaptureEvidence').disabled = recapturing || !job || active;
       $('scanRescanOpen').disabled = !job || active;
       $('scanResultSearch').disabled = !job;
       $('scanResultPageSize').disabled = !job;
@@ -3691,10 +3699,8 @@ ${health.db}` : '데이터베이스 없음';
     $('pluginsRefresh').addEventListener('click', refreshPlugins);
     $('diagnosticsRefresh').addEventListener('click', refreshHealth);
     $('mergeDbRun').addEventListener('click', mergeDatabase);
-    $('scanRecaptureEvidence').addEventListener('click', () => {
-      if (state.recapturingScanId) cancelRecapture();
-      else recaptureEvidence();
-    });
+    $('scanRecaptureEvidence').addEventListener('click', recaptureEvidence);
+    $('scanStopRecapture').addEventListener('click', cancelRecapture);
     $('scanRescanOpen').addEventListener('click', fillFormWithOpenTargets);
     $('packetTemplate').addEventListener('change', updatePacketFields);
     $('scanPorts').addEventListener('input', () => {
