@@ -37,9 +37,24 @@ cargo build --manifest-path crates\netroach-engine\Cargo.toml --features syn-swe
 cargo test  --manifest-path crates\netroach-engine\Cargo.toml --features syn-sweep syn_sweep
 ```
 
-`pcap`, `windows-sys`는 **`syn-sweep` 기능 뒤 optional**이다. 기능 없는 기본
-빌드는 둘 다 링크하지 않고 SDK도 필요 없다 — `cargo build`(플래그 없이)로 확인.
+`pcap`, `windows-sys`는 **`syn-sweep` 기능 뒤 optional**이다
+(`Cargo.toml`: `syn-sweep = ["dep:pcap", "dep:windows-sys"]`,
+`windows-sys` features는 `Win32_NetworkManagement_IpHelper`, `_Ndis`,
+`Win32_Networking_WinSock`, `Win32_Foundation`). 기능 없는 기본 빌드는 둘 다
+링크하지 않고 SDK도 필요 없다 — `cargo build`(플래그 없이)로 확인.
 **패키징 데스크톱 빌드에는 절대 `syn-sweep`를 켜지 말 것.**
+
+**어느 파일이 언제 컴파일되는가** (혼동 주의):
+- `syn_sweep.rs` (순수 로직)는 **기능과 무관하게 항상 컴파일**된다. 의존성이
+  없어 무해하고, 기본 빌드에서는 아무도 안 써서 최적화로 제거된다
+  (`#![allow(dead_code)]`).
+- `netlink.rs`는 `#![cfg(all(windows, feature = "syn-sweep"))]`이라 **기능을
+  켤 때만** 컴파일된다 (windows-sys를 쓰므로).
+- 예제 3개는 `Cargo.toml`에서 `required-features = ["syn-sweep"]`로 묶여 있어
+  기본 `cargo test`가 건드리지 않는다. **새 예제가 pcap을 쓰면 여기에도 추가**할 것.
+
+빌드 스크립트는 없다 (`build.rs` 없음). pcap의 링크는 위 `LIB` 환경변수 하나로
+해결된다.
 
 **raw 캡처 실행은 관리자 권한 필요.** UAC + 출력 캡처를 함께 쓰려면 cmd 래퍼로:
 ```powershell
@@ -107,6 +122,17 @@ cargo run --features syn-sweep --example resolve_route -- 8.8.8.8 <게이트웨�
 (자기 자신 IP는 loopback 라우팅이라 next-hop MAC이 `00:..:00`으로 나온다.
 self-target은 스캔 대상이 아니므로 통합 시 감지해 제외하거나 connect로 처리.)
 
+### 재검증용 예제 3개 (`--features syn-sweep`, 셋 다 관리자 권한)
+
+각 계층을 독립적으로 다시 확인하는 최소 프로그램. 새 개발 PC에서 환경이
+맞는지 위→아래 순으로 돌려 보면 어디서 어긋나는지 바로 잡힌다.
+
+| 예제 | 무엇을 증명 | 실패 시 의미 |
+|------|-------------|--------------|
+| `probe_pcap` | Npcap 드라이버·SDK·pcap 크레이트가 물려 있고 루프백 어댑터가 열린다 | LIB 경로 또는 Npcap 설치 문제 (송신 이전) |
+| `resolve_route` | IP Helper 라우트 해석 (권한 불필요) | 라우팅 테이블 해석 로직 |
+| `loopback_roundtrip` | 프레임이 실제 전송·수신되고 파서가 open/closed를 가른다 | 프레이밍 또는 파서 |
+
 ---
 
 ## 4. 남은 작업
@@ -121,6 +147,8 @@ self-target은 스캔 대상이 아니므로 통합 시 감지해 제외하거�
   (`name.contains(&guid_string)`).
 - 둘 다 `windows-sys` IpHelper에 있음. GUID 포맷은 `StringFromGUID2` 또는
   직접 `{:08X}-{:04X}-...` 조립.
+- **현재 features로 이미 컴파일 가능** (`Win32_NetworkManagement_IpHelper`에
+  포함) — Cargo.toml을 건드릴 필요 없이 바로 쓰면 된다. 확인됨.
 
 **송신:** 대상 목록을 `(host, port)`로 펼치고(순서는 호스트를 가로질러
 인터리빙하는 게 방화벽 호스트당 제한을 피함 — main.rs의 현재 순서는 호스트
@@ -142,6 +170,13 @@ self-target은 스캔 대상이 아니므로 통합 시 감지해 제외하거�
 **어댑터 datalink → LinkLayer:** 캡처 핸들의 `get_datalink()`으로 판정
 (loopback=DLT_NULL=`Linktype(0)`, 유선=DLT_EN10MB=`Linktype(1)`). 유선이면
 `resolve_route`가 준 MAC으로 Ethernet, 아니면 Null.
+
+**실 인터페이스에서 처음 보게 될 것 (루프백에선 안 보임):** 우리 호스트 커널은
+자기가 연 적 없는 source_port로 도착한 SYN-ACK를 보고 **스스로 RST를 쏜다**
+(반쯤 열린 연결 정리). 이건 정상이고 우리 분류에 영향 없다 — pcap이 SYN-ACK를
+커널의 RST와 무관하게 먼저 읽기 때문. 대상 입장에서 잔여 RST를 하나 받지만
+half-open이라 무해하다. 커널이 우리 SYN-ACK를 삼켜 캡처가 못 받는 것처럼
+보이면 이 순서를 의심할 것 — 이 때문에 시간 버리기 쉬움.
 
 ### 4단계 — 재전송
 
@@ -171,12 +206,21 @@ SYN-ACK는 `open`. 플래그로 두면 문제 시 끄면 되므로 되돌릴 것
 
 ---
 
-## 6. 아직 배포 금지
+## 6. 배포 상태
 
-미배포 커밋(라우트·패킷 층·뷰포트 `d53a4ee`·이 문서)은 `main`에 있으나
-릴리스에 없다. SYN 스윕은 **미완성**(기반만, 동작하는 스윕 없음)이라 5단계
-교차검증 통과 전까지 패키징 빌드에 넣으면 안 된다. 앞선 증적 수정들은 배포
-가능하지만 SYN 스윕은 아니다.
+SYN 스윕 자체는 **미완성**(기반만, 동작하는 스윕 없음)이고 feature-gated라,
+지금까지 어떤 배포 빌드에도 들어간 적이 없다. 기본 빌드는 `netlink.rs`를
+컴파일조차 안 하므로, `syn-sweep`를 켜지 않는 한 패키징 빌드에 새는 일이
+없다 — 5단계 교차검증 통과 전까지 **절대 `--features syn-sweep`로 패키징하지
+말 것.**
 
-**배포된 설치본은 `e2adaf2` 기준.** 예제 3개(`probe_pcap`, `loopback_roundtrip`,
-`resolve_route`)로 각 계층을 언제든 재검증할 수 있다.
+**릴리스 설치본은 웹 뷰포트 커밋 `d53a4ee`까지 반영됨** (sha256
+`a6752e3b9f92...`, 2026-09-10 빌드). SYN 커밋(`5bbafe7`, `588c885`)과 이 문서는
+`origin/main`에는 있으나 배포 빌드에는 없다 (feature-gated라 자동 제외).
+
+`origin/main`과 릴리스가 이렇게 갈리는 게 정상이다: 소스는 SYN 개발분을 담고,
+설치본은 기본 빌드라 SYN이 빠진다. 다음에 배포 가능한 수정이 쌓이면 기본
+빌드로 자산 교체하면 되고, 그때도 SYN은 자동으로 빠진다.
+
+예제 3개(`probe_pcap`, `loopback_roundtrip`, `resolve_route`)로 각 계층을
+언제든 재검증할 수 있다.
