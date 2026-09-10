@@ -326,6 +326,33 @@ class ScreenshotRetryTests(unittest.TestCase):
         self.assertNotIn(0.0, page.timeouts)
         self.assertTrue(all(value > 0 for value in page.timeouts), page.timeouts)
 
+    def test_the_browser_viewport_is_the_width_of_the_report_cell(self):
+        """Both kinds of evidence land in the same cell of the assessment
+        workbook and are scaled to fit it. A console capture is that cell's
+        width and arrives at full size; an 800 by 600 page came in at 0.43 and
+        filled a third of the width, so one report showed the page's text at
+        less than half the size of the console's. The viewport is that width
+        now. It is still taller than the cell, so it is scaled down to fit -
+        the height is what a page needs to be worth reading, and the cell is
+        the shape the report asks for."""
+        from netroach.evidence import WEB_SCREENSHOT_HEIGHT, WEB_SCREENSHOT_WIDTH
+        from netroach.exporters import _REPORT_EVIDENCE_BOX
+
+        self.assertEqual(WEB_SCREENSHOT_WIDTH, _REPORT_EVIDENCE_BOX[0])
+        self.assertGreater(WEB_SCREENSHOT_HEIGHT, _REPORT_EVIDENCE_BOX[1])
+
+        # What that comes to in the cell: better than half its width, where
+        # the old size managed under a third.
+        scale = min(_REPORT_EVIDENCE_BOX[0] / WEB_SCREENSHOT_WIDTH,
+                    _REPORT_EVIDENCE_BOX[1] / WEB_SCREENSHOT_HEIGHT)
+        self.assertGreater(WEB_SCREENSHOT_WIDTH * scale, _REPORT_EVIDENCE_BOX[0] / 2)
+
+        # The transcript renderer draws its own canvas and is not this.
+        self.assertNotEqual(
+            (WEB_SCREENSHOT_WIDTH, WEB_SCREENSHOT_HEIGHT),
+            (SCREENSHOT_WIDTH, SCREENSHOT_HEIGHT),
+        )
+
     def test_a_page_with_no_head_cannot_stop_the_run(self):
         """add_style_tag appends the element to document.head and waits for it
         to load. An XML document - a feed, a SOAP endpoint, a config file

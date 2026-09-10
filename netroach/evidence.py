@@ -38,6 +38,15 @@ DEFAULT_SCREENSHOT_MAX = 20
 MAX_SCREENSHOT_LIMIT = 10_000
 SCREENSHOT_WIDTH = 800
 SCREENSHOT_HEIGHT = 600
+# The browser viewport, which is not the transcript renderer's canvas above.
+# Both kinds of evidence land in the same cell of the assessment workbook -
+# 1150 by 260 - and a picture is scaled to fit it. A console capture is 1150
+# wide and arrives at full size; a 800 by 600 page came in at 0.43, filling a
+# third of the cell's width, so the same report showed the page's text at less
+# than half the size of the console's. This width fills the cell, and the
+# height leaves the page enough room to be worth looking at.
+WEB_SCREENSHOT_WIDTH = 1150
+WEB_SCREENSHOT_HEIGHT = 430
 
 _IMAGE_EXTENSIONS = {
     "image/png": ".png",
@@ -342,7 +351,7 @@ def capture_web_screenshots(
             browser = playwright.chromium.launch(headless=True)
             # Recorded with every screenshot: a pinned browser only buys
             # reproducible evidence if the evidence says which one rendered it.
-            capture_agent = f"chromium {browser.version} {SCREENSHOT_WIDTH}x{SCREENSHOT_HEIGHT}"
+            capture_agent = f"chromium {browser.version} {WEB_SCREENSHOT_WIDTH}x{WEB_SCREENSHOT_HEIGHT}"
             try:
                 for result in candidates:
                     if should_stop and should_stop():
@@ -362,7 +371,7 @@ def capture_web_screenshots(
                     logger.debug("evidence: web %s", url)
                     context = browser.new_context(
                         ignore_https_errors=True,
-                        viewport={"width": SCREENSHOT_WIDTH, "height": SCREENSHOT_HEIGHT},
+                        viewport={"width": WEB_SCREENSHOT_WIDTH, "height": WEB_SCREENSHOT_HEIGHT},
                         # What this pass is for is a picture of the page. A
                         # navigation that turns into a download already fails
                         # here, but a page can start one after it has loaded,
