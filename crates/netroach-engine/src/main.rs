@@ -1,4 +1,6 @@
 mod syn_sweep;
+#[cfg(all(windows, feature = "syn-sweep"))]
+mod netlink;
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use futures::stream::{self, StreamExt};

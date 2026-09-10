@@ -18,10 +18,16 @@ tokio = { version = "1.39", features = ["full"] }
 tokio-native-tls = "0.3"
 x509-parser = "0.16"
 pcap = { version = "2", optional = true }
+windows-sys = { version = "0.61", optional = true, features = [
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_Foundation",
+] }
 
 [features]
 default = []
-syn-sweep = ["dep:pcap"]
+syn-sweep = ["dep:pcap", "dep:windows-sys"]
 
 # These drive Npcap directly, so they only build when the sweep feature
 # pulls the pcap crate in - the default build and its tests never touch them.
@@ -31,4 +37,8 @@ required-features = ["syn-sweep"]
 
 [[example]]
 name = "loopback_roundtrip"
+required-features = ["syn-sweep"]
+
+[[example]]
+name = "resolve_route"
 required-features = ["syn-sweep"]

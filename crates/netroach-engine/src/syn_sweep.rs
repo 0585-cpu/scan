@@ -13,6 +13,7 @@
 //! returns that number - which is also what stops a packet we did not send
 //! becoming a finding. Everything here is a pure function of bytes, so all of
 //! it is tested without a driver, an interface, or a network.
+#![allow(dead_code)] // parts are used by the loopback example and the send loop to come
 use std::net::Ipv4Addr;
 
 pub const ETHERTYPE_IPV4: u16 = 0x0800;

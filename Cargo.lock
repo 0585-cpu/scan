@@ -523,6 +523,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-native-tls",
+ "windows-sys 0.61.2",
  "x509-parser",
 ]
 
