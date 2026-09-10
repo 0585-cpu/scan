@@ -1,3 +1,4 @@
+mod syn_sweep;
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use futures::stream::{self, StreamExt};

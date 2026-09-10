@@ -17,3 +17,18 @@ serde_json = "1.0"
 tokio = { version = "1.39", features = ["full"] }
 tokio-native-tls = "0.3"
 x509-parser = "0.16"
+pcap = { version = "2", optional = true }
+
+[features]
+default = []
+syn-sweep = ["dep:pcap"]
+
+# These drive Npcap directly, so they only build when the sweep feature
+# pulls the pcap crate in - the default build and its tests never touch them.
+[[example]]
+name = "probe_pcap"
+required-features = ["syn-sweep"]
+
+[[example]]
+name = "loopback_roundtrip"
+required-features = ["syn-sweep"]
