@@ -183,8 +183,9 @@ def _windows_process_memory_bytes() -> tuple[int | None, int | None]:
     counters = ProcessMemoryCounters()
     counters.cb = ctypes.sizeof(counters)
     try:
-        kernel32 = ctypes.windll.kernel32
-        psapi = ctypes.windll.psapi
+        windll = getattr(ctypes, "windll")  # noqa: B009 - platform-specific export.
+        kernel32 = windll.kernel32
+        psapi = windll.psapi
         kernel32.GetCurrentProcess.restype = ctypes.c_void_p
         psapi.GetProcessMemoryInfo.argtypes = [
             ctypes.c_void_p,

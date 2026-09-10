@@ -23,6 +23,7 @@ netroach = "netroach.cli:main"
 [project.optional-dependencies]
 dev = [
     "httpx2>=2.5.0",
+    "playwright>=1.52.0",
     "mypy>=1.11",
     "ruff>=0.6",
 ]

@@ -753,6 +753,8 @@ class ConsoleCaptureTests(unittest.TestCase):
 
         self.assertTrue(has_content(buffer.getvalue()))
 
+    # FakeUser32 calls a Python callback; it does not use the Windows stdcall ABI.
+    @patch("ctypes.WINFUNCTYPE", lambda *_types: lambda callback: callback, create=True)
     def test_a_telnet_window_that_was_already_open_is_not_photographed(self):
         """The operator's own session is not evidence of anything this scan
         did, and a prefix match makes 10.0.0.4 answer for 10.0.0.40."""

@@ -452,9 +452,9 @@ Example health response includes diagnostics:
   "status": "ok",
   "db": "C:\\Users\\you\\AppData\\Roaming\\Netroach\\netroach.db",
   "diagnostics": {
-    "app_version": "0.2.0",
+    "app_version": "0.2.1",
     "rust_engine_available": true,
-    "rust_engine_version": "netroach-engine 0.2.0",
+    "rust_engine_version": "netroach-engine 0.2.1",
     "scapy_available": true,
     "packet_driver": "Npcap",
     "packet_driver_available": true,

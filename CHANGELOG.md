@@ -2,6 +2,12 @@
 
 All notable Netroach changes are tracked here.
 
+## 0.2.1 - 2026-09-11
+
+- Fixed Linux/macOS type checking of the Windows-only ctypes DLL and callback exports without changing Windows calls or calling conventions. DLL handle annotations now use the portable CDLL base type.
+- Made the fake window-enumeration test independent of the Windows callback ABI and included the Playwright test dependency in the development extra so clean CI environments can run evidence tests.
+- Retained the SYN, service/evidence, and dashboard changes from 0.2.0 in the personal-use Npcap-inclusive Windows installer.
+
 ## 0.2.0 - 2026-09-11
 
 - Added the optional Windows IPv4 TCP SYN scan runner, bounded retries and rate, adapter-specific route/capture handling, and CLI/API configuration. Loopback targets use TCP connect; SYN scanning rejects UDP and IPv6.

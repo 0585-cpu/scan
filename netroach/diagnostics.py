@@ -162,7 +162,8 @@ def is_windows_elevated() -> bool | None:
     try:
         import ctypes
 
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        windll = getattr(ctypes, "windll")  # noqa: B009 - platform-specific export.
+        return bool(windll.shell32.IsUserAnAdmin())
     except Exception:  # noqa: BLE001 - diagnostics should never fail startup.
         return None
 

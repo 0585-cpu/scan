@@ -110,10 +110,13 @@ def build_connection_script(
     )
 
 
-def _find_windows_by_title(user32: ctypes.WinDLL, needle: str) -> list[tuple[int, str]]:
+def _find_windows_by_title(user32: ctypes.CDLL, needle: str) -> list[tuple[int, str]]:
     matches: list[tuple[int, str]] = []
 
-    @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+    # This helper runs only on Windows; the export is absent from POSIX stubs.
+    winfunctype = getattr(ctypes, "WINFUNCTYPE")  # noqa: B009 - platform-specific export.
+
+    @winfunctype(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
     def visit(hwnd: int, _lparam: int) -> bool:
         buffer = ctypes.create_unicode_buffer(512)
         user32.GetWindowTextW(hwnd, buffer, 512)
@@ -126,7 +129,7 @@ def _find_windows_by_title(user32: ctypes.WinDLL, needle: str) -> list[tuple[int
 
 
 def _find_window_by_title(
-    user32: ctypes.WinDLL,
+    user32: ctypes.CDLL,
     needle: str,
     *,
     exclude: Container[int] = (),
@@ -159,8 +162,9 @@ def _capture_window_png(hwnd: int) -> bytes | None:
     except ImportError:
         return None
 
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
+    windll = getattr(ctypes, "windll")  # noqa: B009 - platform-specific export.
+    user32 = windll.user32
+    gdi32 = windll.gdi32
     rect = wintypes.RECT()
     if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
         return None
@@ -378,7 +382,7 @@ def _telnet_pane_size(console_pane: bytes) -> tuple[int, int] | None:
 
 
 def _capture_telnet_window(
-    user32: ctypes.WinDLL, host: str, port: int, *, size: tuple[int, int] | None = None
+    user32: ctypes.CDLL, host: str, port: int, *, size: tuple[int, int] | None = None
 ) -> bytes | None:
     """Open a telnet client on the port and photograph its window.
 
@@ -460,7 +464,7 @@ def capture_console_session(
     """
     if not console_capture_supported():
         return None
-    user32 = ctypes.windll.user32
+    user32 = getattr(ctypes, "windll").user32  # noqa: B009 - guarded Windows-only export.
     # The title is how the window is found, so it has to name this capture and
     # not merely this port: two scans of the same range hold the same host and
     # port, and a title they share would let one run photograph the other's
