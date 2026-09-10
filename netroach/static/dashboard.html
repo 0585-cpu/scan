@@ -2544,8 +2544,15 @@ ${health.db}` : '데이터베이스 없음';
             return;
           }
           if (progress.running) {
+            // A port that yields no picture still takes its time, so the
+            // stored count can stand still for minutes on a range with many
+            // of them. Saying which port it is on is the difference between
+            // a run that is working and one that has stopped.
+            const examined = Number(progress.examined || 0);
+            const where = progress.current ? ` · ${progress.current}` : '';
+            const seen = examined > done ? ` (검사 ${examined.toLocaleString()})` : '';
             setStatus('scanSecondaryStatus',
-              `증적 재수집 중…${whose} ${done.toLocaleString()} / ${total.toLocaleString()}`);
+              `증적 재수집 중…${whose} ${done.toLocaleString()} / ${total.toLocaleString()}${seen}${where}`);
             state.recaptureWatch = setTimeout(tick, RECAPTURE_POLL_MS);
             return;
           }

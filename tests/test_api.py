@@ -1218,7 +1218,7 @@ rate_limit_per_sec = 13
                 summary.observe(result)
                 return [result], summary
 
-            def fake_capture(results, *, store, timeout_ms, maximum, should_stop, capture_console):
+            def fake_capture(results, *, store, timeout_ms, maximum, should_stop, capture_console, on_examined=None):
                 result = list(results)[0]
                 self.assertFalse(should_stop())
                 # Photographing a real console needs a desktop, so it is opt-in.
@@ -1744,7 +1744,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
             started = threading.Event()
             seen: list[bool] = []
 
-            def paced(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
+            def paced(results, *, store, timeout_ms, maximum, capture_console, should_stop=None, on_examined=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 captured = 0
@@ -1822,7 +1822,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
             client, repo, scan_id = self._client_with_open_results(tmp)
             captured = []
 
-            def fake_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
+            def fake_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None, on_examined=None):
                 for result in list(results):
                     captured.append((result["host"], result["port"]))
                     store(result, PNG_HEADER, "shot.png", None, "web_screenshot", "test")
@@ -1854,7 +1854,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
             started = threading.Event()
             release = threading.Event()
 
-            def blocking_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
+            def blocking_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None, on_examined=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 started.set()
@@ -1915,7 +1915,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
             first_stored = threading.Event()
             release = threading.Event()
 
-            def paced_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
+            def paced_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None, on_examined=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 rows = list(results)
@@ -1982,7 +1982,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
             started = threading.Event()
             release = threading.Event()
 
-            def blocking(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
+            def blocking(results, *, store, timeout_ms, maximum, capture_console, should_stop=None, on_examined=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 started.set()
@@ -2014,7 +2014,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
                 )
             captured = []
 
-            def fake_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
+            def fake_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None, on_examined=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 for result in list(results):
@@ -2044,7 +2044,7 @@ class RescanAndRecaptureTests(unittest.TestCase):
                 file_name="by-hand.png", evidence_type="manual",
             )
 
-            def fake_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None):
+            def fake_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None, on_examined=None):
                 from netroach.evidence import ScreenshotCaptureSummary
 
                 for result in list(results):

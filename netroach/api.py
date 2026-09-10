@@ -651,6 +651,12 @@ def create_app(
             "finished_at": None,
             "error": None,
             "cancelled": False,
+            # Stored pictures alone cannot tell a run that is working through
+            # ports which yield nothing from one that has stopped. These say
+            # which port it is on and when it last moved.
+            "examined": 0,
+            "current": None,
+            "updated_at": _now_iso(),
         }
         recapture_progress[scan_id] = state
 
@@ -661,6 +667,12 @@ def create_app(
 
         def captured_one() -> None:
             state["captured"] = int(state["captured"]) + 1  # type: ignore[call-overload]
+            state["updated_at"] = _now_iso()
+
+        def examining(result: Mapping[str, Any]) -> None:
+            state["examined"] = int(state["examined"]) + 1  # type: ignore[call-overload]
+            state["current"] = f"{result.get('host')}:{result.get('port')}"
+            state["updated_at"] = _now_iso()
 
         def failed(reason: str) -> None:
             state["error"] = reason
@@ -675,6 +687,7 @@ def create_app(
                 "on_finished": finished,
                 "on_captured": captured_one,
                 "on_error": failed,
+                "on_examined": examining,
                 # Console capture takes a second or two a port, so a thousand
                 # of them runs for the better part of an hour - and holds the
                 # one recapture slot the whole time. Started on the wrong scan,
@@ -1005,6 +1018,7 @@ def _run_evidence_recapture(
     on_captured: Callable[[], None] | None = None,
     on_error: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    on_examined: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> None:
     """Collect evidence for results a finished scan already recorded.
 
@@ -1023,6 +1037,7 @@ def _run_evidence_recapture(
             capture_console=capture_console,
             on_captured=on_captured,
             should_stop=should_stop,
+            on_examined=on_examined,
         )
     except Exception as exc:  # noqa: BLE001 - a thread's traceback goes nowhere.
         # This runs on its own thread, so an exception here used to vanish: the
@@ -1061,6 +1076,7 @@ def _capture_stored_evidence(
     capture_console: bool,
     on_captured: Callable[[], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    on_examined: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> None:
     # A recapture redoes the scan's evidence rather than filling its gaps: the
     # reason to run one is that what is there was taken with the wrong
@@ -1119,8 +1135,7 @@ def _capture_stored_evidence(
         maximum=screenshot_max,
         capture_console=capture_console,
         should_stop=should_stop,
-        # A port that could not be reached is still one the run got through.
-        on_settled=on_captured,
+        on_examined=on_examined,
     )
     repo.record_evidence_capture_failures(
         scan_id,

@@ -276,6 +276,7 @@ def capture_web_screenshots(
     timeout_ms: int = DEFAULT_SCREENSHOT_TIMEOUT_MS,
     maximum: int = DEFAULT_SCREENSHOT_MAX,
     should_stop: Callable[[], bool] | None = None,
+    on_examined: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> ScreenshotCaptureSummary:
     if timeout_ms < 1_000 or timeout_ms > 30_000:
         raise ValueError("screenshot timeout must be between 1000 and 30000 milliseconds")
@@ -309,12 +310,20 @@ def capture_web_screenshots(
                 for result in candidates:
                     if should_stop and should_stop():
                         break
+                    if on_examined is not None:
+                        on_examined(result)
                     url = web_result_url(result)
                     host = str(result["host"]).strip("[]").lower()
                     context = browser.new_context(
                         ignore_https_errors=True,
                         viewport={"width": SCREENSHOT_WIDTH, "height": SCREENSHOT_HEIGHT},
                     )
+                    # Only the navigation carried a timeout; the style tag and
+                    # the screenshot fell back to Playwright's own 30 seconds,
+                    # and the screenshot is retried once - so a single port
+                    # that answered TCP and then wedged the renderer could hold
+                    # the run for a minute and a half on its own.
+                    context.set_default_timeout(timeout_ms)
                     try:
                         context.route("**/*", host_route_filter(host))
                         page = context.new_page()
@@ -538,7 +547,7 @@ def capture_terminal_transcripts(
     maximum: int = DEFAULT_SCREENSHOT_MAX,
     should_stop: Callable[[], bool] | None = None,
     capture_console: bool = False,
-    on_settled: Callable[[], None] | None = None,
+    on_examined: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> ScreenshotCaptureSummary:
     candidates = automatic_evidence_candidates(results, maximum=maximum)
     captured = 0
@@ -546,6 +555,8 @@ def capture_terminal_transcripts(
     for result in candidates:
         if should_stop and should_stop():
             break
+        if on_examined is not None:
+            on_examined(result)
         host = str(result.get("host") or "")
         # Ask whether the port still answers before photographing anything. A
         # scan re-run from a machine that cannot reach the targets would
@@ -554,11 +565,6 @@ def capture_terminal_transcripts(
         # replaces the capture taken where the port did answer.
         if not port_still_answers(result, timeout_ms=timeout_ms):
             errors.append(f"{host}:{result.get('port')}: 연결되지 않아 증적을 남기지 않았습니다")
-            # A skipped port is still a port the run got through. Counting only
-            # the stored pictures left a run over unreachable targets showing a
-            # number that never moved, which reads as a run that has hung.
-            if on_settled is not None:
-                on_settled()
             continue
         try:
             image = None
@@ -609,7 +615,7 @@ def capture_automatic_evidence(
     maximum: int = DEFAULT_SCREENSHOT_MAX,
     should_stop: Callable[[], bool] | None = None,
     capture_console: bool = False,
-    on_settled: Callable[[], None] | None = None,
+    on_examined: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> ScreenshotCaptureSummary:
     candidates = automatic_evidence_candidates(results, maximum=maximum)
     if not candidates:
@@ -634,6 +640,7 @@ def capture_automatic_evidence(
         timeout_ms=timeout_ms,
         maximum=maximum,
         should_stop=should_stop,
+        on_examined=on_examined,
     )
     # A port that gave up a page screenshot is finished. That picture shows the
     # service answering, which is what a console capture would be there to
@@ -659,7 +666,7 @@ def capture_automatic_evidence(
             maximum=len(remaining),
             should_stop=should_stop,
             capture_console=capture_console,
-            on_settled=on_settled,
+            on_examined=on_examined,
         )
     else:
         terminal_summary = ScreenshotCaptureSummary(candidates=0, captured=0, failed=0)

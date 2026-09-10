@@ -208,9 +208,13 @@ class FakePage:
 class FakeContext:
     def __init__(self, page):
         self._page = page
+        self.default_timeout_ms = None
 
     def route(self, *_args, **_kwargs):
         pass
+
+    def set_default_timeout(self, timeout_ms):
+        self.default_timeout_ms = timeout_ms
 
     def new_page(self):
         return self._page
@@ -224,9 +228,11 @@ class FakeBrowser:
 
     def __init__(self, page):
         self._page = page
+        self.last_context = None
 
     def new_context(self, **_kwargs):
-        return FakeContext(self._page)
+        self.last_context = FakeContext(self._page)
+        return self.last_context
 
     def close(self):
         pass
@@ -234,7 +240,8 @@ class FakeBrowser:
 
 class FakePlaywright:
     def __init__(self, page):
-        self.chromium = SimpleNamespace(launch=lambda **_kwargs: FakeBrowser(page))
+        self.browser = FakeBrowser(page)
+        self.chromium = SimpleNamespace(launch=lambda **_kwargs: self.browser)
 
     def __enter__(self):
         return self
@@ -264,6 +271,25 @@ class ScreenshotRetryTests(unittest.TestCase):
                 store=lambda *args: stored.append(args),
             )
         return summary, stored
+
+    def test_every_page_operation_is_bound_by_the_evidence_timeout(self):
+        """Only the navigation carried one. The style tag and the screenshot
+        fell back to Playwright's own 30 seconds, and the screenshot is retried
+        once - so a port that answered TCP and then wedged the renderer held
+        the run for a minute and a half by itself, with nothing stored and the
+        progress count therefore standing still."""
+        from netroach.evidence import capture_web_screenshots
+
+        playwright = FakePlaywright(FakePage(screenshot_failures=0))
+        with patch("playwright.sync_api.sync_playwright", return_value=playwright):
+            capture_web_screenshots(
+                [{"host": "127.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
+                  "service_name": "http"}],
+                store=lambda *args: None,
+                timeout_ms=4_000,
+            )
+
+        self.assertEqual(playwright.browser.last_context.default_timeout_ms, 4_000)
 
     def test_a_transient_capture_failure_is_retried(self):
         page = FakePage(screenshot_failures=1)
@@ -453,12 +479,13 @@ class ConsoleCaptureTests(unittest.TestCase):
         self.assertEqual(seen, [REACHABILITY_TIMEOUT_MS / 1000])
         self.assertLessEqual(REACHABILITY_TIMEOUT_MS, 2_000)
 
-    def test_a_port_it_could_not_reach_still_counts_as_one_it_got_through(self):
-        """Counting only stored pictures left a run over unreachable targets
-        showing a number that never moved, which reads as a run that has hung."""
+    def test_the_run_says_which_port_it_is_on_even_when_it_stores_nothing(self):
+        """Stored pictures alone cannot tell a run working through ports that
+        yield nothing from one that has stopped - and it was being read as
+        stopped. Every port examined is reported, whatever comes of it."""
         from netroach import evidence as evidence_module
 
-        settled: list[int] = []
+        seen: list[str] = []
         with patch.object(evidence_module, "port_still_answers", lambda *_a, **_k: False):
             summary = evidence_module.capture_terminal_transcripts(
                 [
@@ -466,10 +493,10 @@ class ConsoleCaptureTests(unittest.TestCase):
                     {"host": "10.0.0.1", "port": 443, "protocol": "tcp", "state": "open"},
                 ],
                 store=lambda *_a: None,
-                on_settled=lambda: settled.append(1),
+                on_examined=lambda result: seen.append(f"{result['host']}:{result['port']}"),
             )
 
-        self.assertEqual(len(settled), 2)
+        self.assertEqual(seen, ["10.0.0.1:80", "10.0.0.1:443"])
         self.assertEqual(summary.captured, 0)
         self.assertEqual(len(summary.errors), 2)
 
@@ -557,7 +584,7 @@ class ConsoleCaptureTests(unittest.TestCase):
         def store(result, data, file_name, source_url, evidence_type, capture_agent=None):
             stored.append(evidence_type)
 
-        def fake_web(candidates, *, store, timeout_ms, maximum, should_stop=None):
+        def fake_web(candidates, *, store, timeout_ms, maximum, should_stop=None, on_examined=None):
             for result in list(candidates):
                 store(result, b"PNG", "page.png", "http://10.0.0.1/", "chromium test")
             return evidence_module.ScreenshotCaptureSummary(

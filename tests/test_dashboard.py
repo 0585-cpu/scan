@@ -755,6 +755,16 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("이미 끝난 재수집입니다.", body)
         self.assertNotIn("error.message", body)
 
+    def test_the_progress_line_says_which_port_it_is_on(self):
+        """A port that yields no picture still takes its time, so the stored
+        count can stand still for minutes on a range with many of them - which
+        was being read as a run that had stopped."""
+        html = dashboard_html()
+
+        body = html.split("if (progress.running) {", 1)[1].split("return;", 1)[0]
+        self.assertIn("progress.examined", body)
+        self.assertIn("progress.current", body)
+
 
 if __name__ == "__main__":
     unittest.main()
