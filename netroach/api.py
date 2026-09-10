@@ -440,14 +440,15 @@ def create_app(
             scans = repo.list_jobs(limit=limit)
         except Exception as exc:  # noqa: BLE001
             raise _bad_request(exc) from exc
-        return {"limit": limit, "count": len(scans), "scans": scans}
+        return {"limit": limit, "count": len(scans),
+                "scans": [_mark_stalled(scan) for scan in scans]}
 
     @app.get("/v1/scans/{scan_id}")
     def get_scan(scan_id: str) -> dict[str, object]:
         job = repo.get_job(scan_id)
         if not job:
             raise _not_found("scan not found")
-        return job
+        return _mark_stalled(job)
 
     @app.get("/v1/scans/{scan_id}/results")
     def get_scan_results(
@@ -733,6 +734,13 @@ def create_app(
 
     @app.post("/v1/scans/{scan_id}/cancel")
     def cancel_scan(scan_id: str) -> dict[str, object]:
+        # A job whose heartbeat stopped has no worker left to read the request,
+        # so asking one to stop would leave it running for ever. Settle it here
+        # instead - the process that owned it is gone.
+        existing = repo.get_job(scan_id)
+        if existing and _mark_stalled(dict(existing))["stalled"]:
+            repo.mark_scan_cancelled(scan_id, "the scan stopped reporting and was cancelled")
+            return {"scan_id": scan_id, "status": "cancelled", "stalled": True}
         try:
             job = repo.request_scan_cancel(scan_id)
         except Exception as exc:  # noqa: BLE001
@@ -1070,6 +1078,24 @@ def _run_evidence_recapture(
     finally:
         if on_finished is not None:
             on_finished()
+
+
+def _mark_stalled(job: dict[str, Any]) -> dict[str, Any]:
+    """Say whether a job that calls itself running has stopped saying so.
+
+    Recovery runs once, when the backend starts, and skips a job whose
+    heartbeat is recent because another instance may own it. A backend that
+    died and came back inside that window therefore leaves the job running and
+    idle until the next start - and the dashboard, seeing "running", offered no
+    way to cancel or delete it. This is what lets it offer one.
+    """
+    age = job.get("heartbeat_age_s")
+    job["stalled"] = (
+        job.get("status") in {"queued", "running", "recovering"}
+        and age is not None
+        and float(age) > SCAN_HEARTBEAT_STALE_S
+    )
+    return job
 
 
 def _now_iso() -> str:

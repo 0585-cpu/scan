@@ -765,6 +765,18 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("progress.examined", body)
         self.assertIn("progress.current", body)
 
+    def test_a_stalled_scan_can_be_cleared_and_says_why(self):
+        """It still reads as running, so without this there is no way to be rid
+        of a scan whose backend died and came back too quickly to be
+        recovered."""
+        html = dashboard_html()
+
+        self.assertIn("const stalled = Boolean(job && job.stalled);", html)
+        self.assertIn("$('scanDelete').disabled = !job || (active && !stalled);", html)
+        self.assertIn("job.status === 'cancel_requested' && !stalled", html)
+        # And the operator can see why those two are open.
+        self.assertIn("응답 없음", html)
+
 
 if __name__ == "__main__":
     unittest.main()

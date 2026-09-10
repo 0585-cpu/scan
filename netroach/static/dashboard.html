@@ -2269,7 +2269,7 @@ ${health.db}` : '데이터베이스 없음';
       $('overviewScans').innerHTML = state.scans.slice(0, 8).map((job) => `
         <tr class="clickable ${job.id === state.scanId ? 'selected' : ''}" data-scan-row="${escapeHtml(job.id)}">
           <td class="mono">${escapeHtml(shortId(job.id))}</td>
-          <td>${pill(job.status, stateClass(job.status))}</td>
+          <td>${job.stalled ? pill(job.status + ' · 응답 없음', 'warn') : pill(job.status, stateClass(job.status))}</td>
           <td>${compactTargetsHtml(job.targets)}</td>
           <td>${compactPortsHtml(job.ports, 3)}</td>
           <td>${escapeHtml(job.summary?.open || 0)}</td>
@@ -2415,7 +2415,9 @@ ${health.db}` : '데이터베이스 없음';
     async function selectScan(scanId) {
       state.scanId = scanId;
       const job = selectedScanJob();
-      $('selectedScanLabel').textContent = job ? `${shortId(job.id)} - ${job.status}` : 'Select a job to view results';
+      $('selectedScanLabel').textContent = job
+        ? `${shortId(job.id)} - ${job.status}${job.stalled ? ' · 응답 없음' : ''}`
+        : 'Select a job to view results';
       state.scanResultQuery = '';
       state.scanResultHost = '';
       state.scanResultState = '';
@@ -2647,10 +2649,17 @@ ${health.db}` : '데이터베이스 없음';
     function updateScanActionState() {
       const job = selectedScanJob();
       const active = Boolean(job && ['queued', 'running', 'recovering', 'cancel_requested'].includes(job.status));
+      // A scan whose heartbeat stopped has no worker left behind it. Recovery
+      // looks for one only when the backend starts, and skips a job whose
+      // heartbeat is still recent, so a backend that died and came back
+      // quickly leaves the job running and idle - and calling it active left
+      // no way to be rid of it. Cancel and delete are opened; the two that
+      // read a finished scan's results stay shut, because it has none yet.
+      const stalled = Boolean(job && job.stalled);
       const engineAvailable = scanEngineAvailable();
       $('scanSubmit').textContent = engineAvailable ? '스캔 시작' : 'Rust 엔진 없음';
-      $('scanCancel').disabled = !job || !active || job.status === 'cancel_requested';
-      $('scanDelete').disabled = !job || active;
+      $('scanCancel').disabled = !job || !active || (job.status === 'cancel_requested' && !stalled);
+      $('scanDelete').disabled = !job || (active && !stalled);
       // Both work off results a finished scan left behind, so neither makes
       // sense while it is still producing them.
       // The stop is its own button rather than the start button relabelled.

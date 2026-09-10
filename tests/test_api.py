@@ -1835,6 +1835,54 @@ class RescanAndRecaptureTests(unittest.TestCase):
             replaced = repo.list_result_evidence(scan_id, host="10.0.0.2", port=80)
             self.assertEqual([row["capture_agent"] for row in replaced], ["new"])
 
+    def test_a_scan_that_stopped_reporting_can_be_cancelled_and_deleted(self):
+        """Recovery looks for an interrupted scan only when the backend starts,
+        and skips one whose heartbeat is still recent because another instance
+        may own it. A backend that died and came back inside that window
+        therefore leaves the job running and idle - and while it read as
+        running the dashboard offered no way to be rid of it."""
+        import datetime
+        import sqlite3
+
+        from netroach.api import SCAN_HEARTBEAT_STALE_S
+
+        with tempfile.TemporaryDirectory() as tmp:
+            from fastapi.testclient import TestClient
+
+            from netroach.api import create_app
+            from netroach.storage import SQLiteRepository
+
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
+            scan_id = repo.create_scan_job(
+                targets="10.0.0.1", ports="1-10", scope=[], params={"resumable": True}
+            )
+            repo.mark_scan_started(scan_id)
+            client = TestClient(create_app(str(repo.path)))
+
+            # A scan that is reporting is not stalled and keeps its guard rails.
+            self.assertFalse(client.get(f"/v1/scans/{scan_id}").json()["stalled"])
+
+            stopped = (
+                datetime.datetime.now(datetime.timezone.utc)
+                - datetime.timedelta(seconds=SCAN_HEARTBEAT_STALE_S + 60)
+            ).strftime("%Y-%m-%d %H:%M:%S")
+            connection = sqlite3.connect(repo.path, isolation_level=None)
+            try:
+                connection.execute(
+                    "UPDATE scan_jobs SET heartbeat_at=? WHERE id=?", (stopped, scan_id)
+                )
+            finally:
+                connection.close()
+
+            self.assertTrue(client.get(f"/v1/scans/{scan_id}").json()["stalled"])
+
+            # Cancelling settles it rather than asking a worker that is not
+            # there to notice, which would have left it running for ever.
+            cancelled = client.post(f"/v1/scans/{scan_id}/cancel").json()
+            self.assertEqual(cancelled["status"], "cancelled")
+            self.assertEqual(client.get(f"/v1/scans/{scan_id}").json()["status"], "cancelled")
+            self.assertTrue(client.delete(f"/v1/scans/{scan_id}").json()["deleted"])
+
     def test_a_folded_scan_does_not_blame_the_report_limit(self):
         """A port folded into a count has no row, so it is not something the
         report left out. Counting it as omitted made a scan five thousand rows

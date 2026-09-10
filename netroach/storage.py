@@ -1031,7 +1031,8 @@ class SQLiteRepository:
             rows = conn.execute(
                 """
                 SELECT id, status, targets, ports, scope_json, params_json,
-                       created_at, started_at, completed_at, summary_json, worker_token
+                       created_at, started_at, completed_at, summary_json, worker_token,
+                       CAST((julianday(CURRENT_TIMESTAMP) - julianday(heartbeat_at)) * 86400.0 AS REAL) AS heartbeat_age_s
                 FROM scan_jobs
                 ORDER BY created_at DESC
                 LIMIT ?
@@ -1045,7 +1046,8 @@ class SQLiteRepository:
             row = conn.execute(
                 """
                 SELECT id, status, targets, ports, scope_json, params_json,
-                       created_at, started_at, completed_at, summary_json, worker_token
+                       created_at, started_at, completed_at, summary_json, worker_token,
+                       CAST((julianday(CURRENT_TIMESTAMP) - julianday(heartbeat_at)) * 86400.0 AS REAL) AS heartbeat_age_s
                 FROM scan_jobs
                 WHERE id=?
                 """,
@@ -2248,6 +2250,7 @@ class SQLiteRepository:
     def _scan_job_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         data = dict(row)
         data.pop("worker_token", None)
+        data["heartbeat_age_s"] = data.pop("heartbeat_age_s", None)
         data["scope"] = json.loads(data.pop("scope_json"))
         data["params"] = json.loads(data.pop("params_json"))
         summary_json = data.pop("summary_json")
