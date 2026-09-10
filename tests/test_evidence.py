@@ -239,8 +239,10 @@ class FakeBrowser:
     def __init__(self, page):
         self._page = page
         self.last_context = None
+        self.context_kwargs = {}
 
-    def new_context(self, **_kwargs):
+    def new_context(self, **kwargs):
+        self.context_kwargs = kwargs
         self.last_context = FakeContext(self._page)
         return self.last_context
 
@@ -281,6 +283,23 @@ class ScreenshotRetryTests(unittest.TestCase):
                 store=lambda *args: stored.append(args),
             )
         return summary, stored
+
+    def test_the_capture_never_takes_a_file_off_the_target(self):
+        """The pass wants a picture. A navigation that turns into a download
+        already fails, but a page can start one after it has loaded, and
+        Playwright saves those by default - and taking a file off a system
+        under assessment is not a library default's decision to make."""
+        from netroach.evidence import capture_web_screenshots
+
+        playwright = FakePlaywright(FakePage(screenshot_failures=0))
+        with patch("playwright.sync_api.sync_playwright", return_value=playwright):
+            capture_web_screenshots(
+                [{"host": "127.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
+                  "service_name": "http"}],
+                store=lambda *args: None,
+            )
+
+        self.assertIs(playwright.browser.context_kwargs["accept_downloads"], False)
 
     def test_a_page_with_no_head_cannot_stop_the_run(self):
         """add_style_tag appends the element to document.head and waits for it

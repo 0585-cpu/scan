@@ -363,6 +363,13 @@ def capture_web_screenshots(
                     context = browser.new_context(
                         ignore_https_errors=True,
                         viewport={"width": SCREENSHOT_WIDTH, "height": SCREENSHOT_HEIGHT},
+                        # What this pass is for is a picture of the page. A
+                        # navigation that turns into a download already fails
+                        # here, but a page can start one after it has loaded,
+                        # and Playwright saves those by default. Taking a file
+                        # off a system under assessment is not something to
+                        # leave to a library's default.
+                        accept_downloads=False,
                     )
                     # Only the navigation carried a timeout; the style tag and
                     # the screenshot fell back to Playwright's own 30 seconds,
