@@ -371,14 +371,14 @@ def capture_web_screenshots(
                         # leave to a library's default.
                         accept_downloads=False,
                     )
-                    # Only the navigation carried a timeout; the style tag and
-                    # the screenshot fell back to Playwright's own 30 seconds,
-                    # and the screenshot is retried once - so a single port
-                    # that answered TCP and then wedged the renderer could hold
-                    # the run for a minute and a half on its own.
-                    # The budget is the port's, not each call's. See
-                    # WEB_PORT_BUDGET_FACTOR.
-                    deadline = began + (timeout_ms * WEB_PORT_BUDGET_FACTOR / 1000)
+                    # The budget is the port's, not each call's - see
+                    # WEB_PORT_BUDGET_FACTOR - and it is the page's work that
+                    # it bounds. Started at the top of the loop instead, a
+                    # browser that was slow to hand over a context would spend
+                    # the navigation's share before the navigation began, and
+                    # the port would fail for something the page never did.
+                    # `began` still measures the whole port, for the slow line.
+                    deadline = time.monotonic() + (timeout_ms * WEB_PORT_BUDGET_FACTOR / 1000)
 
                     def left_ms(until: float = deadline) -> float:
                         return max(0.0, (until - time.monotonic()) * 1000)

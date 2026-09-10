@@ -301,6 +301,31 @@ class ScreenshotRetryTests(unittest.TestCase):
 
         self.assertIs(playwright.browser.context_kwargs["accept_downloads"], False)
 
+    def test_an_exhausted_budget_never_becomes_an_unlimited_wait(self):
+        """Playwright reads a timeout of zero as "no timeout". A port whose
+        budget ran out would then wait for ever - the failure the budget was
+        added to prevent, arrived at from the other side."""
+        from netroach.evidence import capture_web_screenshots
+
+        class Exhausting(FakePage):
+            def goto(self, _url, **kwargs):
+                self.timeouts.append(float(kwargs.get("timeout", 0)))
+                # Spend more than the whole port budget navigating.
+                time.sleep(2.2)
+
+        page = Exhausting(screenshot_failures=0)
+        with patch("playwright.sync_api.sync_playwright", return_value=FakePlaywright(page)):
+            capture_web_screenshots(
+                [{"host": "127.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
+                  "service_name": "http"}],
+                store=lambda *args: None,
+                timeout_ms=1000,
+            )
+
+        self.assertNotIn(0, page.timeouts)
+        self.assertNotIn(0.0, page.timeouts)
+        self.assertTrue(all(value > 0 for value in page.timeouts), page.timeouts)
+
     def test_a_page_with_no_head_cannot_stop_the_run(self):
         """add_style_tag appends the element to document.head and waits for it
         to load. An XML document - a feed, a SOAP endpoint, a config file
