@@ -980,23 +980,33 @@ class SQLiteRepository:
         return _evidence_file_row_to_dict(row), path
 
     def delete_automatic_evidence(
-        self, scan_id: str, *, host: str, port: int, protocol: str = "tcp"
+        self, scan_id: str, *, host: str, port: int, protocol: str = "tcp",
+        except_id: str | None = None,
     ) -> int:
         """Drop the evidence Netroach captured for one port, keeping the rest.
 
         A file an operator attached by hand is theirs and survives; only what
-        this program photographed is replaced. Called just before a new capture
-        is stored, so a run that fails part way leaves the old pictures alone.
+        this program photographed is replaced.
+
+        `except_id` spares one row, which is how a replacement is done safely:
+        store the new picture first, then drop the old ones but not it. Doing
+        it the other way round - clearing and then storing - left the port with
+        nothing at all whenever the store failed, and a store can fail on a
+        malformed image, a scan deleted mid-run, or a full disk.
         """
         placeholders = ",".join("?" * len(AUTOMATIC_EVIDENCE_TYPES))
+        spare = " AND id != ?" if except_id is not None else ""
+        parameters: list[Any] = [scan_id, host, port, protocol, *AUTOMATIC_EVIDENCE_TYPES]
+        if except_id is not None:
+            parameters.append(except_id)
         with self.session() as conn:
             rows = conn.execute(
                 f"""
                 SELECT id, stored_path FROM result_evidence_files
                 WHERE scan_id=? AND host=? AND port=? AND protocol=?
-                  AND evidence_type IN ({placeholders})
+                  AND evidence_type IN ({placeholders}){spare}
                 """,
-                (scan_id, host, port, protocol, *AUTOMATIC_EVIDENCE_TYPES),
+                parameters,
             ).fetchall()
             for row in rows:
                 conn.execute("DELETE FROM result_evidence_files WHERE id=?", (row["id"],))

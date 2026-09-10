@@ -1781,6 +1781,60 @@ class RescanAndRecaptureTests(unittest.TestCase):
                 client.delete(f"/v1/scans/{scan_id}/evidence/recapture").status_code, 400
             )
 
+    def test_a_store_that_fails_does_not_take_the_old_evidence_with_it(self):
+        """The old pictures were dropped before the new one was stored, so a
+        store that raised left the port with nothing - and a store can raise on
+        a malformed image, a scan deleted mid-run, or a full disk. The picture
+        in the report is the deliverable; losing it to a failed retry is worse
+        than the retry not happening."""
+        with tempfile.TemporaryDirectory() as tmp:
+            client, repo, scan_id = self._client_with_open_results(tmp)
+            repo.add_result_evidence(
+                scan_id, host="10.0.0.2", port=80, data=PNG_HEADER,
+                file_name="good.png", evidence_type="terminal_transcript",
+                capture_agent="windows console capture",
+            )
+
+            def broken(results, *, store, timeout_ms, maximum, capture_console,
+                       should_stop=None, on_examined=None):
+                from netroach.evidence import ScreenshotCaptureSummary
+
+                for result in list(results):
+                    try:
+                        store(result, b"not an image", "bad.png", None,
+                              "terminal_transcript", "test")
+                    except Exception:  # noqa: BLE001 - the run records and moves on.
+                        pass
+                return ScreenshotCaptureSummary(candidates=1, captured=0, failed=1)
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=broken):
+                client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={})
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+
+            kept = repo.list_result_evidence(scan_id, host="10.0.0.2", port=80)
+            self.assertEqual(len(kept), 1, "the failed store destroyed the evidence")
+            self.assertEqual(kept[0]["capture_agent"], "windows console capture")
+
+            # A store that works still replaces rather than piling up.
+            def works(results, *, store, timeout_ms, maximum, capture_console,
+                      should_stop=None, on_examined=None):
+                from netroach.evidence import ScreenshotCaptureSummary
+
+                for result in list(results):
+                    store(result, PNG_HEADER, "new.png", None, "terminal_transcript", "new")
+                return ScreenshotCaptureSummary(candidates=1, captured=1, failed=0)
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=works):
+                client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={})
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+
+            replaced = repo.list_result_evidence(scan_id, host="10.0.0.2", port=80)
+            self.assertEqual([row["capture_agent"] for row in replaced], ["new"])
+
     def test_a_folded_scan_does_not_blame_the_report_limit(self):
         """A port folded into a count has no row, so it is not something the
         report left out. Counting it as omitted made a scan five thousand rows

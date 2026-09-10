@@ -1112,23 +1112,17 @@ def _capture_stored_evidence(
         evidence_type: str,
         capture_agent: str | None = None,
     ) -> None:
-        # Replaced, not added to - and only once the new picture is in hand, so
-        # a run that fails part way leaves the old ones where they were. A file
-        # the operator attached is theirs and is not touched.
+        # Stored first, and only then are the old ones dropped - so a store
+        # that fails leaves this port's evidence where it was. Clearing first
+        # left the port with nothing whenever the store failed, and a store can
+        # fail on a malformed image, a scan deleted mid-run, or a full disk. A
+        # file the operator attached is theirs and is not touched either way.
         #
         # Once per port, not once per picture: with the console capture on, a
         # web port produces a page screenshot and a console capture, and
-        # clearing again before the second would throw away the first.
+        # dropping again after the second would throw away the first.
         key = (str(result["host"]), int(result["port"]), str(result["protocol"]))
-        if key not in cleared:
-            cleared.add(key)
-            repo.delete_automatic_evidence(
-                scan_id,
-                host=key[0],
-                port=key[1],
-                protocol=key[2],
-            )
-        repo.add_result_evidence(
+        stored = repo.add_result_evidence(
             scan_id,
             host=str(result["host"]),
             port=int(result["port"]),
@@ -1139,6 +1133,15 @@ def _capture_stored_evidence(
             source_url=source_url,
             capture_agent=capture_agent,
         )
+        if key not in cleared:
+            cleared.add(key)
+            repo.delete_automatic_evidence(
+                scan_id,
+                host=key[0],
+                port=key[1],
+                protocol=key[2],
+                except_id=str(stored["id"]),
+            )
         if on_captured is not None:
             on_captured()
 
