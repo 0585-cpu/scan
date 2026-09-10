@@ -532,6 +532,38 @@ class ConsoleCaptureTests(unittest.TestCase):
         self.assertEqual(summary.captured, 2)
         self.assertEqual(sorted(stored), ["tcp", "udp"])
 
+    def test_a_window_that_rendered_nothing_is_not_stored_as_a_capture(self):
+        """PrintWindow reports success and hands back a blank bitmap where the
+        API gives no other signal: a console host that will not render into a
+        memory device context - the legacy console mode still common on
+        Windows 10 - and a desktop that is locked or disconnected. Storing that
+        puts a white rectangle in the report labelled a real console capture,
+        which is worse than no capture: the caller falls back to the drawn
+        transcript, which carries the scan record."""
+        from PIL import Image, ImageDraw
+
+        from netroach.console_capture import has_content
+
+        def solid(colour):
+            buffer = io.BytesIO()
+            Image.new("RGB", (770, 300), colour).save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        self.assertFalse(has_content(solid((255, 255, 255))))
+        self.assertFalse(has_content(solid((12, 12, 12))))
+
+        # A session that proved a connection prints its commands and a netstat
+        # row, which is thousands of lit pixels.
+        image = Image.new("RGB", (770, 300), (12, 12, 12))
+        draw = ImageDraw.Draw(image)
+        for row in range(6):
+            draw.text((10, 10 + row * 18), "netstat -an | Select-String 127.0.0.1:135",
+                      fill=(220, 220, 220))
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+
+        self.assertTrue(has_content(buffer.getvalue()))
+
     def test_a_telnet_window_that_was_already_open_is_not_photographed(self):
         """The operator's own session is not evidence of anything this scan
         did, and a prefix match makes 10.0.0.4 answer for 10.0.0.40."""

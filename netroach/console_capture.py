@@ -52,6 +52,9 @@ CONSOLE_WINDOW_SIZE = (770, 300)
 COMPOSED_TARGET_WIDTH = 1150
 # Rows of background left under the last line of output before cropping.
 CONTENT_MARGIN_PX = 12
+# A real capture carries two command lines and a netstat row; a window that
+# rendered nothing carries a few hundred stray pixels at most.
+CONTENT_PIXELS_MINIMUM = 1_000
 # A row counts as content only past this many differing pixels, so a stray
 # border pixel does not keep an empty console from being trimmed.
 CONTENT_ROW_PIXELS = 3
@@ -223,6 +226,34 @@ def _differs(pixel: tuple[int, ...], background: tuple[int, ...]) -> bool:
         abs(int(value) - int(other)) > CONTENT_COLOUR_TOLERANCE
         for value, other in zip(pixel, background, strict=False)
     )
+
+
+def has_content(png: bytes) -> bool:
+    """Whether the capture shows anything at all.
+
+    PrintWindow reports success and hands back a blank bitmap in cases the API
+    gives no other signal for: a console host that will not render into a
+    memory device context - the legacy console mode still common on Windows 10
+    is one - and a session whose desktop is locked or disconnected. The picture
+    then stores as a white or black rectangle labelled a real console capture,
+    which is worse than having no capture at all: the caller would have fallen
+    back to the drawn transcript, which at least carries the scan record.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return True
+    try:
+        image = Image.open(io.BytesIO(png)).convert("RGB")
+    except Exception:  # noqa: BLE001 - an image we cannot read is left to the caller.
+        return True
+    colours = image.getcolors(image.width * image.height)
+    if colours is None:
+        # More distinct colours than pixels counted means plenty of content.
+        return True
+    background = max(colours)[1]
+    lit = sum(count for count, colour in colours if _differs(colour, background))
+    return lit >= CONTENT_PIXELS_MINIMUM
 
 
 def crop_to_content(png: bytes) -> bytes:
@@ -481,6 +512,9 @@ def capture_console_session(
                 return None
             time.sleep(CAPTURE_SETTLE_S)
             console_pane = _capture_window_png(hwnd)
+            if console_pane is not None and not has_content(console_pane):
+                # Blank, so there is nothing to prove. The caller falls back.
+                return None
             if console_pane is not None:
                 console_pane = crop_to_content(console_pane)
             if console_pane is None or not with_telnet:
