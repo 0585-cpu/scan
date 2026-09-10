@@ -18,6 +18,13 @@ const BACKEND_HOST: &str = "127.0.0.1";
 // this deadline only bounds a hung one.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(300);
 
+// backend.log is opened for append and was never rolled, which cost nothing
+// while it held four lines a launch. It now carries what an evidence run did -
+// a port that would not answer, a port that held the run - so it grows with
+// use, and a file that grows without bound is one nobody can read anyway. The
+// previous session is kept beside it and everything older goes.
+const LOG_ROLL_BYTES: u64 = 4 * 1024 * 1024;
+
 #[derive(Default)]
 struct BackendProcess(Mutex<Option<Child>>);
 
@@ -135,6 +142,19 @@ fn wait_for_backend(child: &mut Child, port: u16) -> io::Result<()> {
     }
 }
 
+/// Move a large log aside so the next session starts a fresh one.
+///
+/// Rolling at startup rather than mid-run keeps a session's records together,
+/// which is what makes them worth reading: one run's lines are never split
+/// across two files. Failure is ignored on purpose - a log that cannot be
+/// rolled must not stop the application from starting.
+fn roll_log_if_large(path: &std::path::Path) {
+    let too_large = fs::metadata(path).map(|data| data.len() >= LOG_ROLL_BYTES);
+    if matches!(too_large, Ok(true)) {
+        let _ = fs::rename(path, path.with_extension("log.1"));
+    }
+}
+
 fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, Box<dyn std::error::Error>> {
     let backend = runtime_binary_path(app, "NETROACH_BACKEND_PATH", "netroach-backend")?;
     let engine = runtime_binary_path(app, "NETROACH_ENGINE_PATH", "netroach-engine")?;
@@ -143,6 +163,7 @@ fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, Box<dyn std::erro
     let log_directory = app.path().app_log_dir()?;
     fs::create_dir_all(&log_directory)?;
     let log_path = log_directory.join("backend.log");
+    roll_log_if_large(&log_path);
     let stdout = OpenOptions::new()
         .create(true)
         .append(true)
