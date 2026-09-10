@@ -428,6 +428,51 @@ class ConsoleCaptureTests(unittest.TestCase):
 
         self.assertIn("WindowTitle = 'Netroach 10.0.0.1:80 abc12345'", script)
 
+    def test_the_reachability_check_does_not_cost_the_whole_screenshot_timeout(self):
+        """It runs before every capture. A port that is going to answer answers
+        in milliseconds; giving it the screenshot timeout meant eight seconds
+        of waiting for each port that would not, which on a few hundred ports
+        is most of the run."""
+        import socket
+
+        from netroach.evidence import REACHABILITY_TIMEOUT_MS, port_still_answers
+
+        seen: list[float] = []
+
+        def record(address, timeout=None):
+            seen.append(float(timeout))
+            raise OSError("refused")
+
+        with patch.object(socket, "create_connection", record):
+            self.assertFalse(
+                port_still_answers(
+                    {"host": "10.0.0.1", "port": 80, "protocol": "tcp"}, timeout_ms=120_000
+                )
+            )
+
+        self.assertEqual(seen, [REACHABILITY_TIMEOUT_MS / 1000])
+        self.assertLessEqual(REACHABILITY_TIMEOUT_MS, 2_000)
+
+    def test_a_port_it_could_not_reach_still_counts_as_one_it_got_through(self):
+        """Counting only stored pictures left a run over unreachable targets
+        showing a number that never moved, which reads as a run that has hung."""
+        from netroach import evidence as evidence_module
+
+        settled: list[int] = []
+        with patch.object(evidence_module, "port_still_answers", lambda *_a, **_k: False):
+            summary = evidence_module.capture_terminal_transcripts(
+                [
+                    {"host": "10.0.0.1", "port": 80, "protocol": "tcp", "state": "open"},
+                    {"host": "10.0.0.1", "port": 443, "protocol": "tcp", "state": "open"},
+                ],
+                store=lambda *_a: None,
+                on_settled=lambda: settled.append(1),
+            )
+
+        self.assertEqual(len(settled), 2)
+        self.assertEqual(summary.captured, 0)
+        self.assertEqual(len(summary.errors), 2)
+
     def test_a_udp_port_does_not_open_a_console_that_cannot_connect(self):
         """The console proves a held TCP socket. UDP has none, so every UDP
         result spent a window and a full timeout failing to open one."""

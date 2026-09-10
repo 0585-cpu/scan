@@ -443,6 +443,14 @@ def run_powershell_diagnostic(
     )
 
 
+# The reachability check runs before every capture, so its cost is paid once
+# per port whether or not anything comes of it. A port that is going to answer
+# answers in milliseconds; giving it the whole screenshot timeout instead meant
+# eight seconds of waiting for each port that would not, which on a scan of a
+# few hundred is most of the run.
+REACHABILITY_TIMEOUT_MS = 2_000
+
+
 def port_still_answers(result: Mapping[str, Any], *, timeout_ms: int) -> bool:
     """Whether a TCP connection to this result's port opens right now.
 
@@ -457,7 +465,7 @@ def port_still_answers(result: Mapping[str, Any], *, timeout_ms: int) -> bool:
         port = result_port(result)
     except (TypeError, ValueError):
         return False
-    timeout = max(0.5, min(30.0, timeout_ms / 1000))
+    timeout = max(0.5, min(REACHABILITY_TIMEOUT_MS, timeout_ms) / 1000)
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
@@ -530,6 +538,7 @@ def capture_terminal_transcripts(
     maximum: int = DEFAULT_SCREENSHOT_MAX,
     should_stop: Callable[[], bool] | None = None,
     capture_console: bool = False,
+    on_settled: Callable[[], None] | None = None,
 ) -> ScreenshotCaptureSummary:
     candidates = automatic_evidence_candidates(results, maximum=maximum)
     captured = 0
@@ -545,6 +554,11 @@ def capture_terminal_transcripts(
         # replaces the capture taken where the port did answer.
         if not port_still_answers(result, timeout_ms=timeout_ms):
             errors.append(f"{host}:{result.get('port')}: 연결되지 않아 증적을 남기지 않았습니다")
+            # A skipped port is still a port the run got through. Counting only
+            # the stored pictures left a run over unreachable targets showing a
+            # number that never moved, which reads as a run that has hung.
+            if on_settled is not None:
+                on_settled()
             continue
         try:
             image = None
@@ -595,6 +609,7 @@ def capture_automatic_evidence(
     maximum: int = DEFAULT_SCREENSHOT_MAX,
     should_stop: Callable[[], bool] | None = None,
     capture_console: bool = False,
+    on_settled: Callable[[], None] | None = None,
 ) -> ScreenshotCaptureSummary:
     candidates = automatic_evidence_candidates(results, maximum=maximum)
     if not candidates:
@@ -644,6 +659,7 @@ def capture_automatic_evidence(
             maximum=len(remaining),
             should_stop=should_stop,
             capture_console=capture_console,
+            on_settled=on_settled,
         )
     else:
         terminal_summary = ScreenshotCaptureSummary(candidates=0, captured=0, failed=0)

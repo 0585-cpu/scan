@@ -1119,6 +1119,8 @@ def _capture_stored_evidence(
         maximum=screenshot_max,
         capture_console=capture_console,
         should_stop=should_stop,
+        # A port that could not be reached is still one the run got through.
+        on_settled=on_captured,
     )
     repo.record_evidence_capture_failures(
         scan_id,
