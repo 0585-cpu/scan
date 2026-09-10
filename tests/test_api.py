@@ -1883,6 +1883,37 @@ class RescanAndRecaptureTests(unittest.TestCase):
             self.assertEqual(client.get(f"/v1/scans/{scan_id}").json()["status"], "cancelled")
             self.assertTrue(client.delete(f"/v1/scans/{scan_id}").json()["deleted"])
 
+    def test_a_port_both_passes_look_at_is_counted_once(self):
+        """A port the web pass could not photograph is handed to the console
+        pass, which examines it again. Counting both put the tally above the
+        number of ports there are - 22 examined of 19 planned - which reads as
+        a mistake because it is one."""
+        with tempfile.TemporaryDirectory() as tmp:
+            client, _repo, scan_id = self._client_with_open_results(tmp)
+
+            def both_passes(results, *, store, timeout_ms, maximum, capture_console,
+                            should_stop=None, on_examined=None):
+                from netroach.evidence import ScreenshotCaptureSummary
+
+                rows = list(results)
+                # The web pass sees every candidate and stores nothing.
+                for result in rows:
+                    on_examined(result)
+                # The console pass then sees the same ports again.
+                for result in rows:
+                    on_examined(result)
+                return ScreenshotCaptureSummary(candidates=len(rows), captured=0, failed=len(rows))
+
+            with patch("netroach.api.capture_automatic_evidence", side_effect=both_passes):
+                started = client.post(f"/v1/scans/{scan_id}/evidence/recapture", json={}).json()
+                for thread in threading.enumerate():
+                    if thread.name.startswith("netroach-evidence-"):
+                        thread.join(timeout=30)
+
+            progress = client.get(f"/v1/scans/{scan_id}/evidence/recapture").json()
+            self.assertEqual(progress["examined"], started["pending"])
+            self.assertLessEqual(progress["examined"], progress["total"])
+
     def test_a_folded_scan_does_not_blame_the_report_limit(self):
         """A port folded into a count has no row, so it is not something the
         report left out. Counting it as omitted made a scan five thousand rows

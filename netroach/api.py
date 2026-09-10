@@ -679,9 +679,22 @@ def create_app(
             state["captured"] = int(state["captured"]) + 1  # type: ignore[call-overload]
             state["updated_at"] = _now_iso()
 
+        # A port the web pass could not photograph is handed to the console
+        # pass, which examines it again. Counting both left the tally above the
+        # number of ports there are - "검사 22" against 19 planned - which reads
+        # as a mistake, and is one.
+        examined_ports: set[tuple[str, int, str]] = set()
+
         def examining(result: Mapping[str, Any]) -> None:
-            state["examined"] = int(state["examined"]) + 1  # type: ignore[call-overload]
-            state["current"] = f"{result.get('host')}:{result.get('port')}"
+            key = (
+                str(result.get("host")),
+                int(result.get("port") or 0),
+                str(result.get("protocol") or "tcp"),
+            )
+            if key not in examined_ports:
+                examined_ports.add(key)
+                state["examined"] = len(examined_ports)
+            state["current"] = f"{key[0]}:{key[1]}"
             state["updated_at"] = _now_iso()
 
         def failed(reason: str) -> None:
