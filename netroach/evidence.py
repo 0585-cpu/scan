@@ -23,6 +23,12 @@ DEFAULT_SCREENSHOT_TIMEOUT_MS = 8_000
 # took several times the timeout it was given is the one worth naming, because
 # a handful of those is what a run that looks stopped is actually doing.
 SLOW_PORT_FACTOR = 3
+# What one web port may spend in total. The navigation is allowed its whole
+# timeout, and a page that used all of it still has a timeout's worth left to
+# render and be photographed - so a slow page keeps its evidence. Without a
+# total, every call took the timeout in turn: four of them, none interruptible,
+# because the stop is only read between ports.
+WEB_PORT_BUDGET_FACTOR = 2
 logger = logging.getLogger(__name__)
 DEFAULT_SCREENSHOT_MAX = 20
 # A scan of a busy range finds thousands of open ports. This was a hundred,
@@ -233,7 +239,7 @@ def web_result_url(result: Mapping[str, Any]) -> str:
 SCREENSHOT_RETRY_DELAY_S = 0.4
 
 
-def _screenshot_with_one_retry(page: Any) -> bytes:
+def _screenshot_with_one_retry(page: Any, remaining_ms: Callable[[], float] | None = None) -> bytes:
     """Take the screenshot, allowing the renderer one more chance.
 
     `Protocol error (Page.captureScreenshot): Unable to capture screenshot` has
@@ -250,6 +256,8 @@ def _screenshot_with_one_retry(page: Any) -> bytes:
     try:
         return bytes(page.screenshot(type="png", full_page=False))
     except Exception:  # noqa: BLE001 - the retry is the handling; a second failure propagates.
+        if remaining_ms is not None and remaining_ms() <= 0:
+            raise
         time.sleep(SCREENSHOT_RETRY_DELAY_S)
         return bytes(page.screenshot(type="png", full_page=False))
 
@@ -338,15 +346,24 @@ def capture_web_screenshots(
                     # and the screenshot is retried once - so a single port
                     # that answered TCP and then wedged the renderer could hold
                     # the run for a minute and a half on its own.
+                    # The budget is the port's, not each call's. See
+                    # WEB_PORT_BUDGET_FACTOR.
+                    deadline = began + (timeout_ms * WEB_PORT_BUDGET_FACTOR / 1000)
+
+                    def left_ms(until: float = deadline) -> float:
+                        return max(0.0, (until - time.monotonic()) * 1000)
+
                     context.set_default_timeout(timeout_ms)
                     try:
                         context.route("**/*", host_route_filter(host))
                         page = context.new_page()
-                        page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        page.goto(url, wait_until="domcontentloaded", timeout=min(timeout_ms, left_ms()) or 1)
+                        page.set_default_timeout(left_ms() or 1)
                         page.add_style_tag(
                             content="*,*::before,*::after{animation:none!important;transition:none!important}"
                         )
-                        image = _screenshot_with_one_retry(page)
+                        page.set_default_timeout(left_ms() or 1)
+                        image = _screenshot_with_one_retry(page, left_ms)
                         filename_host = re.sub(r"[^A-Za-z0-9_.-]+", "_", host)
                         store(result, image, f"{filename_host}_{result['port']}.png", url, capture_agent)
                         captured += 1

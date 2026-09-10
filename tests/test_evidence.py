@@ -190,6 +190,10 @@ class FakePage:
         self.goto_failures = goto_failures
         self.goto_calls = 0
         self.screenshot_calls = 0
+        self.timeouts: list[float] = []
+
+    def set_default_timeout(self, timeout_ms):
+        self.timeouts.append(float(timeout_ms))
 
     def goto(self, *_args, **_kwargs):
         self.goto_calls += 1
@@ -272,6 +276,37 @@ class ScreenshotRetryTests(unittest.TestCase):
                 store=lambda *args: stored.append(args),
             )
         return summary, stored
+
+    def test_one_port_cannot_spend_the_timeout_four_times_over(self):
+        """Given to every call separately, a page that used the whole timeout
+        navigating got as much again for the style tag, again for the
+        screenshot and again for its retry. None of it is interruptible - the
+        stop is only read between ports - so the run looked hung and the cancel
+        looked dead for four times the timeout the operator set."""
+        from netroach.evidence import WEB_PORT_BUDGET_FACTOR, capture_web_screenshots
+
+        class SlowPage(FakePage):
+            def goto(self, _url, **kwargs):
+                self.timeouts.append(float(kwargs.get("timeout", 0)))
+                # Spend the whole navigation budget, as an unresponsive page does.
+                time.sleep(1.0)
+
+        page = SlowPage(screenshot_failures=0)
+        with patch("playwright.sync_api.sync_playwright", return_value=FakePlaywright(page)):
+            capture_web_screenshots(
+                [{"host": "127.0.0.1", "port": 80, "protocol": "tcp", "state": "open",
+                  "service_name": "http"}],
+                store=lambda *args: None,
+                timeout_ms=1000,
+            )
+
+        # The navigation is allowed its own timeout, and everything after it is
+        # given only what is left of the port's budget - never the full amount
+        # again.
+        self.assertEqual(page.timeouts[0], 1000)
+        self.assertTrue(all(value <= 1000 for value in page.timeouts), page.timeouts)
+        self.assertLess(page.timeouts[-1], 1000, page.timeouts)
+        self.assertEqual(WEB_PORT_BUDGET_FACTOR, 2)
 
     def test_every_page_operation_is_bound_by_the_evidence_timeout(self):
         """Only the navigation carried one. The style tag and the screenshot
