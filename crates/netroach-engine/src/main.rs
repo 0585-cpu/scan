@@ -545,12 +545,12 @@ async fn run_syn_scan(
                 banner: None,
                 evidence: None,
                 error: Some(
-                    if sweep.unreachable.contains(&target) {
-                        "host did not answer ARP; no probe was sent"
-                    } else {
-                        "no SYN reply after configured attempts"
-                    }
-                    .to_string(),
+                    sweep
+                        .unreachable
+                        .get(&target)
+                        .copied()
+                        .unwrap_or("no SYN reply after configured attempts")
+                        .to_string(),
                 ),
             },
         };

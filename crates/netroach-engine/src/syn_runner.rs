@@ -112,7 +112,7 @@ pub struct SweepOutcome {
     /// Hosts that never answered ARP, so nothing was sent to them. Their probes
     /// are unanswered because they were never asked, which is a different thing
     /// from a port that stayed quiet.
-    pub unreachable: std::collections::HashSet<Ipv4Addr>,
+    pub unreachable: std::collections::HashMap<Ipv4Addr, &'static str>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -501,7 +501,7 @@ pub async fn run_syn_sweep(
     if targets.is_empty() || ports.is_empty() {
         return Ok(SweepOutcome {
             states: ProbeStates::new(0),
-            unreachable: std::collections::HashSet::new(),
+            unreachable: std::collections::HashMap::new(),
         });
     }
     if !is_sorted_unique(targets) {
@@ -526,9 +526,10 @@ pub async fn run_syn_sweep(
         .ok_or_else(|| anyhow!("SYN probe count overflow"))?;
     let devices = Device::list().context("could not list Npcap devices")?;
     let mut routes: Vec<Option<Route>> = Vec::with_capacity(targets.len());
-    // Hosts that never answered ARP. Their probes are never sent, so the caller
-    // can say the host did not answer rather than that its ports were filtered.
-    let mut unreachable = std::collections::HashSet::<Ipv4Addr>::new();
+    // Hosts nothing is sent to, and why. Their probes are unanswered because
+    // they were never asked, which is a different thing from a port that stayed
+    // quiet, and the two reasons are different from each other.
+    let mut unreachable = std::collections::HashMap::<Ipv4Addr, &'static str>::new();
     let mut adapter_devices = BTreeMap::<u32, Device>::new();
     for &target in targets {
         // A host that will not answer ARP is down, and there is nothing to
@@ -538,7 +539,7 @@ pub async fn run_syn_sweep(
         let route = match resolve_route(target) {
             Ok(route) => route,
             Err(netlink::RouteError::NoNextHopMac(_)) => {
-                unreachable.insert(target);
+                unreachable.insert(target, "host did not answer ARP; no probe was sent");
                 routes.push(None);
                 continue;
             }
@@ -547,6 +548,20 @@ pub async fn run_syn_sweep(
             }
         };
         ensure_remote_target(target, route.source_ip)?;
+        // A broadcast next hop puts the frame in front of every host on the
+        // segment, and every one with that port open answers. The replies carry
+        // their own addresses so none of them match the probe, so it is a
+        // segment-wide disturbance that cannot even produce a result.
+        if let LinkLayer::Ethernet { next_hop_mac, .. } = route.link {
+            if next_hop_mac == [0xFF; 6] {
+                unreachable.insert(
+                    target,
+                    "broadcast address; a sweep will not send to the whole segment",
+                );
+                routes.push(None);
+                continue;
+            }
+        }
         let device = pcap_device_for_interface(route.interface_index, &devices)
             .with_context(|| format!("could not map SYN target {target} to Npcap"))?;
         if let Some(existing) = adapter_devices.get(&route.interface_index) {
