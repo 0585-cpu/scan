@@ -940,6 +940,50 @@ class CollapsedStateTests(unittest.TestCase):
                 repo.count_results_by_state(scan_id), {"closed": 2000, "filtered": 3}
             )
 
+    def test_a_wide_scan_does_not_keep_a_few_rows_per_host(self):
+        """The allowance is per host, so its cost is the host count.
+
+        A handful of closed ports reads better as ports than as a range, which
+        is why small groups are kept. Across ten subnets that same allowance is
+        tens of thousands of rows nobody reads, on a scan where only the open
+        ports are looked at. The ranges are recorded either way.
+        """
+        from netroach.models import PortResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            # One batch spanning many hosts, each with fewer rows than the
+            # per-host allowance would keep.
+            repo.add_port_results(
+                [
+                    PortResult(
+                        scan_id=scan_id,
+                        host=f"10.0.{block}.{host}",
+                        port=port,
+                        protocol="tcp",
+                        state="closed",
+                        latency_ms=None,
+                    )
+                    for block in range(2)
+                    for host in range(1, 101)
+                    for port in range(1, 6)
+                ]
+            )
+
+            with repo.session() as conn:
+                stored = conn.execute("SELECT count(*) FROM port_results").fetchone()[0]
+            self.assertEqual(stored, 0, "a wide scan keeps no uninformative rows")
+            self.assertEqual(repo.count_results_by_state(scan_id), {"closed": 1000})
+
+    def test_a_narrow_scan_still_keeps_the_detail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._repo(tmp)
+            self._write(repo, scan_id, "10.0.0.1", "closed", 5)
+
+            with repo.session() as conn:
+                stored = conn.execute("SELECT count(*) FROM port_results").fetchone()[0]
+            self.assertEqual(stored, 5, "a few ports on one host stay addressable")
+
     def test_a_row_carrying_a_banner_is_kept(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo, scan_id = self._repo(tmp)

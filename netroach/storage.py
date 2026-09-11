@@ -80,7 +80,16 @@ _EVIDENCE_NOT_CAPTURED_SQL = """
               )
 """
 
+# A host keeps up to this many rows of one state rather than folding them into
+# a count, because a handful of closed ports reads better as ports than as a
+# range. The allowance is per host, so a scan of one subnet keeps a few hundred
+# rows and a scan of ten keeps tens of thousands - detail nobody reads, on a
+# scale where only the open ports are looked at.
 COLLAPSE_THRESHOLD = 25
+# Above this many hosts the allowance is dropped and everything foldable folds.
+# The ranges are kept either way, so the detail is still there; what changes is
+# whether it is carried as rows.
+COLLAPSE_DETAIL_HOST_LIMIT = 100
 COLLAPSIBLE_STATES = ("closed", "filtered")
 # What `open_only` selects. A UDP port that did not refuse is open as far as a
 # scan can tell, which is why the evidence pass and the re-scan both count it.
@@ -779,6 +788,9 @@ class SQLiteRepository:
         arrive after the fold do not accumulate into an arbitrary sample of
         whichever probes happened to land last.
         """
+        # The batch spans every host the scan is working on, so its own size
+        # says how wide the scan is without asking the database.
+        threshold = COLLAPSE_THRESHOLD if len(hosts) <= COLLAPSE_DETAIL_HOST_LIMIT else 0
         placeholders = ",".join("?" * len(hosts))
         states = ",".join("?" * len(COLLAPSIBLE_STATES))
         groups = conn.execute(
@@ -804,7 +816,7 @@ class SQLiteRepository:
         for row in groups:
             key = (str(row["host"]), str(row["protocol"]), str(row["state"]))
             count = int(row["count"])
-            if count <= COLLAPSE_THRESHOLD and key not in collapsing:
+            if count <= threshold and key not in collapsing:
                 continue
             folding = [
                 int(found["port"])
