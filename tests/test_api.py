@@ -925,6 +925,19 @@ rate_limit_per_sec = 13
         self.assertIs(settings.syn_sweep, True)
         self.assertEqual(settings.syn_retries, 2)
 
+    def test_results_are_batched_by_count_or_by_waiting(self):
+        """Batching on count alone hides a scan smaller than one batch.
+
+        Every batch costs a transaction plus the fold that turns uninformative
+        rows into counts, so a sweep of millions wants large batches - but a
+        scan with fewer results than one batch would then show no progress at
+        all until it ended.
+        """
+        from netroach.api import RESULT_BATCH_MAX_WAIT_S, RESULT_BATCH_SIZE
+
+        self.assertGreaterEqual(RESULT_BATCH_SIZE, 1000)
+        self.assertLessEqual(RESULT_BATCH_MAX_WAIT_S, 2.0)
+
     def test_sweep_progress_is_reported_while_a_scan_runs_and_dropped_after(self):
         """A sweep stores no result until it settles, so this is its only sign of life.
 

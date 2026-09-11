@@ -522,7 +522,12 @@ async fn run_syn_scan(
                 service_name: None,
                 service_confidence: None,
                 banner: None,
-                evidence: Some("RST observed in SYN sweep".to_string()),
+                // No evidence string: every closed result in a sweep is a reset,
+                // so the note said the same thing on every row and said nothing
+                // the state did not. Storage keeps rows that carry something of
+                // their own and folds the rest into per-host counts, so a
+                // constant note made millions of closed rows unfoldable.
+                evidence: None,
                 error: None,
             },
             ProbeState::Unanswered => PortEvent {

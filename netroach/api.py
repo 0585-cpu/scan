@@ -80,6 +80,17 @@ SCAN_HEARTBEAT_STALE_S = 120.0
 # timeout and rate limit were set to. Polling on an interval instead is still
 # immediate to a person and costs nothing per probe.
 CANCEL_POLL_INTERVAL_S = 0.2
+# Results are written in batches, and every batch costs a transaction plus the
+# work that folds uninformative rows into per-host counts. At 250 a batch a
+# sweep of millions of probes paid that toll tens of thousands of times and
+# stored about 16,000 results a second; at 5,000 it stores about 47,000.
+#
+# Batching on count alone would leave a scan smaller than one batch showing no
+# progress at all until it finished, so a batch also goes out once it has been
+# waiting. Whichever comes first: large scans get large batches, small ones stay
+# responsive.
+RESULT_BATCH_SIZE = 5_000
+RESULT_BATCH_MAX_WAIT_S = 1.0
 
 
 def _cancel_watcher(repo: SQLiteRepository, scan_id: str) -> Callable[[], bool]:
@@ -1281,10 +1292,12 @@ def _run_scan_job(
 ) -> None:
     repo = SQLiteRepository(db_path)
     pending_results: list[PortResult] = []
+    last_flush = [time.monotonic()]
     evidence_summary: ScreenshotCaptureSummary | None = None
     eligible_evidence = 0
 
     def flush_results() -> None:
+        last_flush[0] = time.monotonic()
         if not pending_results:
             return
         # Clear even when the write fails. The cleanup path flushes again on the
@@ -1339,7 +1352,9 @@ def _run_scan_job(
         from .engine import _port_result_from_event
 
         pending_results.append(_port_result_from_event(event))
-        if len(pending_results) >= 250:
+        if len(pending_results) >= RESULT_BATCH_SIZE or (
+            time.monotonic() - last_flush[0] >= RESULT_BATCH_MAX_WAIT_S
+        ):
             flush_results()
         if should_stop():
             flush_results()
