@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import platform
 import subprocess
@@ -30,6 +31,7 @@ class DiagnosticReport:
     rust_engine: str | None
     rust_engine_available: bool
     rust_engine_version: str | None
+    syn_sweep_available: bool
     scapy_available: bool
     database_path: str
     packet_driver: str
@@ -57,6 +59,7 @@ def collect_diagnostics() -> DiagnosticReport:
         rust_engine=rust_engine,
         rust_engine_available=rust_engine is not None,
         rust_engine_version=read_engine_version(rust_engine),
+        syn_sweep_available=read_engine_syn_sweep(rust_engine),
         scapy_available=importlib.util.find_spec("scapy") is not None,
         database_path=os.fspath(default_db_path()),
         packet_driver=packet.driver,
@@ -183,6 +186,34 @@ def has_cap_net_raw() -> bool:
     except (OSError, ValueError):
         return False
     return False
+
+
+def read_engine_syn_sweep(engine_path: str | None) -> bool:
+    """Whether this engine build can SYN sweep.
+
+    SYN support is a compile-time feature, so only the binary can answer. Every
+    failure to ask answers False: offering SYN that the engine rejects fails the
+    scan outright, while offering connect always works.
+    """
+    if not engine_path:
+        return False
+    try:
+        result = subprocess.run(
+            [engine_path, "capabilities"],
+            text=True,
+            capture_output=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0:
+        return False
+    try:
+        report = json.loads(result.stdout.strip() or "{}")
+    except json.JSONDecodeError:
+        return False
+    return report.get("syn_sweep") is True
 
 
 def read_engine_version(engine_path: str | None) -> str | None:

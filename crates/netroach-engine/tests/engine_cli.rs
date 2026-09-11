@@ -29,6 +29,48 @@ fn version_flag_prints_engine_version() {
     assert!(stdout.trim().starts_with("netroach-engine "));
 }
 
+/// The capability line has to match what the binary will actually accept: a
+/// caller that trusts it and asks for SYN on a build without it gets every TCP
+/// scan rejected. So the claim is checked against a real --syn-sweep attempt.
+#[test]
+fn capabilities_reports_syn_support_this_build_actually_has() {
+    let output = Command::new(engine_path())
+        .arg("capabilities")
+        .output()
+        .expect("run netroach-engine capabilities");
+    assert!(output.status.success(), "engine capabilities failed");
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    let report: Value = serde_json::from_str(stdout.trim()).expect("capabilities is one JSON line");
+    assert_eq!(report["event"], "capabilities");
+    assert!(report["version"].is_string());
+    let claimed = report["syn_sweep"]
+        .as_bool()
+        .expect("syn_sweep is a boolean");
+    assert_eq!(claimed, cfg!(all(windows, feature = "syn-sweep")));
+
+    let attempt = Command::new(engine_path())
+        .args([
+            "scan",
+            "--scan-id",
+            "capability-check",
+            "--targets",
+            "127.0.0.1",
+            "--ports",
+            "1",
+            "--syn-sweep",
+        ])
+        .output()
+        .expect("run netroach-engine scan --syn-sweep");
+    let refused = String::from_utf8_lossy(&attempt.stderr)
+        .contains("built without SYN sweep support");
+    assert_ne!(
+        claimed, refused,
+        "capabilities claims syn_sweep={claimed} but the scan {} it",
+        if refused { "refused" } else { "accepted" }
+    );
+}
+
 #[test]
 fn scan_open_banner_service_emits_expected_ndjson_schema() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test listener");

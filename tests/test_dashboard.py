@@ -174,8 +174,24 @@ class DashboardPresetTests(unittest.TestCase):
         self.assertIn('id="scanConnectOnly" name="tcp_connect_only" type="checkbox"', html)
         self.assertIn('id="scanSynRetries" name="syn_retries"', html)
         self.assertIn("function updateTcpScanAvailability(", html)
-        self.assertIn("syn_sweep: tcp && form.get('tcp_connect_only') !== 'on'", html)
+        self.assertIn(
+            "syn_sweep: tcp && synSweepAvailable() && form.get('tcp_connect_only') !== 'on'",
+            html,
+        )
         self.assertIn("syn_retries: Number(form.get('syn_retries')", html)
+
+    def test_syn_is_only_offered_where_the_engine_was_built_for_it(self):
+        # A build without the feature rejects --syn-sweep outright, so asking for
+        # it fails every TCP scan the dashboard starts. The capability decides,
+        # and it is read at submit so a preset cannot turn SYN back on.
+        html = dashboard_html()
+
+        self.assertIn("function synSweepAvailable(", html)
+        self.assertIn("state.health?.diagnostics?.syn_sweep_available", html)
+        self.assertIn("if (tcp && !syn) $('scanConnectOnly').checked = true;", html)
+        self.assertIn("$('scanConnectOnly').disabled = !tcp || !syn;", html)
+        submit = html.split("syn_sweep:", 1)[1].split("\n", 1)[0]
+        self.assertIn("synSweepAvailable()", submit)
 
     def test_tcp_service_detection_enables_analysis_and_both_evidence_paths(self):
         html = dashboard_html()

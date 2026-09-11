@@ -2,7 +2,55 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from netroach.diagnostics import collect_packet_capability, read_engine_version
+from netroach.diagnostics import (
+    collect_packet_capability,
+    read_engine_syn_sweep,
+    read_engine_version,
+)
+
+
+class EngineSynSweepCapabilityTests(unittest.TestCase):
+    """Only the binary knows whether it was compiled with SYN support.
+
+    Every uncertain answer is False: a build that cannot SYN rejects the scan
+    outright, so claiming support that is not there breaks every TCP scan, while
+    falling back to connect always works.
+    """
+
+    def _engine_says(self, stdout: str, returncode: int = 0):
+        return subprocess.CompletedProcess(
+            args=["netroach-engine", "capabilities"],
+            returncode=returncode,
+            stdout=stdout,
+            stderr="",
+        )
+
+    def test_a_syn_capable_engine_reports_support(self):
+        completed = self._engine_says('{"event":"capabilities","syn_sweep":true,"version":"0.2.1"}\n')
+        with patch("netroach.diagnostics.subprocess.run", return_value=completed):
+            self.assertIs(read_engine_syn_sweep("netroach-engine"), True)
+
+    def test_a_connect_only_engine_reports_no_support(self):
+        completed = self._engine_says('{"event":"capabilities","syn_sweep":false,"version":"0.2.1"}\n')
+        with patch("netroach.diagnostics.subprocess.run", return_value=completed):
+            self.assertIs(read_engine_syn_sweep("netroach-engine"), False)
+
+    def test_an_engine_without_the_subcommand_reports_no_support(self):
+        # An older engine does not know "capabilities" and exits non-zero.
+        completed = self._engine_says("", returncode=2)
+        with patch("netroach.diagnostics.subprocess.run", return_value=completed):
+            self.assertIs(read_engine_syn_sweep("netroach-engine"), False)
+
+    def test_unreadable_output_reports_no_support(self):
+        with patch("netroach.diagnostics.subprocess.run", return_value=self._engine_says("not json")):
+            self.assertIs(read_engine_syn_sweep("netroach-engine"), False)
+
+    def test_an_engine_that_cannot_be_run_reports_no_support(self):
+        with patch("netroach.diagnostics.subprocess.run", side_effect=OSError("boom")):
+            self.assertIs(read_engine_syn_sweep("netroach-engine"), False)
+
+    def test_a_missing_engine_reports_no_support(self):
+        self.assertIs(read_engine_syn_sweep(None), False)
 
 
 class DiagnosticsTests(unittest.TestCase):

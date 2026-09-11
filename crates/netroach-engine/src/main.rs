@@ -39,6 +39,26 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Scan(ScanArgs),
+    /// Report what this build can do, so a caller can offer only what works.
+    ///
+    /// SYN sweeping is decided at compile time, so a binary is the only thing
+    /// that can answer whether it is available. Without this the dashboard has
+    /// to guess, and guessing wrong fails every TCP scan it starts.
+    Capabilities,
+}
+
+/// What this build supports, as one NDJSON line like every other engine output.
+fn emit_capabilities() -> Result<()> {
+    let syn_sweep = cfg!(all(windows, feature = "syn-sweep"));
+    println!(
+        "{}",
+        serde_json::json!({
+            "event": "capabilities",
+            "version": env!("CARGO_PKG_VERSION"),
+            "syn_sweep": syn_sweep,
+        })
+    );
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -244,6 +264,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Scan(args) => run_scan(args).await,
+        Command::Capabilities => emit_capabilities(),
     }
 }
 

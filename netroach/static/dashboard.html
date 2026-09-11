@@ -988,7 +988,7 @@
                         <span class="helper">SYN-open 포트만 TCP Connect로 재확인해 배너와 서비스를 분석하고 증적을 자동 수집합니다. 웹 포트는 브라우저 화면 증적을, 나머지는 실제 콘솔 창을 캡처합니다. 화면이 켜진 상태에서만 되고 포트당 시간이 더 걸립니다.</span>
                       </label>
                       <label class="check-row"><input id="scanConnectOnly" name="tcp_connect_only" type="checkbox">TCP Connect 스캔만 사용
-                        <span class="helper">기본은 Npcap 기반 SYN 스캔입니다. 선택하면 SYN을 사용하지 않고 모든 TCP 포트에 연결합니다.</span>
+                        <span class="helper" id="scanConnectOnlyHelp">기본은 Npcap 기반 SYN 스캔입니다. 선택하면 SYN을 사용하지 않고 모든 TCP 포트에 연결합니다.</span>
                       </label>
                     </div>
                     <div class="field full">
@@ -1865,6 +1865,14 @@
       return Boolean(state.health?.rust_engine_available ?? state.health?.diagnostics?.rust_engine_available);
     }
 
+    // SYN sweeping is compiled into the engine or it is not, and a build without
+    // it rejects the scan outright rather than falling back. So the tick is only
+    // offered where it works, and anything unknown - health not loaded yet, no
+    // engine - answers no: connect scanning works on every build.
+    function synSweepAvailable() {
+      return Boolean(state.health?.diagnostics?.syn_sweep_available);
+    }
+
     // Reads only the form's current values - no network calls, no side effects.
     function estimateScanScale() {
       const targets = asList($('scanTargets').value);
@@ -2208,6 +2216,9 @@ ${health.db}` : '데이터베이스 없음';
         state.health = await api('/v1/health');
         renderTopStatus();
         updateScanActionState();
+        // Health is what says whether this engine can SYN, so the scan form is
+        // only right once it has arrived.
+        updateTcpScanAvailability();
         renderAvailablePortProfiles();
         renderDiagnostics();
         renderPlugins(state.health.plugins || {});
@@ -3519,10 +3530,17 @@ ${health.db}` : '데이터베이스 없음';
 
     function updateTcpScanAvailability() {
       const tcp = $('scanProtocol').value === 'tcp';
-      $('scanConnectOnly').disabled = !tcp;
-      $('scanSynRetries').disabled = !tcp || $('scanConnectOnly').checked;
+      const syn = synSweepAvailable();
+      // Without SYN there is nothing to opt out of, so the tick is held on and
+      // locked: it says what the scan will do rather than offering a choice.
+      if (tcp && !syn) $('scanConnectOnly').checked = true;
+      $('scanConnectOnly').disabled = !tcp || !syn;
+      $('scanSynRetries').disabled = !tcp || !syn || $('scanConnectOnly').checked;
       $('scanForm').elements.service_probe.disabled = !tcp;
       if (!tcp) $('scanConnectOnly').checked = false;
+      $('scanConnectOnlyHelp').textContent = syn
+        ? '기본은 Npcap 기반 SYN 스캔입니다. 선택하면 SYN을 사용하지 않고 모든 TCP 포트에 연결합니다.'
+        : '이 빌드는 SYN 스캔을 지원하지 않아 TCP Connect 스캔만 사용합니다. SYN을 쓰려면 Npcap을 포함한 빌드가 필요합니다.';
     }
 
     $('scanForm').addEventListener('submit', async (event) => {
@@ -3557,7 +3575,10 @@ ${health.db}` : '데이터베이스 없음';
         concurrency: Number(form.get('concurrency') || 2000),
         rate_limit_per_sec: Number(form.get('rate_limit_per_sec') || 5000),
         udp_retries: Number(form.get('udp_retries') || 0),
-        syn_sweep: tcp && form.get('tcp_connect_only') !== 'on',
+        // Checked at submit rather than when the tick is drawn: a saved preset
+        // restores tcp_connect_only, so a preset made on a SYN build would
+        // otherwise turn SYN back on where the engine cannot do it.
+        syn_sweep: tcp && synSweepAvailable() && form.get('tcp_connect_only') !== 'on',
         syn_retries: Number(form.get('syn_retries') || 1),
         // A scan is one protocol throughout, so one of the two ticks answers
         // for it. They are separate because on UDP the tick decides what packet
