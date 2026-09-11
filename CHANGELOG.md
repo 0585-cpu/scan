@@ -2,6 +2,17 @@
 
 All notable Netroach changes are tracked here.
 
+## 0.2.3 - 2026-09-11
+
+- Fixed a SYN scan of a subnet the scanning machine sits in failing entirely. The sweep cannot probe an address the machine answers to and refused one by failing the whole run, so a twelve-subnet scan died on the one subnet holding the scanner. Those addresses now join loopback on the connect path.
+- Showed why a scan failed. The reason was recorded and never rendered, so diagnosing a refused target meant reading the database row by hand.
+- Sent SYN frames to the driver in batches rather than one call each. The per-call cost, not the rate limit, was the ceiling: a subnet sweep measured 2,387 probes a second before and 5,010 after. Batches are capped by the host count, so a burst spreads across the subnet and a single-host sweep still sends one frame at a time.
+- Allowed a wide sweep the greater of the flat rate limit and ten probes a second per host, capped by what the machine can send. The per-host budget only raises the ceiling, so narrow scans pace exactly as before. A scan must raise its own rate limit above 5,000 for the budget to give it more.
+- Stopped a sweep storing millions of rows it would only fold away. Closed results carried a constant note that made them unfoldable; without it a 65,535 port sweep of a live host keeps three rows instead of 27,101. Result batches also grew from 250 to 5,000, with a one second ceiling on waiting, raising storage from about 16,500 results a second to 50,000.
+- Failed a sweep whose replies Npcap dropped for want of buffer, rather than reporting the probes as filtered. Measured clean at the rates a sweep uses.
+- Reported what a SYN sweep and the automatic evidence pass are doing while they run. Neither stores a result while it works, so the progress bar sat at 0% for the sweep and 100% through evidence capture.
+- Offered SYN scanning in the dashboard only where the engine was built with it, and refused unsorted SYN input rather than silently losing replies to it.
+
 ## 0.2.2 - 2026-09-11
 
 - Offered SYN scanning in the dashboard only where the engine was built for it. The engine now answers a `capabilities` subcommand, and a build without SYN support no longer had every TCP scan it started rejected. Anything uncertain falls back to Connect, which works on every build.
