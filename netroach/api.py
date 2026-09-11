@@ -80,16 +80,19 @@ SCAN_HEARTBEAT_STALE_S = 120.0
 # timeout and rate limit were set to. Polling on an interval instead is still
 # immediate to a person and costs nothing per probe.
 CANCEL_POLL_INTERVAL_S = 0.2
-# Results are written in batches, and every batch costs a transaction plus the
-# work that folds uninformative rows into per-host counts. At 250 a batch a
-# sweep of millions of probes paid that toll tens of thousands of times and
-# stored about 16,000 results a second; at 5,000 it stores about 47,000.
+# Results are written in batches, and every batch costs a transaction plus one
+# count update per host and state it touches. A sweep of thousands of hosts
+# touches every host in every batch, so the cost is the batch count times the
+# host count: fewer, larger batches is the whole game. Measured over 2,540
+# hosts, a batch of 5,000 stored about 52,000 results a second and 100,000
+# stored about 182,000. Fifty thousand is the balance - it holds roughly 20MB
+# of pending results, which a scanning machine can spare.
 #
 # Batching on count alone would leave a scan smaller than one batch showing no
 # progress at all until it finished, so a batch also goes out once it has been
 # waiting. Whichever comes first: large scans get large batches, small ones stay
 # responsive.
-RESULT_BATCH_SIZE = 5_000
+RESULT_BATCH_SIZE = 50_000
 RESULT_BATCH_MAX_WAIT_S = 1.0
 
 

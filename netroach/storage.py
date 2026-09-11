@@ -112,6 +112,25 @@ def format_port_ranges(ranges: Iterable[tuple[int, int]]) -> str:
     return ",".join(f"{low}" if low == high else f"{low}-{high}" for low, high in ranges)
 
 
+def _is_foldable(result: PortResult) -> bool:
+    """Whether a result says nothing beyond its state, so a count can carry it."""
+    return (
+        result.state in COLLAPSIBLE_STATES
+        and not result.banner
+        and not result.evidence
+    )
+
+
+def _group_foldable(
+    results: Iterable[PortResult],
+) -> list[tuple[str, str, str, str, list[int]]]:
+    grouped: dict[tuple[str, str, str, str], list[int]] = {}
+    for result in results:
+        key = (result.scan_id or "", result.host, result.protocol, result.state)
+        grouped.setdefault(key, []).append(result.port)
+    return [(*key, ports) for key, ports in grouped.items()]
+
+
 def merge_port_ranges(existing: str | None, ports: Iterable[int]) -> str:
     """Add ports to a range string, keeping it sorted and coalesced.
 
@@ -767,17 +786,79 @@ class SQLiteRepository:
 
     def add_port_results(self, results: Iterable[PortResult]) -> None:
         batch = list(results)
-        values = [_port_result_values(result) for result in batch]
-        if not values:
+        if not batch:
             return
+        by_scan: dict[str, set[str]] = {}
+        for result in batch:
+            if result.scan_id:
+                by_scan.setdefault(result.scan_id, set()).add(result.host)
+
+        # A wide scan folds every uninformative result into a per-host count, so
+        # writing those rows first only to group, count and delete them is work
+        # with no output. At tens of millions of probes that round trip is the
+        # whole cost of storing a sweep: counted straight from the batch, the
+        # rows never exist. A narrow scan keeps them, so it takes the old path.
+        wide = {
+            scan_id
+            for scan_id, hosts in by_scan.items()
+            if len(hosts) > COLLAPSE_DETAIL_HOST_LIMIT
+        }
+        counted: list[PortResult] = []
+        kept = batch
+        if wide:
+            counted = [
+                result
+                for result in batch
+                if result.scan_id in wide and _is_foldable(result)
+            ]
+            if counted:
+                kept = [
+                    result
+                    for result in batch
+                    if not (result.scan_id in wide and _is_foldable(result))
+                ]
+
+        values = [_port_result_values(result) for result in kept]
         with self.session() as conn:
-            conn.executemany(PORT_RESULT_INSERT_SQL, values)
-            by_scan: dict[str, set[str]] = {}
-            for result in batch:
-                if result.scan_id:
-                    by_scan.setdefault(result.scan_id, set()).add(result.host)
+            if values:
+                conn.executemany(PORT_RESULT_INSERT_SQL, values)
+            for scan_id, host, protocol, state, ports in _group_foldable(counted):
+                self._add_state_count(conn, scan_id, host, protocol, state, ports)
             for scan_id, hosts in by_scan.items():
+                if scan_id in wide and not any(
+                    r.scan_id == scan_id for r in kept if _is_foldable(r)
+                ):
+                    # Nothing foldable was written for this scan, so there is
+                    # nothing for the fold to find.
+                    continue
                 self._collapse_bulk_states(conn, scan_id, sorted(hosts))
+
+    def _add_state_count(
+        self,
+        conn: sqlite3.Connection,
+        scan_id: str,
+        host: str,
+        protocol: str,
+        state: str,
+        ports: list[int],
+    ) -> None:
+        previous = conn.execute(
+            """
+            SELECT ports FROM scan_state_counts
+            WHERE scan_id=? AND host=? AND protocol=? AND state=?
+            """,
+            (scan_id, host, protocol, state),
+        ).fetchone()
+        merged = merge_port_ranges(previous["ports"] if previous else "", ports)
+        conn.execute(
+            """
+            INSERT INTO scan_state_counts(scan_id, host, protocol, state, collapsed, ports)
+            VALUES(?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scan_id, host, protocol, state)
+            DO UPDATE SET collapsed=collapsed + excluded.collapsed, ports=excluded.ports
+            """,
+            (scan_id, host, protocol, state, len(ports), merged),
+        )
 
     def _collapse_bulk_states(self, conn: sqlite3.Connection, scan_id: str, hosts: list[str]) -> None:
         """Replace uninformative runs of one state on one host with a count.
