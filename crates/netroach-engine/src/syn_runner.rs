@@ -14,7 +14,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Instant};
 
-use crate::netlink::{pcap_device_for_interface, resolve_route, Route};
+use crate::netlink::{self, pcap_device_for_interface, resolve_route, Route};
 use crate::syn_sweep::{
     build_syn_frame, parse_syn_reply, syn_cookie, LinkLayer, SynAnswer, SynReply,
 };
@@ -103,6 +103,16 @@ pub struct SweepProgress {
     pub answered: usize,
     /// Probes in the whole sweep.
     pub total: usize,
+}
+
+/// What a sweep found, and which hosts it could not address at all.
+#[derive(Debug)]
+pub struct SweepOutcome {
+    pub states: ProbeStates,
+    /// Hosts that never answered ARP, so nothing was sent to them. Their probes
+    /// are unanswered because they were never asked, which is a different thing
+    /// from a port that stayed quiet.
+    pub unreachable: std::collections::HashSet<Ipv4Addr>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -487,9 +497,12 @@ pub async fn run_syn_sweep(
     ports: &[u16],
     config: SynSweepConfig,
     mut on_progress: impl FnMut(SweepProgress),
-) -> Result<ProbeStates> {
+) -> Result<SweepOutcome> {
     if targets.is_empty() || ports.is_empty() {
-        return Ok(ProbeStates::new(0));
+        return Ok(SweepOutcome {
+            states: ProbeStates::new(0),
+            unreachable: std::collections::HashSet::new(),
+        });
     }
     if !is_sorted_unique(targets) {
         return Err(anyhow!("SYN targets must be sorted and unique"));
@@ -512,11 +525,27 @@ pub async fn run_syn_sweep(
         .checked_mul(ports.len())
         .ok_or_else(|| anyhow!("SYN probe count overflow"))?;
     let devices = Device::list().context("could not list Npcap devices")?;
-    let mut routes = Vec::with_capacity(targets.len());
+    let mut routes: Vec<Option<Route>> = Vec::with_capacity(targets.len());
+    // Hosts that never answered ARP. Their probes are never sent, so the caller
+    // can say the host did not answer rather than that its ports were filtered.
+    let mut unreachable = std::collections::HashSet::<Ipv4Addr>::new();
     let mut adapter_devices = BTreeMap::<u32, Device>::new();
     for &target in targets {
-        let route = resolve_route(target)
-            .with_context(|| format!("could not route SYN target {target}"))?;
+        // A host that will not answer ARP is down, and there is nothing to
+        // address a frame to. Skipped rather than failing the run: an empty
+        // address is the ordinary case in a subnet sweep, and failing over one
+        // would stop the scan the way a self-address once did.
+        let route = match resolve_route(target) {
+            Ok(route) => route,
+            Err(netlink::RouteError::NoNextHopMac(_)) => {
+                unreachable.insert(target);
+                routes.push(None);
+                continue;
+            }
+            Err(error) => {
+                return Err(anyhow!("could not route SYN target {target}: {error}"));
+            }
+        };
         ensure_remote_target(target, route.source_ip)?;
         let device = pcap_device_for_interface(route.interface_index, &devices)
             .with_context(|| format!("could not map SYN target {target} to Npcap"))?;
@@ -530,7 +559,7 @@ pub async fn run_syn_sweep(
         } else {
             adapter_devices.insert(route.interface_index, device);
         }
-        routes.push(route);
+        routes.push(Some(route));
     }
 
     let secret = sweep_secret();
@@ -564,7 +593,11 @@ pub async fn run_syn_sweep(
         status.map_err(|error| anyhow!(error))?;
     }
 
-    let batch_size = send_batch_size(targets.len());
+    // Sized by the hosts actually sent to. Sizing it by the targets asked for
+    // made a batch of two hundred frames land on the one host that answered
+    // ARP, which is the burst the cap exists to prevent.
+    let probed_hosts = targets.len().saturating_sub(unreachable.len());
+    let batch_size = send_batch_size(probed_hosts);
     let queue_bytes = (batch_size as u32 + 1) * SEND_QUEUE_BYTES_PER_FRAME;
     let mut senders = BTreeMap::<u32, Capture<Active>>::new();
     let mut queues = BTreeMap::<u32, SendQueue>::new();
@@ -581,7 +614,11 @@ pub async fn run_syn_sweep(
         queues.insert(interface_index, queue);
     }
 
-    let limiter = RateLimiter::new(sweep_rate(config.rate_limit_per_sec, targets.len()));
+    // Budgeted over the hosts that will actually be sent to, not the targets
+    // asked for. Skipping the ones that never answered ARP would otherwise
+    // concentrate the whole rate on the few that remain: a /24 with two live
+    // hosts would hit each of them with what was budgeted for two hundred.
+    let limiter = RateLimiter::new(sweep_rate(config.rate_limit_per_sec, probed_hosts));
     let mut states = ProbeStates::new(total);
     let mut ip_id = 1_u16;
     let mut reported_at = Instant::now();
@@ -607,6 +644,12 @@ pub async fn run_syn_sweep(
             if round > 0 && states.get(index) != ProbeState::Unanswered {
                 continue;
             }
+            let (host_index, port_index) = probe_coordinates(index, targets.len());
+            let Some(route) = routes[host_index] else {
+                // Nothing is sent, so nothing is paced: letting a skipped host
+                // hold a slot spread one live host's probes over the whole run.
+                continue;
+            };
             limiter.wait().await;
             sent += 1;
             // Reported on a clock rather than a probe count: the useful signal
@@ -622,8 +665,6 @@ pub async fn run_syn_sweep(
                     total,
                 });
             }
-            let (host_index, port_index) = probe_coordinates(index, targets.len());
-            let route: Route = routes[host_index];
             let target = targets[host_index];
             let port = ports[port_index];
             let cookie = syn_cookie(secret, target, port, source_port);
@@ -680,7 +721,10 @@ pub async fn run_syn_sweep(
         .await?;
     }
     readers.finish()?;
-    Ok(states)
+    Ok(SweepOutcome {
+        states,
+        unreachable,
+    })
 }
 
 #[cfg(test)]

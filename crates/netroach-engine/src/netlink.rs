@@ -175,6 +175,14 @@ fn neighbour_mac(interface_index: u32, ip: Ipv4Addr) -> Option<[u8; 6]> {
     }
     let mut mac = [0u8; 6];
     mac.copy_from_slice(&row.PhysicalAddress[..6]);
+    // A neighbour that never answered leaves an incomplete entry whose address
+    // is all zeroes. Sending to it is worse than useless: a switch has never
+    // learned that address, so it floods the frame to every port on the segment
+    // rather than dropping it. A host that will not answer ARP is down, and the
+    // sweep has nothing to say to it.
+    if mac == [0u8; 6] {
+        return None;
+    }
     Some(mac)
 }
 

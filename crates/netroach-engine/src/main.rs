@@ -458,7 +458,7 @@ async fn run_syn_scan(
     let (raw_targets, connect_targets) = partition_syn_targets(targets, &local_addresses)?;
 
     let sweep_scan_id = scan_id.clone();
-    let raw_states = run_syn_sweep(
+    let sweep = run_syn_sweep(
         &raw_targets,
         &ports,
         SynSweepConfig {
@@ -505,7 +505,7 @@ async fn run_syn_scan(
         let (host_index, port_index) = syn_runner::probe_coordinates(index, raw_targets.len());
         let target = raw_targets[host_index];
         let port = ports[port_index];
-        let event = match raw_states.get(index) {
+        let event = match sweep.states.get(index) {
             ProbeState::Open if service_probe => {
                 follow_up_jobs.push((IpAddr::V4(target), port, true));
                 continue;
@@ -530,6 +530,8 @@ async fn run_syn_scan(
                 evidence: None,
                 error: None,
             },
+            // A host that never answered ARP was never sent to, so saying its
+            // ports stayed quiet would claim a probe that never happened.
             ProbeState::Unanswered => PortEvent {
                 event: "port",
                 scan_id: scan_id.to_string(),
@@ -542,7 +544,14 @@ async fn run_syn_scan(
                 service_confidence: None,
                 banner: None,
                 evidence: None,
-                error: Some("no SYN reply after configured attempts".to_string()),
+                error: Some(
+                    if sweep.unreachable.contains(&target) {
+                        "host did not answer ARP; no probe was sent"
+                    } else {
+                        "no SYN reply after configured attempts"
+                    }
+                    .to_string(),
+                ),
             },
         };
         observe(&mut summary, &event);
