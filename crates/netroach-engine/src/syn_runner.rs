@@ -349,20 +349,39 @@ fn spawn_capture_reader(
                 return;
             }
 
-            while !stop.load(Ordering::Acquire) {
-                match capture.next_packet() {
-                    Ok(packet) => {
-                        if let Some(answer) = parse_syn_reply(link, packet.data, secret) {
-                            if !queue_capture_answer(&answers, answer, &failure) {
-                                return;
+            let mut read_loop = || {
+                while !stop.load(Ordering::Acquire) {
+                    match capture.next_packet() {
+                        Ok(packet) => {
+                            if let Some(answer) = parse_syn_reply(link, packet.data, secret) {
+                                if !queue_capture_answer(&answers, answer, &failure) {
+                                    return;
+                                }
                             }
                         }
+                        Err(pcap::Error::TimeoutExpired) => {}
+                        Err(error) => {
+                            failure.record(format!(
+                                "Npcap receive failed on {}: {error}",
+                                device.name
+                            ));
+                            return;
+                        }
                     }
-                    Err(pcap::Error::TimeoutExpired) => {}
-                    Err(error) => {
-                        failure.record(format!("Npcap receive failed on {}: {error}", device.name));
-                        return;
-                    }
+                }
+            };
+            read_loop();
+            // A reply the driver threw away is a probe that looks unanswered,
+            // which is an open port reported as filtered. The counter is the
+            // only sign it happened, so a sweep that lost replies says so
+            // rather than returning a clean-looking result.
+            if let Ok(stats) = capture.stats() {
+                let lost = stats.dropped.saturating_add(stats.if_dropped);
+                if lost > 0 {
+                    failure.record(format!(
+                        "Npcap dropped {lost} captured packets on {}; replies were lost, so a                          port answered during the loss reads as filtered. Lower the rate and                          run again.",
+                        device.name
+                    ));
                 }
             }
         }));
