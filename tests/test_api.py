@@ -925,6 +925,74 @@ rate_limit_per_sec = 13
         self.assertIs(settings.syn_sweep, True)
         self.assertEqual(settings.syn_retries, 2)
 
+    def test_sweep_progress_is_reported_while_a_scan_runs_and_dropped_after(self):
+        """A sweep stores no result until it settles, so this is its only sign of life.
+
+        Without it a scan of millions of probes is indistinguishable from one
+        that never started, which is exactly how a real run read.
+        """
+        from netroach.api import _sweep_progress, _run_scan_job
+        from netroach.models import EngineSettings, ScanSummary
+        from netroach.storage import SQLiteRepository
+
+        seen: list[dict[str, object]] = []
+
+        def fake_run_scan(**kwargs):
+            kwargs["on_event"](
+                {
+                    "event": "sweep_progress",
+                    "scan_id": kwargs["scan_id"],
+                    "round": 1,
+                    "sent": 4_000,
+                    "round_total": 10_000,
+                    "answered": 61_000,
+                    "total": 65_535,
+                }
+            )
+            seen.append(dict(_sweep_progress[kwargs["scan_id"]]))
+            # A port event means the sweep has settled and the job has moved on
+            # to storing results. The sweep reading must not survive it, or the
+            # progress bar stays parked on a finished round while real work runs.
+            kwargs["on_event"](
+                {
+                    "event": "port",
+                    "scan_id": kwargs["scan_id"],
+                    "host": "127.0.0.1",
+                    "port": 80,
+                    "protocol": "tcp",
+                    "state": "open",
+                }
+            )
+            seen.append(_sweep_progress.get(kwargs["scan_id"]))
+            return [], ScanSummary(scan_id=kwargs["scan_id"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(f"{tmp}/netroach.db")
+            scan_id = repo.create_scan_job(
+                targets="127.0.0.1", ports="80", scope=["127.0.0.0/8"], params={}
+            )
+            # Left queued on purpose: _run_scan_job starts the job itself,
+            # and only a queued job starts.
+            with patch("netroach.api.run_scan", side_effect=fake_run_scan):
+                _run_scan_job(
+                    f"{tmp}/netroach.db",
+                    scan_id,
+                    [ipaddress.ip_address("127.0.0.1")],
+                    [80],
+                    EngineSettings(protocol="tcp", syn_sweep=True),
+                )
+
+        self.assertEqual(len(seen), 2, "progress was not recorded while the scan ran")
+        self.assertEqual(seen[0]["sent"], 4_000)
+        self.assertEqual(seen[0]["round_total"], 10_000)
+        self.assertEqual(seen[0]["answered"], 61_000)
+        self.assertEqual(seen[0]["round"], 1)
+        self.assertIsNone(seen[1], "the first stored result must hand progress back")
+        # Kept only for the life of the job: a finished scan is described by its
+        # stored results, and leaving the entry would grow the dictionary for the
+        # life of the process.
+        self.assertNotIn(scan_id, _sweep_progress)
+
     def test_scan_api_rejects_syn_sweep_for_udp(self):
         from fastapi.testclient import TestClient
 

@@ -631,6 +631,12 @@ def create_app(
         progress = repo.get_scan_progress(scan_id)
         if not progress:
             raise _not_found("scan not found")
+        # A SYN sweep stores nothing until it settles, so the result-based
+        # percent above stays at zero for the whole run. This says what it is
+        # doing meanwhile, and is absent for a scan that is not sweeping.
+        sweep = _sweep_progress.get(scan_id)
+        if sweep is not None and progress["status"] == "running":
+            progress["sweep"] = dict(sweep)
         return progress
 
     @app.get("/v1/scans/{scan_id}/open-targets")
@@ -1242,6 +1248,19 @@ def _capture_stored_evidence(
     )
 
 
+# How far a running SYN sweep has got, keyed by scan id.
+#
+# A sweep publishes no result until its last retry has settled, so a scan of
+# millions of probes sits at 0% for an hour and cannot be told apart from one
+# that never started. This is the only sign it is alive.
+#
+# Module level rather than per-application because the job runs on a thread from
+# a module-level function; keys are scan UUIDs, so two applications sharing the
+# dictionary can never read each other's entry. Dropped when the job ends, or it
+# would grow for the life of the process.
+_sweep_progress: dict[str, dict[str, object]] = {}
+
+
 def _run_scan_job(
     db_path: str | Path,
     scan_id: str,
@@ -1294,8 +1313,22 @@ def _run_scan_job(
     def on_event(event: dict[str, object]) -> None:
         if should_stop():
             raise ScanCancelled(f"scan cancelled: {scan_id}")
+        if event.get("event") == "sweep_progress":
+            _sweep_progress[scan_id] = {
+                "round": event.get("round"),
+                "sent": event.get("sent"),
+                "round_total": event.get("round_total"),
+                "answered": event.get("answered"),
+                "total": event.get("total"),
+            }
+            return
         if event.get("event") != "port":
             return
+        # The sweep publishes nothing until it has settled, so the first port
+        # event means it is over and the job has moved on to storing results and
+        # probing services. Leaving the sweep's last reading in place would park
+        # the progress bar at a finished round and hide the work now running.
+        _sweep_progress.pop(scan_id, None)
         from .engine import _port_result_from_event
 
         pending_results.append(_port_result_from_event(event))
@@ -1392,6 +1425,11 @@ def _run_scan_job(
         _finish_heartbeat_quietly(heartbeat_finish)
         _flush_quietly(flush_results)
         repo.fail_scan(scan_id, str(exc))
+    finally:
+        # However the job ended, its progress is now history: the stored results
+        # say what happened. Leaving it would grow the dictionary for the life of
+        # the process and report a finished scan as still sweeping.
+        _sweep_progress.pop(scan_id, None)
 
 
 def _flush_quietly(flush: Callable[[], None]) -> None:

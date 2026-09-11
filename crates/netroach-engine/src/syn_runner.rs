@@ -23,12 +23,35 @@ const SYN_RATE_LIMIT_PER_SEC: u64 = 5_000;
 const RESPONSE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const CAPTURE_READ_TIMEOUT_MS: i32 = 100;
 const ANSWER_QUEUE_CAPACITY: usize = 16_384;
+const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug)]
 pub struct SynSweepConfig {
     pub timeout: Duration,
     pub rate_limit_per_sec: u64,
     pub retries: u8,
+}
+
+/// How far a running sweep has got.
+///
+/// A sweep holds every result back until the last retry has settled, so without
+/// this a scan of tens of millions of probes shows nothing at all for an hour
+/// and cannot be told apart from one that never started. Reported separately
+/// from results so the results themselves stay final when they are written: a
+/// closed probe can still be upgraded to open by a later reply, and publishing
+/// one early would put a wrong state in the report.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SweepProgress {
+    /// Which pass this is: 0 is the first sweep, then one per retry.
+    pub round: u8,
+    /// Probes sent in this round.
+    pub sent: usize,
+    /// Probes this round set out to send.
+    pub round_total: usize,
+    /// Probes with a definite state so far, across all rounds.
+    pub answered: usize,
+    /// Probes in the whole sweep.
+    pub total: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,6 +65,10 @@ pub enum ProbeState {
 pub struct ProbeStates {
     bytes: Vec<u8>,
     len: usize,
+    // Counted as answers land, because progress is reported while a sweep of
+    // tens of millions of probes runs and scanning the bitmap for each report
+    // would cost more than the sweep it is reporting on.
+    answered: usize,
 }
 
 impl ProbeStates {
@@ -49,7 +76,13 @@ impl ProbeStates {
         Self {
             bytes: vec![0; len.div_ceil(4)],
             len,
+            answered: 0,
         }
+    }
+
+    /// How many probes have a definite state. The rest are still unanswered.
+    pub fn answered(&self) -> usize {
+        self.answered
     }
 
     pub fn get(&self, index: usize) -> ProbeState {
@@ -72,14 +105,13 @@ impl ProbeStates {
         if current == next {
             return false;
         }
+        if current == ProbeState::Unanswered {
+            self.answered += 1;
+        }
         let shift = (index % 4) * 2;
         let mask = 0b11 << shift;
         self.bytes[index / 4] = (self.bytes[index / 4] & !mask) | ((next as u8) << shift);
         true
-    }
-
-    pub fn unanswered_indices(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.len).filter(|&index| self.get(index) == ProbeState::Unanswered)
     }
 
     #[cfg(test)]
@@ -340,6 +372,7 @@ pub async fn run_syn_sweep(
     targets: &[Ipv4Addr],
     ports: &[u16],
     config: SynSweepConfig,
+    mut on_progress: impl FnMut(SweepProgress),
 ) -> Result<ProbeStates> {
     if targets.is_empty() || ports.is_empty() {
         return Ok(ProbeStates::new(0));
@@ -428,16 +461,44 @@ pub async fn run_syn_sweep(
     let limiter = RateLimiter::new(effective_rate(config.rate_limit_per_sec));
     let mut states = ProbeStates::new(total);
     let mut ip_id = 1_u16;
+    let mut reported_at = Instant::now();
     for round in 0..=config.retries {
-        if round > 0 && states.unanswered_indices().next().is_none() {
+        let round_total = if round == 0 {
+            total
+        } else {
+            total - states.answered()
+        };
+        if round > 0 && round_total == 0 {
             break;
         }
+        let mut sent = 0usize;
+        on_progress(SweepProgress {
+            round,
+            sent,
+            round_total,
+            answered: states.answered(),
+            total,
+        });
         for index in probe_indices(targets.len(), ports.len()) {
             drain_answers(&answer_rx, &mut states, targets, ports, &capture_failure)?;
             if round > 0 && states.get(index) != ProbeState::Unanswered {
                 continue;
             }
             limiter.wait().await;
+            sent += 1;
+            // Reported on a clock rather than a probe count: the useful signal
+            // is that the sweep is still moving, and at 5,000 probes a second a
+            // count-based tick would either flood the log or crawl.
+            if reported_at.elapsed() >= PROGRESS_REPORT_INTERVAL {
+                reported_at = Instant::now();
+                on_progress(SweepProgress {
+                    round,
+                    sent,
+                    round_total,
+                    answered: states.answered(),
+                    total,
+                });
+            }
             let (host_index, port_index) = probe_coordinates(index, targets.len());
             let route: Route = routes[host_index];
             let target = targets[host_index];
@@ -464,6 +525,13 @@ pub async fn run_syn_sweep(
                 .sendpacket(&frame[..])
                 .with_context(|| format!("could not send SYN to {target}:{port}"))?;
         }
+        on_progress(SweepProgress {
+            round,
+            sent,
+            round_total,
+            answered: states.answered(),
+            total,
+        });
         collect_until(
             Instant::now() + config.timeout,
             &answer_rx,
@@ -528,15 +596,28 @@ mod tests {
     }
 
     #[test]
-    fn retry_indices_contain_only_unanswered_probes() {
+    fn the_answered_count_drives_what_a_retry_round_resends() {
+        // Counted rather than scanned: a retry round asks how much is left, and
+        // walking tens of millions of probe slots to answer would cost more than
+        // the round itself.
         let mut states = ProbeStates::new(5);
         states.record(1, SynReply::Open);
         states.record(3, SynReply::Closed);
 
+        assert_eq!(states.answered(), 2);
         assert_eq!(
-            states.unanswered_indices().collect::<Vec<_>>(),
+            (0..5).filter(|&i| states.get(i) == ProbeState::Unanswered).collect::<Vec<_>>(),
             vec![0, 2, 4]
         );
+    }
+
+    #[test]
+    fn an_upgraded_probe_is_not_counted_answered_twice() {
+        let mut states = ProbeStates::new(2);
+        states.record(0, SynReply::Closed);
+        states.record(0, SynReply::Open);
+
+        assert_eq!(states.answered(), 1);
     }
 
     #[test]
@@ -630,7 +711,7 @@ mod tests {
         };
         let targets = [Ipv4Addr::new(10, 0, 0, 2), Ipv4Addr::new(10, 0, 0, 1)];
 
-        let error = run_syn_sweep(&targets, &[80], config)
+        let error = run_syn_sweep(&targets, &[80], config, |_| {})
             .await
             .expect_err("unsorted targets must fail the sweep");
 

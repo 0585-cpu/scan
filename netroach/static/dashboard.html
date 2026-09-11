@@ -2417,6 +2417,26 @@ ${health.db}` : '데이터베이스 없음';
       const counts = planned
         ? `<small>${done.toLocaleString()} / ${planned.toLocaleString()}</small>`
         : '';
+      // A SYN sweep records nothing until every retry has settled, so the bar
+      // above sits at 0% for the whole run. While one is sweeping, show what it
+      // is actually doing instead of a bar that cannot move.
+      const sweep = progress?.sweep;
+      if (sweep) {
+        const sent = Number(sweep.sent || 0);
+        const roundTotal = Number(sweep.round_total || 0);
+        const swept = roundTotal ? Math.min(100, Math.round((sent / roundTotal) * 100)) : 0;
+        const pass = Number(sweep.round || 0) === 0 ? 'SYN 스윕' : `SYN 재시도 ${sweep.round}회차`;
+        strip.innerHTML = `
+          <div class="cell"><span class="k">상태</span><span class="v">${pill(job.status, stateClass(job.status))}</span></div>
+          <div class="cell grow"><span class="k">대상</span><span class="v">${stripDisclosure(stripTargetLabel(job.targets), job.targets)}</span></div>
+          <div class="cell grow"><span class="k">${escapeHtml(pass)}</span><div class="progress-line">
+            <div class="track"><i style="width:${swept}%"></i></div>
+            <b>${swept}%</b><small>${sent.toLocaleString()} / ${roundTotal.toLocaleString()} 전송</small>
+          </div></div>
+          <div class="cell"><span class="k">응답</span><span class="v num">${Number(sweep.answered || 0).toLocaleString()}</span></div>
+        `;
+        return;
+      }
       strip.innerHTML = `
         <div class="cell"><span class="k">상태</span><span class="v">${pill(job.status, stateClass(job.status))}</span></div>
         <div class="cell grow"><span class="k">대상</span><span class="v">${stripDisclosure(stripTargetLabel(job.targets), job.targets)}</span></div>
@@ -2744,13 +2764,23 @@ ${health.db}` : '데이터베이스 없음';
     async function progressSnapshot(job, extra) {
       const progress = await api(`/v1/scans/${encodeURIComponent(job.id)}/progress`);
       const states = progress.states || {};
+      // A SYN sweep writes no result until every retry has settled, so the
+      // result-based numbers sit at 0 for the whole run. While one is sweeping,
+      // count probes sent instead - the strip is the only thing saying the scan
+      // is alive, and an hour of "0%" reads as a scan that never started.
+      const sweep = progress.sweep;
+      const sweptPercent = sweep && sweep.round_total
+        ? Math.min(100, Math.round((Number(sweep.sent || 0) / Number(sweep.round_total)) * 100))
+        : 0;
       return {
         scanId: job.id,
         status: progress.status,
-        label: `${stripTargetLabel(job.targets)} · ${stripPortLabel(job.ports)}`,
-        percent: progress.percent || 0,
-        completed: progress.completed_results || 0,
-        planned: progress.planned_total || 0,
+        label: sweep
+          ? `${stripTargetLabel(job.targets)} · ${Number(sweep.round || 0) === 0 ? 'SYN 스윕' : `SYN 재시도 ${sweep.round}회차`}`
+          : `${stripTargetLabel(job.targets)} · ${stripPortLabel(job.ports)}`,
+        percent: sweep ? sweptPercent : (progress.percent || 0),
+        completed: sweep ? Number(sweep.sent || 0) : (progress.completed_results || 0),
+        planned: sweep ? Number(sweep.round_total || 0) : (progress.planned_total || 0),
         open: states.open || 0,
         error: states.error || 0,
         startedAt: progress.started_at || progress.created_at,

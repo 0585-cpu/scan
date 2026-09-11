@@ -465,6 +465,7 @@ async fn run_syn_scan(
         }
     }
 
+    let sweep_scan_id = scan_id.clone();
     let raw_states = run_syn_sweep(
         &raw_targets,
         &ports,
@@ -472,6 +473,20 @@ async fn run_syn_scan(
             timeout: timeout_duration,
             rate_limit_per_sec,
             retries: syn_retries,
+        },
+        |progress| {
+            // A sweep emits no results until every retry has settled, so this is
+            // the only sign it is alive. Losing a progress line is harmless, so
+            // a broken pipe here must not end the scan the way emit() would.
+            let _ = emit(&SweepProgressEvent {
+                event: "sweep_progress",
+                scan_id: sweep_scan_id.to_string(),
+                round: progress.round,
+                sent: progress.sent,
+                round_total: progress.round_total,
+                answered: progress.answered,
+                total: progress.total,
+            });
         },
     )
     .await?;
@@ -579,6 +594,19 @@ async fn run_syn_scan(
     (summary.process_rss_bytes, summary.process_peak_rss_bytes) = process_memory_bytes();
     emit(&summary)?;
     Ok(())
+}
+
+/// Liveness for a sweep that will not produce a result for an hour.
+#[cfg(all(windows, feature = "syn-sweep"))]
+#[derive(Serialize)]
+struct SweepProgressEvent {
+    event: &'static str,
+    scan_id: String,
+    round: u8,
+    sent: usize,
+    round_total: usize,
+    answered: usize,
+    total: usize,
 }
 
 #[cfg(all(windows, feature = "syn-sweep"))]

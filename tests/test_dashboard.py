@@ -473,8 +473,20 @@ class DashboardTargetCompactionTests(unittest.TestCase):
     def test_the_strip_names_one_target_and_counts_the_ports(self):
         html = dashboard_html()
 
-        self.assertIn("label: `${stripTargetLabel(job.targets)} · ${stripPortLabel(job.ports)}`", html)
+        # A sweeping scan names the pass instead of the port count, so this is
+        # the branch that runs for every other scan.
+        self.assertIn(": `${stripTargetLabel(job.targets)} · ${stripPortLabel(job.ports)}`", html)
         self.assertIn("외 ${items.length - 1}개", html)
+
+    def test_the_strip_follows_a_sweep_that_stores_no_result_until_it_settles(self):
+        html = dashboard_html()
+
+        self.assertIn("const sweep = progress.sweep;", html)
+        self.assertIn("SYN 스윕", html)
+        self.assertIn("SYN 재시도 ${sweep.round}회차", html)
+        # Probes sent, not results stored: a sweep stores none until the end.
+        self.assertIn("completed: sweep ? Number(sweep.sent || 0)", html)
+        self.assertIn("planned: sweep ? Number(sweep.round_total || 0)", html)
 
 
 class DashboardHostViewTests(unittest.TestCase):
