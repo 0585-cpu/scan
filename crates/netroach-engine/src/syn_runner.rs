@@ -606,7 +606,9 @@ mod tests {
 
         assert_eq!(states.answered(), 2);
         assert_eq!(
-            (0..5).filter(|&i| states.get(i) == ProbeState::Unanswered).collect::<Vec<_>>(),
+            (0..5)
+                .filter(|&i| states.get(i) == ProbeState::Unanswered)
+                .collect::<Vec<_>>(),
             vec![0, 2, 4]
         );
     }

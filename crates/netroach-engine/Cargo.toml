@@ -1,6 +1,6 @@
 [package]
 name = "netroach-engine"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 # The engine source needs 1.83 (io::ErrorKind::HostUnreachable), but the
 # locked dependency tree needs 1.88 - verified by the rust-msrv CI job.

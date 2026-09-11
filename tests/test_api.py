@@ -931,7 +931,7 @@ rate_limit_per_sec = 13
         Without it a scan of millions of probes is indistinguishable from one
         that never started, which is exactly how a real run read.
         """
-        from netroach.api import _scan_activity, _run_scan_job
+        from netroach.api import _run_scan_job, _scan_activity
         from netroach.models import EngineSettings, ScanSummary
         from netroach.storage import SQLiteRepository
 

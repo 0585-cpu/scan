@@ -62,10 +62,11 @@ fn capabilities_reports_syn_support_this_build_actually_has() {
         ])
         .output()
         .expect("run netroach-engine scan --syn-sweep");
-    let refused = String::from_utf8_lossy(&attempt.stderr)
-        .contains("built without SYN sweep support");
+    let refused =
+        String::from_utf8_lossy(&attempt.stderr).contains("built without SYN sweep support");
     assert_ne!(
-        claimed, refused,
+        claimed,
+        refused,
         "capabilities claims syn_sweep={claimed} but the scan {} it",
         if refused { "refused" } else { "accepted" }
     );
