@@ -478,6 +478,17 @@ class DashboardTargetCompactionTests(unittest.TestCase):
         self.assertIn(": `${stripTargetLabel(job.targets)} · ${stripPortLabel(job.ports)}`", html)
         self.assertIn("외 ${items.length - 1}개", html)
 
+    def test_a_failed_scan_shows_why_it_failed(self):
+        """The reason was recorded and never rendered.
+
+        A scan that refused one target reported only "failed", so working out
+        which target and why meant reading the database row by hand.
+        """
+        html = dashboard_html()
+
+        self.assertIn("job.status === 'failed' && job.summary?.error", html)
+        self.assertIn("실패 원인", html)
+
     def test_the_strip_follows_the_phases_that_store_no_result(self):
         """A sweep reads as 0% and the evidence pass as 100%, for as long as each runs.
 

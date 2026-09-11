@@ -2410,6 +2410,17 @@ ${health.db}` : '데이터베이스 없음';
         strip.innerHTML = '<div class="cell grow"><span class="v">작업을 선택하면 요약이 표시됩니다</span></div>';
         return;
       }
+      // A failed scan records why it failed, and nothing showed it: the status
+      // said "failed" and the reason sat in the database. Diagnosing a scan
+      // that refused a single target meant reading the row by hand.
+      if (job.status === 'failed' && job.summary?.error) {
+        strip.innerHTML = `
+          <div class="cell"><span class="k">상태</span><span class="v">${pill(job.status, stateClass(job.status))}</span></div>
+          <div class="cell grow"><span class="k">대상</span><span class="v">${stripDisclosure(stripTargetLabel(job.targets), job.targets)}</span></div>
+          <div class="cell grow"><span class="k">실패 원인</span><span class="v">${escapeHtml(text(job.summary.error))}</span></div>
+        `;
+        return;
+      }
       const percent = Number(progress?.percent || 0);
       const done = Number(progress?.completed_results || 0);
       const planned = Number(progress?.planned_total || 0);
