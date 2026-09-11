@@ -26,12 +26,12 @@ class EngineSynSweepCapabilityTests(unittest.TestCase):
         )
 
     def test_a_syn_capable_engine_reports_support(self):
-        completed = self._engine_says('{"event":"capabilities","syn_sweep":true,"version":"0.2.3"}\n')
+        completed = self._engine_says('{"event":"capabilities","syn_sweep":true,"version":"0.2.4"}\n')
         with patch("netroach.diagnostics.subprocess.run", return_value=completed):
             self.assertIs(read_engine_syn_sweep("netroach-engine"), True)
 
     def test_a_connect_only_engine_reports_no_support(self):
-        completed = self._engine_says('{"event":"capabilities","syn_sweep":false,"version":"0.2.3"}\n')
+        completed = self._engine_says('{"event":"capabilities","syn_sweep":false,"version":"0.2.4"}\n')
         with patch("netroach.diagnostics.subprocess.run", return_value=completed):
             self.assertIs(read_engine_syn_sweep("netroach-engine"), False)
 

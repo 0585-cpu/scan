@@ -2,6 +2,20 @@
 
 All notable Netroach changes are tracked here.
 
+## 0.2.4 - 2026-09-11
+
+- Fixed a SYN-capable build defaulting to Connect scanning. The scan form read "health has not answered yet" as "this engine cannot SYN", ticked Connect-only on load, and never untied it, so every scan started from the dashboard was a Connect scan unless the operator noticed.
+- Stopped sending frames to a host that never answered ARP. The incomplete neighbour entry is all zeroes, and a switch floods rather than drops an address it has never learned: a /24 with two hundred empty addresses and a thousand ports put two hundred thousand flooded frames on the segment. Those hosts are skipped and reported as not having answered ARP, which is a different thing from a filtered port.
+- Refused to sweep a broadcast address, which reaches every host on the segment and cannot produce a result. The target is skipped with that reason; the rest of the scan proceeds.
+- Closed the half-open connection a probe leaves on a target. The scanning host's firewall drops the unsolicited SYN-ACK rather than resetting it, so the target held the connection and retransmitted until its own timeout - measured, four SYN-ACKs and no reset. On a controller or a printer whose backlog is a slot or two, that slot was unavailable for the best part of a minute.
+- Lowered the narrow sweep floor to 500 probes a second, where the measured answer stops depending on luck: over 512 ports at 1,000 the open port came back in two runs of three, and at 500 in five of five with nothing unanswered.
+- Let a wide sweep use the greater of that floor and ten probes a second per host, capped by what the machine can send. Probes are shared across hosts, so a scan of thousands was paced as though aimed at one fragile device. A scan must raise its own rate limit above the floor for the budget to give it more.
+- Sent SYN frames to the driver in batches rather than one call each, which was the ceiling rather than the rate limit: a subnet sweep measured 2,387 probes a second before and 5,010 after. The batch is capped by the host count, so a burst spreads across the subnet.
+- Sent a sweep's bulk results as one summary per host instead of a line per probe. Storing twenty-five million results went from about an hour to under a second; the counts and port ranges are unchanged.
+- Failed a sweep whose replies Npcap dropped for want of buffer, rather than reporting those probes as filtered.
+- Showed why a scan failed, and what a SYN sweep and the evidence pass are doing while they run - neither stores a result while it works, so the bar sat at 0% for one and 100% for the other.
+- Added `tools/syn_crosscheck.py` and `docs/testing-and-measurement-ko.md`.
+
 ## 0.2.3 - 2026-09-11
 
 - Fixed a SYN scan of a subnet the scanning machine sits in failing entirely. The sweep cannot probe an address the machine answers to and refused one by failing the whole run, so a twelve-subnet scan died on the one subnet holding the scanner. Those addresses now join loopback on the connect path.
