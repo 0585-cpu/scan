@@ -478,15 +478,21 @@ class DashboardTargetCompactionTests(unittest.TestCase):
         self.assertIn(": `${stripTargetLabel(job.targets)} · ${stripPortLabel(job.ports)}`", html)
         self.assertIn("외 ${items.length - 1}개", html)
 
-    def test_the_strip_follows_a_sweep_that_stores_no_result_until_it_settles(self):
+    def test_the_strip_follows_the_phases_that_store_no_result(self):
+        """A sweep reads as 0% and the evidence pass as 100%, for as long as each runs.
+
+        Both are described by the same helper so the two progress displays can
+        never disagree about what the scan is doing.
+        """
         html = dashboard_html()
 
-        self.assertIn("const sweep = progress.sweep;", html)
+        self.assertIn("function activityProgress(activity) {", html)
         self.assertIn("SYN 스윕", html)
-        self.assertIn("SYN 재시도 ${sweep.round}회차", html)
-        # Probes sent, not results stored: a sweep stores none until the end.
-        self.assertIn("completed: sweep ? Number(sweep.sent || 0)", html)
-        self.assertIn("planned: sweep ? Number(sweep.round_total || 0)", html)
+        self.assertIn("SYN 재시도 ${activity.round}회차", html)
+        self.assertIn("증적 수집${where}", html)
+        # Probes sent and ports examined, not results stored.
+        self.assertIn("completed: activity ? activity.done", html)
+        self.assertIn("planned: activity ? activity.total", html)
 
 
 class DashboardHostViewTests(unittest.TestCase):

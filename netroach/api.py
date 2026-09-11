@@ -631,12 +631,12 @@ def create_app(
         progress = repo.get_scan_progress(scan_id)
         if not progress:
             raise _not_found("scan not found")
-        # A SYN sweep stores nothing until it settles, so the result-based
-        # percent above stays at zero for the whole run. This says what it is
-        # doing meanwhile, and is absent for a scan that is not sweeping.
-        sweep = _sweep_progress.get(scan_id)
-        if sweep is not None and progress["status"] == "running":
-            progress["sweep"] = dict(sweep)
+        # The percent above counts stored results, which stands still through
+        # both the sweep and the evidence pass. This says what the scan is doing
+        # meanwhile, and is absent when the result count is the honest answer.
+        activity = _scan_activity.get(scan_id)
+        if activity is not None and progress["status"] == "running":
+            progress["activity"] = dict(activity)
         return progress
 
     @app.get("/v1/scans/{scan_id}/open-targets")
@@ -1248,17 +1248,23 @@ def _capture_stored_evidence(
     )
 
 
-# How far a running SYN sweep has got, keyed by scan id.
+# What a running scan is doing right now, keyed by scan id.
 #
-# A sweep publishes no result until its last retry has settled, so a scan of
-# millions of probes sits at 0% for an hour and cannot be told apart from one
-# that never started. This is the only sign it is alive.
+# Two phases of a scan move without storing a result, so the result-based bar
+# cannot describe either: a SYN sweep publishes nothing until its last retry has
+# settled, and automatic evidence capture runs after every result is already in.
+# The first reads as 0% for an hour, the second as 100% for minutes, and neither
+# can be told from a scan that has stopped.
+#
+# One slot rather than one per phase: the phases cannot overlap - evidence
+# capture starts only once the results are stored - so a single entry makes it
+# impossible for two of them to claim the bar at once.
 #
 # Module level rather than per-application because the job runs on a thread from
 # a module-level function; keys are scan UUIDs, so two applications sharing the
 # dictionary can never read each other's entry. Dropped when the job ends, or it
 # would grow for the life of the process.
-_sweep_progress: dict[str, dict[str, object]] = {}
+_scan_activity: dict[str, dict[str, object]] = {}
 
 
 def _run_scan_job(
@@ -1314,7 +1320,8 @@ def _run_scan_job(
         if should_stop():
             raise ScanCancelled(f"scan cancelled: {scan_id}")
         if event.get("event") == "sweep_progress":
-            _sweep_progress[scan_id] = {
+            _scan_activity[scan_id] = {
+                "phase": "sweep",
                 "round": event.get("round"),
                 "sent": event.get("sent"),
                 "round_total": event.get("round_total"),
@@ -1328,7 +1335,7 @@ def _run_scan_job(
         # event means it is over and the job has moved on to storing results and
         # probing services. Leaving the sweep's last reading in place would park
         # the progress bar at a finished round and hide the work now running.
-        _sweep_progress.pop(scan_id, None)
+        _scan_activity.pop(scan_id, None)
         from .engine import _port_result_from_event
 
         pending_results.append(_port_result_from_event(event))
@@ -1391,6 +1398,23 @@ def _run_scan_job(
                         capture_agent=capture_agent,
                     )
 
+                # Every result is already stored by now, so the bar reads 100%
+                # while this runs - and capturing a page or a console window
+                # takes a second or more each, for as many open ports as the
+                # scan found. Report what it is on, the way the sweep does.
+                examined = {"count": 0}
+                planned_evidence = min(eligible_evidence, screenshot_max)
+
+                def examining(result: Mapping[str, Any]) -> None:
+                    examined["count"] += 1
+                    _scan_activity[scan_id] = {
+                        "phase": "evidence",
+                        "examined": examined["count"],
+                        "total": planned_evidence,
+                        "host": str(result.get("host", "")),
+                        "port": result.get("port"),
+                    }
+
                 evidence_summary = capture_automatic_evidence(
                     stored_results,
                     store=store_screenshot,
@@ -1398,6 +1422,7 @@ def _run_scan_job(
                     maximum=screenshot_max,
                     should_stop=should_stop,
                     capture_console=capture_console,
+                    on_examined=examining,
                 )
             heartbeat_finish()
             if repo.is_scan_cancel_requested(scan_id):
@@ -1429,7 +1454,7 @@ def _run_scan_job(
         # However the job ended, its progress is now history: the stored results
         # say what happened. Leaving it would grow the dictionary for the life of
         # the process and report a finished scan as still sweeping.
-        _sweep_progress.pop(scan_id, None)
+        _scan_activity.pop(scan_id, None)
 
 
 def _flush_quietly(flush: Callable[[], None]) -> None:

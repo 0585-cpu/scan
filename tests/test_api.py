@@ -931,7 +931,7 @@ rate_limit_per_sec = 13
         Without it a scan of millions of probes is indistinguishable from one
         that never started, which is exactly how a real run read.
         """
-        from netroach.api import _sweep_progress, _run_scan_job
+        from netroach.api import _scan_activity, _run_scan_job
         from netroach.models import EngineSettings, ScanSummary
         from netroach.storage import SQLiteRepository
 
@@ -949,7 +949,7 @@ rate_limit_per_sec = 13
                     "total": 65_535,
                 }
             )
-            seen.append(dict(_sweep_progress[kwargs["scan_id"]]))
+            seen.append(dict(_scan_activity[kwargs["scan_id"]]))
             # A port event means the sweep has settled and the job has moved on
             # to storing results. The sweep reading must not survive it, or the
             # progress bar stays parked on a finished round while real work runs.
@@ -963,7 +963,7 @@ rate_limit_per_sec = 13
                     "state": "open",
                 }
             )
-            seen.append(_sweep_progress.get(kwargs["scan_id"]))
+            seen.append(_scan_activity.get(kwargs["scan_id"]))
             return [], ScanSummary(scan_id=kwargs["scan_id"])
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -987,11 +987,12 @@ rate_limit_per_sec = 13
         self.assertEqual(seen[0]["round_total"], 10_000)
         self.assertEqual(seen[0]["answered"], 61_000)
         self.assertEqual(seen[0]["round"], 1)
+        self.assertEqual(seen[0]["phase"], "sweep")
         self.assertIsNone(seen[1], "the first stored result must hand progress back")
         # Kept only for the life of the job: a finished scan is described by its
         # stored results, and leaving the entry would grow the dictionary for the
         # life of the process.
-        self.assertNotIn(scan_id, _sweep_progress)
+        self.assertNotIn(scan_id, _scan_activity)
 
     def test_scan_api_rejects_syn_sweep_for_udp(self):
         from fastapi.testclient import TestClient
