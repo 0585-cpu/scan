@@ -228,7 +228,52 @@ git diff --stat                            # 복구됐는지 확인
 
 ---
 
-## 10. 문자열 치환으로 코드를 고칠 때
+## 10. 다른 플랫폼에서 맞는 설명은 여기서 틀릴 수 있다
+
+SYN 스캔은 half-open을 남기지 않는다고 알려져 있다. 리눅스에서 raw 소켓으로
+SYN을 보내면 돌아온 SYN-ACK에 대응하는 소켓이 없으므로 **커널이 알아서 RST를
+보내** 정리하기 때문이다. 이 설명을 그대로 옮겨 코드 주석과 인수인계 문서에
+적었는데, **Windows에서는 틀렸다.** 방화벽이 요청하지 않은 SYN-ACK를 조용히
+버려서 RST가 나가지 않는다.
+
+재본 방법은 단순하다. scapy로 인터페이스를 들으면서 SYN 하나를 보내고, 무엇이
+오가는지 센다.
+
+```python
+import threading, subprocess, time
+from scapy.all import sniff, TCP, IP
+
+TARGET = "192.168.1.1"
+seen = {"synack": 0, "rst_from_us": 0}
+
+def handle(pkt):
+    if IP in pkt and TCP in pkt:
+        flags = pkt[TCP].flags
+        if pkt[IP].src == TARGET and flags & 0x12 == 0x12:   # SYN-ACK
+            seen["synack"] += 1
+        if pkt[IP].dst == TARGET and flags & 0x04:           # RST
+            seen["rst_from_us"] += 1
+
+threading.Thread(
+    target=lambda: sniff(filter=f"tcp and host {TARGET}", timeout=25, prn=handle),
+    daemon=True,
+).start()
+time.sleep(3)                      # 스니퍼가 자리 잡을 시간
+subprocess.run([...])              # 포트 하나짜리 스캔
+```
+
+결과는 **SYN-ACK 4개, RST 0개**였다. 대상이 응답을 계속 재전송하며 half-open을
+자체 타임아웃까지 들고 있었다는 뜻이다. 스윕이 직접 RST를 보내도록 고친 뒤 같은
+측정은 **SYN-ACK 2개, RST 1개**가 됐다.
+
+교훈은 두 가지다.
+
+- **"알려진 동작"은 플랫폼과 함께 온다.** 리눅스 문서를 읽고 Windows 코드에 적으면
+  그럴듯하게 틀린 주석이 남는다. 네트워크 동작은 특히 그렇다.
+- **패킷 수준의 주장은 패킷을 세서 확인할 수 있다.** 위 스니퍼는 스무 줄이고,
+  한 번 만들어두면 "정말 그 패킷이 나가는가"를 묻는 모든 질문에 쓸 수 있다.
+
+## 11. 문자열 치환으로 코드를 고칠 때
 
 같은 문자열이 파일에 여러 번 나오면 첫 번째가 바뀐다. 그날
 `repo.mark_scan_started(scan_id)`를 바꾸려다 **전혀 다른 테스트의 줄**을 지웠고,
@@ -240,7 +285,7 @@ git diff --stat                            # 복구됐는지 확인
 
 ---
 
-## 11. 백그라운드 빌드 로그는 직접 파일로 남길 것
+## 12. 백그라운드 빌드 로그는 직접 파일로 남길 것
 
 백그라운드 작업의 출력 파일은 **앞부분이 유실될 수 있다.** 그날 빌드 로그의
 시작 부분이 사라져 Npcap 서명 검증 줄이 보이지 않았고, 설치본에 Npcap이 안
@@ -263,7 +308,7 @@ grep -E "removed private|restored standard" build.log              # 정리 확�
 
 ---
 
-## 12. 릴리스 자산은 다시 받아서 대조할 것
+## 13. 릴리스 자산은 다시 받아서 대조할 것
 
 업로드가 끝났다고 파일이 온전하다는 보장은 없다.
 
