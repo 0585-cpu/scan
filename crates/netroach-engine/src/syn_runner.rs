@@ -120,6 +120,20 @@ fn link_for_datalink(datalink: Linktype) -> Result<LinkLayer> {
     }
 }
 
+/// Whether a slice is ascending with no duplicates, which is what the binary
+/// searches in `answer_index` need to find a reply's probe slot.
+fn is_sorted_unique<T: Ord>(values: &[T]) -> bool {
+    values.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+/// The probe slot a reply belongs to, or None when it names a host or port this
+/// run did not probe.
+///
+/// The binary searches require `targets` and `ports` to be sorted; on unsorted
+/// input they report "not found" rather than failing, which would drop a real
+/// SYN-ACK and leave its probe looking unanswered - an open port reported as
+/// filtered, with nothing to show anything went wrong. `run_syn_sweep` rejects
+/// unsorted input up front so that cannot happen quietly.
 fn answer_index(answer: &SynAnswer, targets: &[Ipv4Addr], ports: &[u16]) -> Option<usize> {
     let host_index = targets.binary_search(&answer.host).ok()?;
     let port_index = ports.binary_search(&answer.port).ok()?;
@@ -329,6 +343,12 @@ pub async fn run_syn_sweep(
 ) -> Result<ProbeStates> {
     if targets.is_empty() || ports.is_empty() {
         return Ok(ProbeStates::new(0));
+    }
+    if !is_sorted_unique(targets) {
+        return Err(anyhow!("SYN targets must be sorted and unique"));
+    }
+    if !is_sorted_unique(ports) {
+        return Err(anyhow!("SYN ports must be sorted and unique"));
     }
     if config.timeout.is_zero() {
         return Err(anyhow!("SYN response timeout must be greater than zero"));
@@ -568,6 +588,53 @@ mod tests {
         };
 
         assert_eq!(answer_index(&answer, &targets, &ports), Some(3));
+    }
+
+    #[test]
+    fn unsorted_targets_would_lose_a_real_reply() {
+        // Why run_syn_sweep refuses unsorted input: the search does not fail, it
+        // reports "not found", so an open port would be recorded as filtered.
+        // Some unsorted arrangements still answer correctly by luck, which is
+        // the point - the result is unreliable rather than reliably wrong.
+        let unsorted = [
+            Ipv4Addr::new(10, 0, 0, 2),
+            Ipv4Addr::new(10, 0, 0, 3),
+            Ipv4Addr::new(10, 0, 0, 1),
+        ];
+        let ports = [80];
+        let answer = SynAnswer {
+            host: unsorted[2],
+            port: 80,
+            reply: SynReply::Open,
+        };
+
+        assert!(!is_sorted_unique(&unsorted));
+        assert_eq!(answer_index(&answer, &unsorted, &ports), None);
+    }
+
+    #[test]
+    fn sorted_unique_accepts_only_ascending_distinct_input() {
+        assert!(is_sorted_unique(&[1, 2, 3]));
+        assert!(is_sorted_unique::<u16>(&[]));
+        assert!(is_sorted_unique(&[7]));
+        assert!(!is_sorted_unique(&[2, 1]));
+        assert!(!is_sorted_unique(&[1, 1]));
+    }
+
+    #[tokio::test]
+    async fn a_sweep_refuses_unsorted_input_instead_of_reporting_filtered() {
+        let config = SynSweepConfig {
+            timeout: Duration::from_millis(10),
+            rate_limit_per_sec: 100,
+            retries: 0,
+        };
+        let targets = [Ipv4Addr::new(10, 0, 0, 2), Ipv4Addr::new(10, 0, 0, 1)];
+
+        let error = run_syn_sweep(&targets, &[80], config)
+            .await
+            .expect_err("unsorted targets must fail the sweep");
+
+        assert!(error.to_string().contains("sorted"));
     }
 
     #[test]
