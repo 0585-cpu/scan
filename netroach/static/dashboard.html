@@ -1873,6 +1873,13 @@
       return Boolean(state.health?.diagnostics?.syn_sweep_available);
     }
 
+    // Whether health has answered at all. Before it has, the answer is unknown
+    // rather than no: a form drawn during that gap must not conclude the engine
+    // cannot SYN and tick Connect-only on the operator's behalf.
+    function synSweepKnown() {
+      return Boolean(state.health);
+    }
+
     // Reads only the form's current values - no network calls, no side effects.
     function estimateScanScale() {
       const targets = asList($('scanTargets').value);
@@ -3595,11 +3602,17 @@ ${health.db}` : '데이터베이스 없음';
     function updateTcpScanAvailability() {
       const tcp = $('scanProtocol').value === 'tcp';
       const syn = synSweepAvailable();
-      // Without SYN there is nothing to opt out of, so the tick is held on and
-      // locked: it says what the scan will do rather than offering a choice.
-      if (tcp && !syn) $('scanConnectOnly').checked = true;
-      $('scanConnectOnly').disabled = !tcp || !syn;
-      $('scanSynRetries').disabled = !tcp || !syn || $('scanConnectOnly').checked;
+      // Health says whether this engine can SYN, and it has not answered when
+      // the form is first drawn. Treating "not answered yet" as "cannot" ticked
+      // Connect-only on load and never untied it once the answer arrived, so a
+      // SYN build quietly defaulted to connect scanning.
+      const known = synSweepKnown();
+      // Only once it is known there is no SYN is the tick held on and locked:
+      // it then says what the scan will do rather than offering a choice.
+      if (tcp && known && !syn) $('scanConnectOnly').checked = true;
+      $('scanConnectOnly').disabled = !tcp || (known && !syn);
+      $('scanSynRetries').disabled =
+        !tcp || (known && !syn) || $('scanConnectOnly').checked;
       $('scanForm').elements.service_probe.disabled = !tcp;
       if (!tcp) $('scanConnectOnly').checked = false;
       $('scanConnectOnlyHelp').textContent = syn

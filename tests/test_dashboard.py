@@ -188,8 +188,12 @@ class DashboardPresetTests(unittest.TestCase):
 
         self.assertIn("function synSweepAvailable(", html)
         self.assertIn("state.health?.diagnostics?.syn_sweep_available", html)
-        self.assertIn("if (tcp && !syn) $('scanConnectOnly').checked = true;", html)
-        self.assertIn("$('scanConnectOnly').disabled = !tcp || !syn;", html)
+        # Only once health has answered. Treating "not answered yet" as "cannot
+        # SYN" ticked Connect-only on load and never untied it, so a SYN build
+        # quietly defaulted to connect scanning.
+        self.assertIn("function synSweepKnown(", html)
+        self.assertIn("if (tcp && known && !syn) $('scanConnectOnly').checked = true;", html)
+        self.assertIn("$('scanConnectOnly').disabled = !tcp || (known && !syn);", html)
         submit = html.split("syn_sweep:", 1)[1].split("\n", 1)[0]
         self.assertIn("synSweepAvailable()", submit)
 
