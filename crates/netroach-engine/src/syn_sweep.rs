@@ -179,13 +179,67 @@ pub fn build_syn_frame(
     sequence: u32,
     ip_id: u16,
 ) -> Vec<u8> {
+    build_tcp_frame(
+        link,
+        source_ip,
+        host,
+        source_port,
+        port,
+        sequence,
+        ip_id,
+        TCP_FLAG_SYN,
+    )
+}
+
+/// The frame that closes a half-open connection our SYN opened.
+///
+/// A probe that finds an open port leaves the target holding a half-open
+/// connection until its own timeout, retransmitting the SYN-ACK meanwhile,
+/// because the scanning host's firewall drops the reply rather than resetting
+/// it. On a device whose backlog is a slot or two - a printer, a controller -
+/// that slot is unavailable to a legitimate connection for the best part of a
+/// minute. The reset gives it straight back.
+///
+/// The sequence is the one the target is waiting to hear: the SYN's, plus one.
+pub fn build_rst_frame(
+    link: LinkLayer,
+    source_ip: Ipv4Addr,
+    host: Ipv4Addr,
+    source_port: u16,
+    port: u16,
+    sequence: u32,
+    ip_id: u16,
+) -> Vec<u8> {
+    build_tcp_frame(
+        link,
+        source_ip,
+        host,
+        source_port,
+        port,
+        sequence,
+        ip_id,
+        TCP_FLAG_RST,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_tcp_frame(
+    link: LinkLayer,
+    source_ip: Ipv4Addr,
+    host: Ipv4Addr,
+    source_port: u16,
+    port: u16,
+    sequence: u32,
+    ip_id: u16,
+    flags: u8,
+) -> Vec<u8> {
     let mut tcp = Vec::with_capacity(TCP_MIN_HEADER_LEN);
     tcp.extend_from_slice(&source_port.to_be_bytes());
     tcp.extend_from_slice(&port.to_be_bytes());
     tcp.extend_from_slice(&sequence.to_be_bytes());
     tcp.extend_from_slice(&0u32.to_be_bytes());
     tcp.push(5 << 4);
-    tcp.push(TCP_FLAG_SYN);
+    tcp.push(flags);
     tcp.extend_from_slice(&1024u16.to_be_bytes());
     tcp.extend_from_slice(&0u16.to_be_bytes());
     tcp.extend_from_slice(&0u16.to_be_bytes());
@@ -306,6 +360,36 @@ mod tests {
         assert_eq!(checksum16(&[ip]), 0, "the IP header does not verify");
 
         let tcp = &frame[ETHERNET_HEADER_LEN + IPV4_MIN_HEADER_LEN..];
+        let mut pseudo = Vec::new();
+        pseudo.extend_from_slice(&source().octets());
+        pseudo.extend_from_slice(&target().octets());
+        pseudo.push(0);
+        pseudo.push(IP_PROTO_TCP);
+        pseudo.extend_from_slice(&(tcp.len() as u16).to_be_bytes());
+        assert_eq!(
+            checksum16(&[&pseudo, tcp]),
+            0,
+            "the TCP header does not verify"
+        );
+    }
+
+    #[test]
+    fn a_reset_carries_the_sequence_the_target_is_waiting_for() {
+        // A target that answered SYN-ACK holds the half-open until it times
+        // out, because the scanning host's firewall drops the reply rather than
+        // resetting it - measured, four SYN-ACKs and no reset. The reset must
+        // carry the sequence after the SYN's or the target ignores it.
+        let cookie = syn_cookie(SECRET, target(), 445, 40000);
+        let frame = build_rst_frame(eth(), source(), target(), 40000, 445, cookie + 1, 9);
+
+        let tcp = &frame[ETHERNET_HEADER_LEN + IPV4_MIN_HEADER_LEN..];
+        assert_eq!(tcp[13], TCP_FLAG_RST, "a reset and nothing else");
+        assert_eq!(
+            u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]),
+            cookie + 1
+        );
+        let ip = &frame[ETHERNET_HEADER_LEN..ETHERNET_HEADER_LEN + IPV4_MIN_HEADER_LEN];
+        assert_eq!(checksum16(&[ip]), 0, "the IP header does not verify");
         let mut pseudo = Vec::new();
         pseudo.extend_from_slice(&source().octets());
         pseudo.extend_from_slice(&target().octets());

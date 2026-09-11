@@ -84,7 +84,14 @@ Netroach는 허가받은 대상의 네트워크 점검, 서비스 식별, PCAP �
 | 기본, 서비스 탐지 ON | SYN-open 포트만 Connect로 재확인 | 수행 | 웹 이미지 또는 콘솔 증적 자동 수집 |
 | `TCP Connect 스캔만 사용` | 선택한 모든 포트를 Connect로 스캔 | 서비스 탐지 선택에 따름 | 서비스 탐지 선택에 따름 |
 
-SYN-ACK은 `open`, RST는 `closed`, 최종 무응답은 `filtered`로 기록한다. 서비스 탐지용 후속 Connect가 실패해도 이미 관찰한 SYN-open 상태를 닫힘으로 낮추지 않는다. 루프백 대상은 raw SYN 대신 Connect 경로를 사용한다.
+SYN-ACK은 `open`, RST는 `closed`, 최종 무응답은 `filtered`로 기록한다.
+
+**열린 포트를 찾으면 스윕이 직접 RST를 보내 half-open을 닫는다.** 스캔 호스트의
+방화벽이 예상 못 한 SYN-ACK를 조용히 버려서 커널 RST가 나가지 않기 때문이다.
+게이트웨이 80포트를 SYN 하나로 건드리고 캡처한 결과, 수정 전에는 대상의 SYN-ACK
+4개에 우리 RST 0개였고 대상이 half-open을 자체 타임아웃까지 유지했다. 수정 후에는
+SYN-ACK 2개에 RST 1개로, 대상이 backlog 칸을 즉시 되찾는다. backlog가 한두 칸인
+임베디드·OT 장비에서 그 칸이 30~60초 동안 막히는 것을 막기 위한 것이다. 서비스 탐지용 후속 Connect가 실패해도 이미 관찰한 SYN-open 상태를 닫힘으로 낮추지 않는다. 루프백 대상은 raw SYN 대신 Connect 경로를 사용한다.
 
 ## 5. Npcap 포함 개인용 설치 동작
 

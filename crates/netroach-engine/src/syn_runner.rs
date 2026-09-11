@@ -16,7 +16,7 @@ use tokio::time::{sleep, Instant};
 
 use crate::netlink::{self, pcap_device_for_interface, resolve_route, Route};
 use crate::syn_sweep::{
-    build_syn_frame, parse_syn_reply, syn_cookie, LinkLayer, SynAnswer, SynReply,
+    build_rst_frame, build_syn_frame, parse_syn_reply, syn_cookie, LinkLayer, SynAnswer, SynReply,
 };
 use crate::RateLimiter;
 
@@ -417,13 +417,18 @@ fn drain_answers(
     targets: &[Ipv4Addr],
     ports: &[u16],
     failure: &CaptureFailure,
+    opened: &mut Vec<(Ipv4Addr, u16)>,
 ) -> Result<()> {
     failure.check()?;
     loop {
         match receiver.try_recv() {
             Ok(CaptureMessage::Answer(answer)) => {
                 if let Some(index) = answer_index(&answer, targets, ports) {
-                    states.record(index, answer.reply);
+                    // Only the first time: a retransmitted SYN-ACK would
+                    // otherwise have us reset a connection already closed.
+                    if states.record(index, answer.reply) && answer.reply == SynReply::Open {
+                        opened.push((answer.host, answer.port));
+                    }
                 }
             }
             Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => {
@@ -440,12 +445,13 @@ async fn collect_until(
     targets: &[Ipv4Addr],
     ports: &[u16],
     failure: &CaptureFailure,
+    opened: &mut Vec<(Ipv4Addr, u16)>,
 ) -> Result<()> {
     while Instant::now() < deadline {
-        drain_answers(receiver, states, targets, ports, failure)?;
+        drain_answers(receiver, states, targets, ports, failure, opened)?;
         sleep(RESPONSE_POLL_INTERVAL).await;
     }
-    drain_answers(receiver, states, targets, ports, failure)
+    drain_answers(receiver, states, targets, ports, failure, opened)
 }
 
 /// Hand one adapter's queued frames to the driver in a single call.
@@ -474,6 +480,50 @@ fn flush_queue(
         format!("could not send queued SYN frames on interface {interface_index}")
     })?;
     *pending = 0;
+    Ok(())
+}
+
+/// Reset the half-open connections the last drain found, giving each target
+/// its backlog slot back instead of leaving it held until the target times out.
+#[allow(clippy::too_many_arguments)]
+fn close_opened(
+    opened: &mut Vec<(Ipv4Addr, u16)>,
+    targets: &[Ipv4Addr],
+    routes: &[Option<Route>],
+    queues: &mut BTreeMap<u32, SendQueue>,
+    senders: &mut BTreeMap<u32, Capture<Active>>,
+    queued: &mut BTreeMap<u32, usize>,
+    secret: u64,
+    source_port: u16,
+    ip_id: &mut u16,
+) -> Result<()> {
+    for (host, port) in opened.drain(..) {
+        let Ok(host_index) = targets.binary_search(&host) else {
+            continue;
+        };
+        let Some(route) = routes[host_index] else {
+            continue;
+        };
+        // The target is waiting to hear the sequence after our SYN's.
+        let sequence = syn_cookie(secret, host, port, source_port).wrapping_add(1);
+        let frame = build_rst_frame(
+            route.link,
+            route.source_ip,
+            host,
+            source_port,
+            port,
+            sequence,
+            *ip_id,
+        );
+        *ip_id = ip_id.wrapping_add(1);
+        if let Some(queue) = queues.get_mut(&route.interface_index) {
+            queue
+                .queue(None, &frame[..])
+                .with_context(|| format!("could not queue RST to {host}:{port}"))?;
+            *queued.entry(route.interface_index).or_insert(0) += 1;
+        }
+        flush_queue(queues, senders, queued, route.interface_index)?;
+    }
     Ok(())
 }
 
@@ -636,6 +686,9 @@ pub async fn run_syn_sweep(
     let limiter = RateLimiter::new(sweep_rate(config.rate_limit_per_sec, probed_hosts));
     let mut states = ProbeStates::new(total);
     let mut ip_id = 1_u16;
+    // Ports found open since the last reset went out. Each holds a slot in its
+    // target's backlog until we close it.
+    let mut opened = Vec::<(Ipv4Addr, u16)>::new();
     let mut reported_at = Instant::now();
     for round in 0..=config.retries {
         let round_total = if round == 0 {
@@ -655,7 +708,25 @@ pub async fn run_syn_sweep(
             total,
         });
         for index in probe_indices(targets.len(), ports.len()) {
-            drain_answers(&answer_rx, &mut states, targets, ports, &capture_failure)?;
+            drain_answers(
+                &answer_rx,
+                &mut states,
+                targets,
+                ports,
+                &capture_failure,
+                &mut opened,
+            )?;
+            close_opened(
+                &mut opened,
+                targets,
+                &routes,
+                &mut queues,
+                &mut senders,
+                &mut queued,
+                secret,
+                source_port,
+                &mut ip_id,
+            )?;
             if round > 0 && states.get(index) != ProbeState::Unanswered {
                 continue;
             }
@@ -732,8 +803,20 @@ pub async fn run_syn_sweep(
             targets,
             ports,
             &capture_failure,
+            &mut opened,
         )
         .await?;
+        close_opened(
+            &mut opened,
+            targets,
+            &routes,
+            &mut queues,
+            &mut senders,
+            &mut queued,
+            secret,
+            source_port,
+            &mut ip_id,
+        )?;
     }
     readers.finish()?;
     Ok(SweepOutcome {
