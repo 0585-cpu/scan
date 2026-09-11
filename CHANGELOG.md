@@ -2,6 +2,15 @@
 
 All notable Netroach changes are tracked here.
 
+## 0.2.2 - 2026-09-11
+
+- Offered SYN scanning in the dashboard only where the engine was built for it. The engine now answers a `capabilities` subcommand, and a build without SYN support no longer had every TCP scan it started rejected. Anything uncertain falls back to Connect, which works on every build.
+- Rejected unsorted SYN target and port input instead of silently losing replies to it, which would have reported open ports as filtered with nothing to show the run went wrong.
+- Reported what a SYN sweep is doing while it runs. A sweep publishes no result until its last retry settles, so a scan of millions of probes showed 0% for an hour and could not be told from one that never started.
+- Reported the automatic evidence pass the same way. It runs after every result is stored, so the bar read 100% for as long as it took to photograph each open port.
+- Added `tools/syn_crosscheck.py`, which judges a SYN sweep against a Connect scan of the same ports and refuses to compare scans that did not cover the same work.
+- Recorded the real-LAN cross-check the sweep passes, including what a high `filtered` count means: the target rate-limiting its resets, not a fault.
+
 ## 0.2.1 - 2026-09-11
 
 - Fixed Linux/macOS type checking of the Windows-only ctypes DLL and callback exports without changing Windows calls or calling conventions. DLL handle annotations now use the portable CDLL base type.
