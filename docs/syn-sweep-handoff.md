@@ -1,5 +1,9 @@
 # SYN 스윕 — 구현 및 인수인계
 
+> 최신 `v0.2.1` 릴리즈 파일, 검증 결과와 전체 `UNVERIFIED` 목록은
+> [현재 개발 현황](current-development-status-ko.md)을 기준으로 한다. 이 문서 아래의
+> 2026-09-10 빌드 증적은 구현 과정의 이전 기록이다.
+
 ## 현재 상태
 
 Windows IPv4 TCP SYN 스윕은 `syn-sweep` Cargo feature 뒤에서 구현되어 있다.

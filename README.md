@@ -18,7 +18,7 @@ Live capture is passive but sensitive; it requires `--confirm-authorized` and ei
 
 ## Install
 
-For a portable release artifact, see [docs/install.md](docs/install.md). For day-to-day usage, see [docs/user-guide.md](docs/user-guide.md). Windows artifacts use `.zip`; macOS/Linux artifacts use `.tar.gz`; each artifact is written with a `.sha256` checksum.
+For the current implementation, verification, release, and `UNVERIFIED` status, see [docs/current-development-status-ko.md](docs/current-development-status-ko.md). For a portable release artifact, see [docs/install.md](docs/install.md). For day-to-day usage, see [docs/user-guide.md](docs/user-guide.md). Windows artifacts use `.zip`; macOS/Linux artifacts use `.tar.gz`; each artifact is written with a `.sha256` checksum.
 
 For the self-contained Windows installer and desktop development notes, see [docs/desktop-packaging.md](docs/desktop-packaging.md). The installed desktop app bundles Playwright headless Chromium and the WebView2 offline installer, so it does not require Python, Node.js, Rust, a separate browser, or a first-run internet connection.
 
