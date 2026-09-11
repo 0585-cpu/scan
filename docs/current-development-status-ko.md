@@ -1,18 +1,17 @@
 # Netroach 현재 개발 현황
 
-이 문서는 2026-09-11 기준 Netroach의 구현, 검증, 배포 상태를 한곳에 정리한 기준 문서다. 소스 기준은 `main`의 커밋 `4c9c35b03340d63202b2b59b5b7f6cbab1f64600`, 제품 버전은 `0.2.1`이다.
+이 문서는 2026-09-11 기준 Netroach의 구현, 검증, 배포 상태를 한곳에 정리한 기준 문서다. 소스 기준은 `main`의 `0.2.2` 태그 시점, 제품 버전은 `0.2.2`이다.
 
 ## 1. 현재 배포 상태
 
 | 항목 | 현재 값 |
 | --- | --- |
 | 저장소 | 비공개 GitHub 저장소 `0585-cpu/scan` |
-| 브랜치/태그 | `main` / `v0.2.1` |
-| 릴리즈 | [Netroach 0.2.1 개인용 Npcap 포함 설치본](https://github.com/0585-cpu/scan/releases/tag/v0.2.1) |
-| 설치 파일 | `Netroach_0.2.1_x64-setup.exe` |
-| 설치 파일 크기 | 430,233,741 bytes |
-| 설치 파일 SHA-256 | `ee55d1c08677fad6c92dd1edb6a8cd5fbe15550dd9684b5c2433e7d6510d658f` |
-| 체크섬 파일 SHA-256 | `2862974a4780bc5e64e8743d0ebf8908f070332da5a94930b1a170b2c504524d` |
+| 브랜치/태그 | `main` / `v0.2.2` |
+| 릴리즈 | [Netroach 0.2.2 개인용 Npcap 포함 설치본](https://github.com/0585-cpu/scan/releases/tag/v0.2.2) |
+| 설치 파일 | `Netroach_0.2.2_x64-setup.exe` |
+| 설치 파일 크기 | 382,683,679 bytes |
+| 설치 파일 SHA-256 | `354f920bee897bb2ef3d817737ca36debf8f860c189b9a4775b739687552fc81` |
 | 내장 Npcap | 1.88, Nmap Software LLC Authenticode 서명 확인 |
 | Netroach 설치본 서명 | 코드 서명 없음 |
 
@@ -21,6 +20,18 @@
 2026-09-11에 개발 PC의 기존 설치를 이 릴리즈로 교체했다. 설치 훅은 Npcap 1.88과
 `AdminOnly=0`을 확인하고 포함된 Npcap UI 없이 바로 진행했으며, 이후 대시보드에서
 실제 LAN 대상 SYN 스캔이 동작함을 확인했다(8절).
+
+### 0.2.2 빌드 증적 (2026-09-11)
+
+- Npcap 입력: 1.88, Authenticode `Valid`, 서명자 `Nmap Software LLC`, SHA-256
+  `a2f4ec1e5ea353ff67efd24b2ebf081ba44532410fae8d5e146af0310aa4f56b` (0.2.1과 동일 파일).
+- 서명 검증은 원본과 staging 복사본에 대해 각각 1회씩, 총 2회 수행됐다.
+- NSIS 완료 뒤 private Npcap staging 제거 및 표준 connect 엔진 복원 확인.
+- 설치 파일과 `.sha256` sidecar 일치 확인.
+- **설치본이 0.2.1보다 약 44MB 작은 이유**: Microsoft가 현재 배포하는 WebView2
+  오프라인 설치 프로그램이 202.9MB로, 0.1.0~0.2.1 빌드가 사용한 캐시본
+  246.6MB보다 작기 때문이다. 누락된 구성요소는 없다. 크기 차이를 보고 구성요소
+  누락을 의심하지 않도록 여기에 남긴다.
 
 ## 2. 제품 목적과 안전 경계
 
@@ -134,7 +145,21 @@ Tauri 데스크톱 창
 
 ## 8. 확인된 검증 결과
 
-`v0.2.1` 릴리즈 과정에서 다음을 확인했다.
+### `v0.2.2` 로컬 검증
+
+- Python 테스트 450개 통과, 10개 건너뜀
+- Rust 기본 빌드 57개 통과 (단위 43, 통합 14)
+- Rust `syn-sweep` feature 80개 통과 (단위 67, 통합 13)
+- Ruff 통과, mypy의 Windows·Linux·macOS 대상 검사 통과, `cargo fmt --check` 통과
+- 기본 빌드가 Npcap SDK 없이 컴파일되고 `--syn-sweep`을 거부함을 실행으로 확인
+- 엔진 통합 테스트가 `capabilities`의 주장과 실제 `--syn-sweep` 수용 여부를 대조하므로,
+  빌드가 거부할 기능을 광고할 수 없다
+- 실제 스윕과 증적 수집에서 진행률이 단계별로 갱신되고, 단계가 끝나면 결과 기반
+  진행률로 넘어감을 브라우저에서 확인
+
+`v0.2.2`의 GitHub Actions 실행은 푸시 후에 기록한다.
+
+### `v0.2.1` 릴리즈 과정에서 확인한 것
 
 - 로컬 Python 테스트 451개 통과, 실제 Chromium UI 테스트 10개 포함
 - Rust 기본 빌드 테스트 56개 통과
