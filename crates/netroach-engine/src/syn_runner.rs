@@ -2,6 +2,7 @@
 #![cfg(all(windows, feature = "syn-sweep"))]
 
 use anyhow::{anyhow, Context, Result};
+use pcap::sendqueue::{SendQueue, SendSync};
 use pcap::{Active, Capture, Device, Linktype};
 use std::collections::hash_map::RandomState;
 use std::collections::BTreeMap;
@@ -24,6 +25,27 @@ const RESPONSE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const CAPTURE_READ_TIMEOUT_MS: i32 = 100;
 const ANSWER_QUEUE_CAPACITY: usize = 16_384;
 const PROGRESS_REPORT_INTERVAL: Duration = Duration::from_secs(1);
+/// Frames handed to the driver in one call.
+///
+/// Sending one frame per call costs a driver round trip each time, which held
+/// the sweep to about 2,400 probes a second however high the rate was set - the
+/// call, not the rate limit, was the ceiling. Npcap takes a queue of frames in
+/// a single call, and the cost is paid once for the batch.
+const SEND_BATCH_MAX: usize = 256;
+/// Bytes reserved per queued frame: a SYN frame plus the per-packet header the
+/// queue stores alongside it, rounded up with room to spare.
+const SEND_QUEUE_BYTES_PER_FRAME: u32 = 256;
+
+/// How many frames to gather before handing them to the driver.
+///
+/// Capped by the host count because probes go out port-major, one per host in
+/// turn: a batch no larger than the number of hosts puts at most one frame per
+/// host in each burst, which keeps the smoothness the ordering exists to give.
+/// A single-host sweep therefore batches one frame - it is already fast enough,
+/// and bursting at one device is what the rate limit is there to prevent.
+fn send_batch_size(host_count: usize) -> usize {
+    host_count.clamp(1, SEND_BATCH_MAX)
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct SynSweepConfig {
@@ -353,6 +375,35 @@ async fn collect_until(
     drain_answers(receiver, states, targets, ports, failure)
 }
 
+/// Hand one adapter's queued frames to the driver in a single call.
+///
+/// Does nothing for an empty queue, so the end-of-round flush can run over
+/// every adapter without caring which ones have work left.
+fn flush_queue(
+    queues: &mut BTreeMap<u32, SendQueue>,
+    senders: &mut BTreeMap<u32, Capture<Active>>,
+    queued: &mut BTreeMap<u32, usize>,
+    interface_index: u32,
+) -> Result<()> {
+    let pending = queued.entry(interface_index).or_insert(0);
+    if *pending == 0 {
+        return Ok(());
+    }
+    let queue = queues
+        .get_mut(&interface_index)
+        .ok_or_else(|| anyhow!("missing Npcap send queue for interface {interface_index}"))?;
+    let sender = senders
+        .get_mut(&interface_index)
+        .ok_or_else(|| anyhow!("missing Npcap sender for interface {interface_index}"))?;
+    // The frames are already paced by the rate limiter as they were queued, so
+    // the driver sends them back to back rather than re-timing them.
+    queue.transmit(sender, SendSync::Off).with_context(|| {
+        format!("could not send queued SYN frames on interface {interface_index}")
+    })?;
+    *pending = 0;
+    Ok(())
+}
+
 fn sweep_secret() -> u64 {
     let mut hasher = RandomState::new().build_hasher();
     hasher.write_u32(std::process::id());
@@ -450,12 +501,21 @@ pub async fn run_syn_sweep(
         status.map_err(|error| anyhow!(error))?;
     }
 
+    let batch_size = send_batch_size(targets.len());
+    let queue_bytes = (batch_size as u32 + 1) * SEND_QUEUE_BYTES_PER_FRAME;
     let mut senders = BTreeMap::<u32, Capture<Active>>::new();
+    let mut queues = BTreeMap::<u32, SendQueue>::new();
+    // Counted rather than read back from the queue: its own len() is the bytes
+    // it holds, not the number of frames.
+    let mut queued = BTreeMap::<u32, usize>::new();
     for (&interface_index, device) in &adapter_devices {
         let sender = Capture::from_device(device.clone())
             .and_then(Capture::open)
             .with_context(|| format!("could not open Npcap sender on {}", device.name))?;
         senders.insert(interface_index, sender);
+        let queue = SendQueue::new(queue_bytes)
+            .with_context(|| format!("could not allocate a send queue for {}", device.name))?;
+        queues.insert(interface_index, queue);
     }
 
     let limiter = RateLimiter::new(effective_rate(config.rate_limit_per_sec));
@@ -514,16 +574,30 @@ pub async fn run_syn_sweep(
                 ip_id,
             );
             ip_id = ip_id.wrapping_add(1);
-            senders
-                .get_mut(&route.interface_index)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "missing Npcap sender for interface {}",
-                        route.interface_index
-                    )
-                })?
-                .sendpacket(&frame[..])
-                .with_context(|| format!("could not send SYN to {target}:{port}"))?;
+            let queue = queues.get_mut(&route.interface_index).ok_or_else(|| {
+                anyhow!(
+                    "missing Npcap send queue for interface {}",
+                    route.interface_index
+                )
+            })?;
+            queue
+                .queue(None, &frame[..])
+                .with_context(|| format!("could not queue SYN to {target}:{port}"))?;
+            let pending = queued.entry(route.interface_index).or_insert(0);
+            *pending += 1;
+            if *pending >= batch_size {
+                flush_queue(
+                    &mut queues,
+                    &mut senders,
+                    &mut queued,
+                    route.interface_index,
+                )?;
+            }
+        }
+        // Whatever is left over from the last partial batch still has to fly,
+        // or those probes are never sent and read as filtered.
+        for &interface_index in adapter_devices.keys() {
+            flush_queue(&mut queues, &mut senders, &mut queued, interface_index)?;
         }
         on_progress(SweepProgress {
             round,
@@ -628,6 +702,25 @@ mod tests {
 
         assert_eq!(order, vec![0, 1, 2, 3, 4, 5]);
         assert_eq!(probe_coordinates(4, 3), (1, 1));
+    }
+
+    #[test]
+    fn a_batch_never_puts_more_than_one_frame_per_host_in_a_burst() {
+        // Probes go out port-major, one per host in turn, so a batch bounded by
+        // the host count holds at most one frame for any host. That is what
+        // keeps batching from turning the rate limit into a burst at one
+        // device - the single-host sweep batches one frame and sends as before.
+        assert_eq!(send_batch_size(1), 1);
+        assert_eq!(send_batch_size(2), 2);
+        assert_eq!(send_batch_size(253), 253);
+        // And a wide scan stops growing the burst once the batch pays for
+        // itself, rather than queueing a whole /16 before anything flies.
+        assert_eq!(send_batch_size(65_536), SEND_BATCH_MAX);
+        assert_eq!(
+            send_batch_size(0),
+            1,
+            "an empty target list still sends nothing safely"
+        );
     }
 
     #[test]
