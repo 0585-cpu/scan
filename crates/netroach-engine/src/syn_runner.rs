@@ -24,12 +24,17 @@ use crate::RateLimiter;
 /// per-host allowance is measured against: no workload sweeps slower than this
 /// because of the spread rule.
 ///
-/// Held well under the old 5,000 because 5,000 at one host loses answers. The
-/// same gateway, the same 200 ports: at 5,000 a second it reported no open port
-/// and 49 filtered even with a retry, and at 500 it reported the open port with
-/// nothing filtered. A floor that silently misses a port is the wrong default,
-/// however fast it is.
-const SYN_RATE_FLOOR_PER_SEC: u64 = 1_000;
+/// Set where the measured answer stops depending on luck. Against the same
+/// gateway over 512 ports with one retry: at 5,000 a second the open port was
+/// missed outright; at 1,000 it was found two runs in three with thirty to
+/// fifty ports left unanswered; at 500 it was found every run with none. The
+/// unanswered count tracked it exactly - the run that missed the port had
+/// thirty-eight of them - which is why that count is the reliability gauge.
+///
+/// Tuned against one device, so it is a defensible default rather than a
+/// guarantee: a target that rate-limits harder will still leave ports
+/// unanswered, and that is the signal to lower the rate again.
+const SYN_RATE_FLOOR_PER_SEC: u64 = 500;
 /// The cap on the connect follow-up that probes services on the ports a sweep
 /// found open. Connect keeps its own state and the OS retransmits for it, so it
 /// is not subject to the loss the sweep floor is set against.
@@ -916,7 +921,7 @@ mod tests {
         // each. It must never make a narrow sweep slower than it already was,
         // or a single-host scan would crawl at the per-host figure.
         assert_eq!(sweep_rate(100_000, 1), SYN_RATE_FLOOR_PER_SEC);
-        assert_eq!(sweep_rate(100_000, 50), SYN_RATE_FLOOR_PER_SEC);
+        assert_eq!(sweep_rate(100_000, 20), SYN_RATE_FLOOR_PER_SEC);
         // Above the floor the per-host budget governs, at ten a host exactly.
         assert_eq!(sweep_rate(100_000, 253), 2_530);
 
