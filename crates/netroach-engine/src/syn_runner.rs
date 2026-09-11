@@ -20,7 +20,26 @@ use crate::syn_sweep::{
 };
 use crate::RateLimiter;
 
+/// The rate a sweep may use however few hosts it has, and the floor the
+/// per-host allowance is measured against: no workload sweeps slower than this
+/// because of the spread rule.
 const SYN_RATE_LIMIT_PER_SEC: u64 = 5_000;
+/// What one host may be asked to answer per second.
+///
+/// Probes go out port-major, so a wide sweep's rate is shared across its hosts:
+/// at 5,000 a second over three thousand hosts each device sees under two
+/// packets a second, which is far gentler than the single-host case the 5,000
+/// was chosen to survive. Budgeting per host lets a wide sweep go as fast as
+/// the hosts in it can carry, rather than pacing every scan as if it were
+/// pointed at one fragile device.
+const SYN_PER_HOST_RATE_PER_SEC: u64 = 10;
+/// The most this machine will send however wide the sweep.
+///
+/// Measured on the scanning machine with batched sends: the rate tracked the
+/// setting to about 20,000 a second and levelled off near 35,000. Past that the
+/// setting is a number the send path cannot meet, and the link and the capture
+/// side have to carry it too.
+const SYN_RATE_CEILING_PER_SEC: u64 = 35_000;
 const RESPONSE_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const CAPTURE_READ_TIMEOUT_MS: i32 = 100;
 const ANSWER_QUEUE_CAPACITY: usize = 16_384;
@@ -152,6 +171,21 @@ pub(crate) fn probe_coordinates(index: usize, host_count: usize) -> (usize, usiz
 
 pub(crate) fn effective_rate(requested: u64) -> u64 {
     requested.min(SYN_RATE_LIMIT_PER_SEC)
+}
+
+/// The rate a sweep of this many hosts may use.
+///
+/// The per-host budget only ever raises the ceiling: a sweep is allowed the
+/// greater of the flat limit and what its hosts can carry between them, and
+/// never more than the machine can send or the caller asked for. A narrow sweep
+/// therefore paces exactly as it did before this existed, and a wide one is no
+/// longer held to a rate chosen for a single device.
+pub(crate) fn sweep_rate(requested: u64, host_count: usize) -> u64 {
+    let spread = (host_count as u64).saturating_mul(SYN_PER_HOST_RATE_PER_SEC);
+    let allowed = spread
+        .max(SYN_RATE_LIMIT_PER_SEC)
+        .min(SYN_RATE_CEILING_PER_SEC);
+    requested.min(allowed)
 }
 
 fn ensure_remote_target(target: Ipv4Addr, source_ip: Ipv4Addr) -> Result<()> {
@@ -518,7 +552,7 @@ pub async fn run_syn_sweep(
         queues.insert(interface_index, queue);
     }
 
-    let limiter = RateLimiter::new(effective_rate(config.rate_limit_per_sec));
+    let limiter = RateLimiter::new(sweep_rate(config.rate_limit_per_sec, targets.len()));
     let mut states = ProbeStates::new(total);
     let mut ip_id = 1_u16;
     let mut reported_at = Instant::now();
@@ -702,6 +736,31 @@ mod tests {
 
         assert_eq!(order, vec![0, 1, 2, 3, 4, 5]);
         assert_eq!(probe_coordinates(4, 3), (1, 1));
+    }
+
+    #[test]
+    fn the_per_host_budget_only_ever_raises_the_ceiling() {
+        // The rule exists because a wide sweep shares its rate across hosts: at
+        // the flat limit three thousand hosts see under two packets a second
+        // each. It must never make a narrow sweep slower than it already was,
+        // or a single-host scan would crawl at the per-host figure.
+        assert_eq!(sweep_rate(100_000, 1), SYN_RATE_LIMIT_PER_SEC);
+        assert_eq!(sweep_rate(100_000, 253), SYN_RATE_LIMIT_PER_SEC);
+        assert_eq!(sweep_rate(100_000, 500), SYN_RATE_LIMIT_PER_SEC);
+
+        // Past the point where the hosts can carry more between them, they do.
+        assert_eq!(
+            sweep_rate(100_000, 3_072),
+            3_072 * SYN_PER_HOST_RATE_PER_SEC
+        );
+
+        // Never past what the machine can send, and never past what was asked.
+        assert_eq!(sweep_rate(100_000, 1_000_000), SYN_RATE_CEILING_PER_SEC);
+        assert_eq!(
+            sweep_rate(800, 3_072),
+            800,
+            "the caller's limit still caps it"
+        );
     }
 
     #[test]
