@@ -453,17 +453,9 @@ async fn run_syn_scan(
 ) -> Result<()> {
     use syn_runner::{run_syn_sweep, ProbeState, SynSweepConfig};
 
-    let mut raw_targets = Vec::<Ipv4Addr>::new();
-    let mut connect_targets = Vec::<IpAddr>::new();
-    for target in targets {
-        match target {
-            IpAddr::V4(ip) if !ip.is_loopback() => raw_targets.push(ip),
-            IpAddr::V4(_) => connect_targets.push(target),
-            IpAddr::V6(_) => {
-                return Err(anyhow!("SYN sweep supports IPv4 targets only"));
-            }
-        }
-    }
+    let local_addresses: std::collections::HashSet<Ipv4Addr> =
+        netlink::local_ipv4_addresses().into_iter().collect();
+    let (raw_targets, connect_targets) = partition_syn_targets(targets, &local_addresses)?;
 
     let sweep_scan_id = scan_id.clone();
     let raw_states = run_syn_sweep(
@@ -594,6 +586,30 @@ async fn run_syn_scan(
     (summary.process_rss_bytes, summary.process_peak_rss_bytes) = process_memory_bytes();
     emit(&summary)?;
     Ok(())
+}
+
+/// Which targets the sweep can probe, and which have to go to connect instead.
+///
+/// A sweep cannot probe an address this machine answers to: the frame never
+/// reaches the wire. Scanning one's own subnet always includes one, so these
+/// join loopback in the connect list rather than failing the run - refusing
+/// them aborted the whole scan over a single unavoidable target, which is
+/// every scan of a range the scanning machine is inside.
+#[cfg(all(windows, feature = "syn-sweep"))]
+fn partition_syn_targets(
+    targets: Vec<IpAddr>,
+    local_addresses: &std::collections::HashSet<Ipv4Addr>,
+) -> Result<(Vec<Ipv4Addr>, Vec<IpAddr>)> {
+    let mut raw = Vec::<Ipv4Addr>::new();
+    let mut connect = Vec::<IpAddr>::new();
+    for target in targets {
+        match target {
+            IpAddr::V4(ip) if !ip.is_loopback() && !local_addresses.contains(&ip) => raw.push(ip),
+            IpAddr::V4(_) => connect.push(target),
+            IpAddr::V6(_) => return Err(anyhow!("SYN sweep supports IPv4 targets only")),
+        }
+    }
+    Ok((raw, connect))
 }
 
 /// Liveness for a sweep that will not produce a result for an hour.
@@ -2762,6 +2778,48 @@ mod tests {
             elapsed < Duration::from_millis(400),
             "sleep granularity dominated the schedule: {elapsed:?}"
         );
+    }
+
+    /// Scanning a range from inside it is the ordinary case, not an edge one:
+    /// a /24 sweep run from a machine on that /24 always names its own address.
+    /// Refusing it aborted the entire scan, so the target has to be sorted, not
+    /// rejected.
+    #[cfg(all(windows, feature = "syn-sweep"))]
+    #[test]
+    fn a_scan_of_its_own_subnet_sends_the_local_address_to_connect() {
+        let local = Ipv4Addr::new(172, 30, 1, 39);
+        let targets = vec![
+            IpAddr::V4(Ipv4Addr::new(172, 30, 1, 1)),
+            IpAddr::V4(local),
+            IpAddr::V4(Ipv4Addr::new(172, 30, 1, 254)),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+        ];
+
+        let (raw, connect) =
+            partition_syn_targets(targets, &std::collections::HashSet::from([local])).unwrap();
+
+        assert_eq!(
+            raw,
+            vec![Ipv4Addr::new(172, 30, 1, 1), Ipv4Addr::new(172, 30, 1, 254)],
+            "every remote target still sweeps"
+        );
+        assert_eq!(
+            connect,
+            vec![IpAddr::V4(local), IpAddr::V4(Ipv4Addr::LOCALHOST)],
+            "the local address joins loopback on the connect path"
+        );
+    }
+
+    #[cfg(all(windows, feature = "syn-sweep"))]
+    #[test]
+    fn a_sweep_still_refuses_ipv6_targets() {
+        let error = partition_syn_targets(
+            vec![IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)],
+            &std::collections::HashSet::new(),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("IPv4"));
     }
 
     #[test]

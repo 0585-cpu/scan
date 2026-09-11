@@ -18,8 +18,9 @@ use std::net::Ipv4Addr;
 
 use windows_sys::core::GUID;
 use windows_sys::Win32::NetworkManagement::IpHelper::{
-    ConvertInterfaceIndexToLuid, ConvertInterfaceLuidToGuid, GetBestRoute2, GetIfEntry2,
-    GetIpNetEntry2, ResolveIpNetEntry2, MIB_IF_ROW2, MIB_IPFORWARD_ROW2, MIB_IPNET_ROW2,
+    ConvertInterfaceIndexToLuid, ConvertInterfaceLuidToGuid, FreeMibTable, GetBestRoute2,
+    GetIfEntry2, GetIpNetEntry2, GetUnicastIpAddressTable, ResolveIpNetEntry2, MIB_IF_ROW2,
+    MIB_IPFORWARD_ROW2, MIB_IPNET_ROW2, MIB_UNICASTIPADDRESS_ROW, MIB_UNICASTIPADDRESS_TABLE,
 };
 use windows_sys::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows_sys::Win32::Networking::WinSock::{AF_INET, IN_ADDR, SOCKADDR_INET};
@@ -175,6 +176,34 @@ fn neighbour_mac(interface_index: u32, ip: Ipv4Addr) -> Option<[u8; 6]> {
     let mut mac = [0u8; 6];
     mac.copy_from_slice(&row.PhysicalAddress[..6]);
     Some(mac)
+}
+
+/// Every IPv4 address this machine answers to.
+///
+/// A sweep cannot probe its own address: the packet never reaches the wire, and
+/// the reply would come from the loopback path rather than the target. Scanning
+/// one's own subnet always includes it, so the caller needs to know which
+/// targets to hand to connect scanning instead of discovering it as a failure
+/// part way through.
+///
+/// An empty list on failure is safe: the sweep still refuses a self-target, so
+/// the worst case is the error this exists to avoid, not a wrong result.
+pub fn local_ipv4_addresses() -> Vec<Ipv4Addr> {
+    let mut table: *mut MIB_UNICASTIPADDRESS_TABLE = std::ptr::null_mut();
+    if unsafe { GetUnicastIpAddressTable(AF_INET, &mut table) } != 0 || table.is_null() {
+        return Vec::new();
+    }
+    let mut addresses = Vec::new();
+    unsafe {
+        let count = (*table).NumEntries as usize;
+        // Table is declared as one element; the rows follow it in memory.
+        let rows = std::ptr::addr_of!((*table).Table) as *const MIB_UNICASTIPADDRESS_ROW;
+        for index in 0..count {
+            addresses.push(read_in_addr((*rows.add(index)).Address.Ipv4.sin_addr));
+        }
+        FreeMibTable(table.cast());
+    }
+    addresses
 }
 
 /// Everything the sweep needs to put a frame on the wire for one target.
