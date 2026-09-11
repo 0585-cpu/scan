@@ -23,7 +23,17 @@ use crate::RateLimiter;
 /// The rate a sweep may use however few hosts it has, and the floor the
 /// per-host allowance is measured against: no workload sweeps slower than this
 /// because of the spread rule.
-const SYN_RATE_LIMIT_PER_SEC: u64 = 5_000;
+///
+/// Held well under the old 5,000 because 5,000 at one host loses answers. The
+/// same gateway, the same 200 ports: at 5,000 a second it reported no open port
+/// and 49 filtered even with a retry, and at 500 it reported the open port with
+/// nothing filtered. A floor that silently misses a port is the wrong default,
+/// however fast it is.
+const SYN_RATE_FLOOR_PER_SEC: u64 = 1_000;
+/// The cap on the connect follow-up that probes services on the ports a sweep
+/// found open. Connect keeps its own state and the OS retransmits for it, so it
+/// is not subject to the loss the sweep floor is set against.
+const SYN_FOLLOW_UP_RATE_PER_SEC: u64 = 5_000;
 /// What one host may be asked to answer per second.
 ///
 /// Probes go out port-major, so a wide sweep's rate is shared across its hosts:
@@ -170,7 +180,7 @@ pub(crate) fn probe_coordinates(index: usize, host_count: usize) -> (usize, usiz
 }
 
 pub(crate) fn effective_rate(requested: u64) -> u64 {
-    requested.min(SYN_RATE_LIMIT_PER_SEC)
+    requested.min(SYN_FOLLOW_UP_RATE_PER_SEC)
 }
 
 /// The rate a sweep of this many hosts may use.
@@ -183,7 +193,7 @@ pub(crate) fn effective_rate(requested: u64) -> u64 {
 pub(crate) fn sweep_rate(requested: u64, host_count: usize) -> u64 {
     let spread = (host_count as u64).saturating_mul(SYN_PER_HOST_RATE_PER_SEC);
     let allowed = spread
-        .max(SYN_RATE_LIMIT_PER_SEC)
+        .max(SYN_RATE_FLOOR_PER_SEC)
         .min(SYN_RATE_CEILING_PER_SEC);
     requested.min(allowed)
 }
@@ -763,9 +773,10 @@ mod tests {
         // the flat limit three thousand hosts see under two packets a second
         // each. It must never make a narrow sweep slower than it already was,
         // or a single-host scan would crawl at the per-host figure.
-        assert_eq!(sweep_rate(100_000, 1), SYN_RATE_LIMIT_PER_SEC);
-        assert_eq!(sweep_rate(100_000, 253), SYN_RATE_LIMIT_PER_SEC);
-        assert_eq!(sweep_rate(100_000, 500), SYN_RATE_LIMIT_PER_SEC);
+        assert_eq!(sweep_rate(100_000, 1), SYN_RATE_FLOOR_PER_SEC);
+        assert_eq!(sweep_rate(100_000, 50), SYN_RATE_FLOOR_PER_SEC);
+        // Above the floor the per-host budget governs, at ten a host exactly.
+        assert_eq!(sweep_rate(100_000, 253), 2_530);
 
         // Past the point where the hosts can carry more between them, they do.
         assert_eq!(
@@ -804,7 +815,7 @@ mod tests {
     #[test]
     fn syn_rate_is_capped_at_five_thousand() {
         assert_eq!(effective_rate(400), 400);
-        assert_eq!(effective_rate(50_000), 5_000);
+        assert_eq!(effective_rate(50_000), SYN_FOLLOW_UP_RATE_PER_SEC);
     }
 
     #[test]
