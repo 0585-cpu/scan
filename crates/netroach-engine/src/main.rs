@@ -501,60 +501,61 @@ async fn run_syn_scan(
     };
 
     let mut follow_up_jobs = Vec::<(IpAddr, u16, bool)>::new();
+    // Closed and filtered results are summarised per host rather than written
+    // out one line each. A sweep of tens of millions of probes spent longer
+    // serialising and parsing those lines than it spent on the wire, and
+    // storage folds them into exactly this shape anyway.
+    let mut tallies: BTreeMap<(usize, &'static str), Vec<u16>> = BTreeMap::new();
     for index in syn_runner::probe_indices(raw_targets.len(), ports.len()) {
         let (host_index, port_index) = syn_runner::probe_coordinates(index, raw_targets.len());
         let target = raw_targets[host_index];
         let port = ports[port_index];
-        let event = match sweep.states.get(index) {
+        match sweep.states.get(index) {
             ProbeState::Open if service_probe => {
                 follow_up_jobs.push((IpAddr::V4(target), port, true));
-                continue;
             }
-            ProbeState::Open => syn_open_event(IpAddr::V4(target), port, &scan_id),
-            ProbeState::Closed => PortEvent {
-                event: "port",
-                scan_id: scan_id.to_string(),
-                host: target.to_string(),
-                port,
-                protocol: "tcp",
-                state: "closed".to_string(),
-                latency_ms: None,
-                service_name: None,
-                service_confidence: None,
-                banner: None,
-                // No evidence string: every closed result in a sweep is a reset,
-                // so the note said the same thing on every row and said nothing
-                // the state did not. Storage keeps rows that carry something of
-                // their own and folds the rest into per-host counts, so a
-                // constant note made millions of closed rows unfoldable.
-                evidence: None,
-                error: None,
-            },
+            ProbeState::Open => {
+                let event = syn_open_event(IpAddr::V4(target), port, &scan_id);
+                observe(&mut summary, &event);
+                emit(&event)?;
+            }
+            ProbeState::Closed => tallies
+                .entry((host_index, "closed"))
+                .or_default()
+                .push(port),
+            ProbeState::Unanswered => tallies
+                .entry((host_index, "filtered"))
+                .or_default()
+                .push(port),
+        }
+    }
+    for ((host_index, state), mut ports) in tallies {
+        ports.sort_unstable();
+        let target = raw_targets[host_index];
+        let event = PortSummaryEvent {
+            event: "port_summary",
+            scan_id: scan_id.to_string(),
+            host: target.to_string(),
+            protocol: "tcp",
+            state,
+            count: ports.len(),
+            ports: format_port_ranges(&ports),
             // A host that never answered ARP was never sent to, so saying its
             // ports stayed quiet would claim a probe that never happened.
-            ProbeState::Unanswered => PortEvent {
-                event: "port",
-                scan_id: scan_id.to_string(),
-                host: target.to_string(),
-                port,
-                protocol: "tcp",
-                state: "filtered".to_string(),
-                latency_ms: None,
-                service_name: None,
-                service_confidence: None,
-                banner: None,
-                evidence: None,
-                error: Some(
+            error: if state == "filtered" {
+                Some(
                     sweep
                         .unreachable
                         .get(&target)
                         .copied()
                         .unwrap_or("no SYN reply after configured attempts")
                         .to_string(),
-                ),
+                )
+            } else {
+                None
             },
         };
-        observe(&mut summary, &event);
+        observe_summary(&mut summary, state, event.count);
         emit(&event)?;
     }
 
@@ -624,6 +625,60 @@ fn partition_syn_targets(
         }
     }
     Ok((raw, connect))
+}
+
+/// Many results of one state on one host, as a count and the ports they cover.
+///
+/// The states a sweep produces in bulk say nothing beyond themselves, and
+/// storage keeps them as a per-host count either way. Sending them that way
+/// rather than a line per probe is the difference between minutes and seconds
+/// on a scan of tens of millions of ports.
+#[cfg(all(windows, feature = "syn-sweep"))]
+#[derive(Serialize)]
+struct PortSummaryEvent {
+    event: &'static str,
+    scan_id: String,
+    host: String,
+    protocol: &'static str,
+    state: &'static str,
+    count: usize,
+    ports: String,
+    error: Option<String>,
+}
+
+/// Sorted ports as "1-3,7,9-11", the shape storage already keeps them in.
+#[cfg(all(windows, feature = "syn-sweep"))]
+fn format_port_ranges(ports: &[u16]) -> String {
+    let mut out = String::new();
+    let mut index = 0;
+    while index < ports.len() {
+        let low = ports[index];
+        let mut high = low;
+        while index + 1 < ports.len() && ports[index + 1] == high + 1 {
+            index += 1;
+            high = ports[index];
+        }
+        if !out.is_empty() {
+            out.push(',');
+        }
+        if low == high {
+            out.push_str(&low.to_string());
+        } else {
+            out.push_str(&format!("{low}-{high}"));
+        }
+        index += 1;
+    }
+    out
+}
+
+#[cfg(all(windows, feature = "syn-sweep"))]
+fn observe_summary(summary: &mut SummaryEvent, state: &str, count: usize) {
+    summary.total += count;
+    match state {
+        "closed" => summary.closed += count,
+        "filtered" => summary.filtered += count,
+        _ => {}
+    }
 }
 
 /// Liveness for a sweep that will not produce a result for an hour.

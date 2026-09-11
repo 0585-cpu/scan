@@ -1295,12 +1295,17 @@ def _run_scan_job(
 ) -> None:
     repo = SQLiteRepository(db_path)
     pending_results: list[PortResult] = []
+    pending_summaries: list[dict[str, str]] = []
     last_flush = [time.monotonic()]
     evidence_summary: ScreenshotCaptureSummary | None = None
     eligible_evidence = 0
 
     def flush_results() -> None:
         last_flush[0] = time.monotonic()
+        if pending_summaries:
+            summaries = list(pending_summaries)
+            pending_summaries.clear()
+            repo.add_state_summaries(summaries)
         if not pending_results:
             return
         # Clear even when the write fails. The cleanup path flushes again on the
@@ -1344,6 +1349,25 @@ def _run_scan_job(
                 "answered": event.get("answered"),
                 "total": event.get("total"),
             }
+            return
+        if event.get("event") == "port_summary":
+            # Many results of one state on one host, sent as a count and the
+            # ports it covers rather than a line each. Batched like results are,
+            # because opening a connection per summary was most of what writing
+            # them cost on a scan with a summary per host.
+            pending_summaries.append(
+                {
+                    "scan_id": scan_id,
+                    "host": str(event.get("host", "")),
+                    "protocol": str(event.get("protocol", "tcp")),
+                    "state": str(event.get("state", "")),
+                    "ports": str(event.get("ports", "")),
+                }
+            )
+            if len(pending_summaries) >= RESULT_BATCH_SIZE or (
+                time.monotonic() - last_flush[0] >= RESULT_BATCH_MAX_WAIT_S
+            ):
+                flush_results()
             return
         if event.get("event") != "port":
             return

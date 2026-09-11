@@ -8,7 +8,7 @@ import platform
 import shutil
 import sqlite3
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -140,6 +140,27 @@ def merge_port_ranges(existing: str | None, ports: Iterable[int]) -> str:
     """
     points: list[tuple[int, int]] = list(parse_port_ranges(existing))
     points.extend((port, port) for port in ports)
+    if not points:
+        return ""
+    points.sort()
+    merged: list[tuple[int, int]] = [points[0]]
+    for low, high in points[1:]:
+        last_low, last_high = merged[-1]
+        if low <= last_high + 1:
+            merged[-1] = (last_low, max(last_high, high))
+        else:
+            merged.append((low, high))
+    return format_port_ranges(merged)
+
+
+def merge_range_strings(existing: str | None, incoming: str | None) -> str:
+    """Merge two range strings without expanding either into ports.
+
+    A summary covering ten thousand ports arrives as a handful of ranges, and
+    turning it into ten thousand integers to merge it would cost as much as the
+    per-probe lines the summary exists to replace.
+    """
+    points = parse_port_ranges(existing) + parse_port_ranges(incoming)
     if not points:
         return ""
     points.sort()
@@ -832,6 +853,82 @@ class SQLiteRepository:
                     # nothing for the fold to find.
                     continue
                 self._collapse_bulk_states(conn, scan_id, sorted(hosts))
+
+    def add_state_summaries(self, summaries: Iterable[Mapping[str, Any]]) -> int:
+        """Record many summaries on one connection.
+
+        Opening a connection costs a handful of PRAGMAs, which is nothing until
+        a scan of thousands of hosts sends a summary each: paid per summary it
+        was most of the time the summaries take.
+        """
+        batch = list(summaries)
+        if not batch:
+            return 0
+        covered = 0
+        with self.session() as conn:
+            for summary in batch:
+                covered += self._apply_state_summary(
+                    conn,
+                    str(summary["scan_id"]),
+                    host=str(summary["host"]),
+                    protocol=str(summary.get("protocol", "tcp")),
+                    state=str(summary["state"]),
+                    ports=str(summary.get("ports", "")),
+                )
+        return covered
+
+    def add_state_summary(
+        self,
+        scan_id: str,
+        *,
+        host: str,
+        protocol: str,
+        state: str,
+        ports: str,
+    ) -> int:
+        """Record many results of one state on one host without their rows.
+
+        The engine sends the bulk states this way rather than a line per probe,
+        so the rows they would have become are never built, sent, parsed or
+        written. Returns how many ports the summary covered.
+        """
+        with self.session() as conn:
+            return self._apply_state_summary(
+                conn, scan_id, host=host, protocol=protocol, state=state, ports=ports
+            )
+
+    def _apply_state_summary(
+        self,
+        conn: sqlite3.Connection,
+        scan_id: str,
+        *,
+        host: str,
+        protocol: str,
+        state: str,
+        ports: str,
+    ) -> int:
+        spans = parse_port_ranges(ports)
+        if not spans:
+            return 0
+        covered = sum(high - low + 1 for low, high in spans)
+        previous = conn.execute(
+            """
+            SELECT ports FROM scan_state_counts
+            WHERE scan_id=? AND host=? AND protocol=? AND state=?
+            """,
+            (scan_id, host, protocol, state),
+        ).fetchone()
+        merged = merge_range_strings(previous["ports"] if previous else "", ports)
+        conn.execute(
+            """
+            INSERT INTO scan_state_counts(scan_id, host, protocol, state, collapsed, ports)
+            VALUES(?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scan_id, host, protocol, state)
+            DO UPDATE SET collapsed=collapsed + excluded.collapsed, ports=excluded.ports
+            """,
+            (scan_id, host, protocol, state, covered, merged),
+        )
+        return covered
 
     def _add_state_count(
         self,
