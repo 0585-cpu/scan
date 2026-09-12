@@ -277,6 +277,13 @@ Tauri 데스크톱 창
 - **호스트 500대를 넘는 스윕.** 호스트당 예산이 실제로 열리는 구간이지만 그만한
   대역이 없어 측정하지 못했다. 이 구간에서 수신 큐(16,384)와 캡처 스레드가
   버티는지는 미확인이다.
+- **온링크 /24 전체의 병렬 ARP.** /25 126대까지는 2.52초로 측정했으나(아래 문서
+  참조) 254대 4배치 구간은 환산값이다.
+- **`error` 상태에서의 Governor 동작.** 임시 포트 고갈이 실제로 발생하는지 자체가
+  미측정이다.
+
+0.2.4 이후 로컬 커밋 두 개(`c46ef28`, `30cf9b1`)의 변경 내용·측정치·남은 항목은
+`docs/scan-load-and-evidence-handoff-ko.md`에 있다. 아직 푸시하지 않았다.
 
 추가 제한은 다음과 같다.
 
@@ -299,6 +306,7 @@ Tauri 데스크톱 창
 - `docs/install.md`: 일반 설치·체크섬 확인
 - `docs/desktop-packaging.md`: Windows 데스크톱 빌드
 - `docs/syn-sweep-handoff.md`: SYN 구현 세부 인수인계
+- `docs/scan-load-and-evidence-handoff-ko.md`: 스캔 부하 분산·증적 예산 인수인계 (0.2.4 이후, 미푸시)
 - `docs/release-checklist.md`: 릴리즈 검증 체크리스트
 - `docs/development-handoff-ko.md`: 다른 PC에서 개발을 이어가기 위한 환경·이전 가이드
 - `docs/superpowers/specs/2026-09-10-syn-sweep-personal-installer-design.md`: SYN/Npcap 설계 기준
