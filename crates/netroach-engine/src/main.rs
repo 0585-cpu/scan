@@ -330,7 +330,7 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
         ));
     }
     let timeout_duration = Duration::from_millis(args.timeout_ms.max(1));
-    let rate_limiter = RateLimiter::new(args.rate_limit_per_sec);
+    let rate_limiter = RateLimiter::new(probe_rate(args.rate_limit_per_sec, targets.len()));
     let scan_id: Arc<str> = Arc::from(args.scan_id);
     let protocol = args.protocol;
     let service_probe = args.service_probe;
@@ -372,9 +372,7 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
     };
 
     let governor = Arc::new(Governor::new(concurrency));
-    let scan_jobs = targets
-        .into_iter()
-        .flat_map(|target| ports.iter().copied().map(move |port| (target, port)));
+    let scan_jobs = (0..planned_attempts).map(move |index| scan_job_at(index, &targets, &ports));
 
     let mut stream = stream::iter(scan_jobs)
         .map(|(target, port)| {
@@ -508,38 +506,58 @@ async fn run_syn_scan(
     let mut tallies: BTreeMap<(usize, &'static str), Vec<u16>> = BTreeMap::new();
     for index in syn_runner::probe_indices(raw_targets.len(), ports.len()) {
         let (host_index, port_index) = syn_runner::probe_coordinates(index, raw_targets.len());
-        let target = raw_targets[host_index];
         let port = ports[port_index];
-        match sweep.states.get(index) {
-            ProbeState::Open if service_probe => {
-                follow_up_jobs.push((IpAddr::V4(target), port, true));
-            }
-            ProbeState::Open => {
-                let event = syn_open_event(IpAddr::V4(target), port, &scan_id);
+        let state = match sweep.states.get(index) {
+            // Gathered per host like the other states rather than acted on as
+            // it is read: what to do with an open port depends on how many
+            // others the same host answered, which is not known until the last
+            // probe has been classified.
+            ProbeState::Open => "open",
+            ProbeState::Closed => "closed",
+            ProbeState::Unanswered => "filtered",
+        };
+        tallies.entry((host_index, state)).or_default().push(port);
+    }
+    for ((host_index, state), mut answered_ports) in tallies {
+        answered_ports.sort_unstable();
+        let target = raw_targets[host_index];
+        if state == "open" {
+            // A device answering SYN on most of the ports asked about is a
+            // firewall completing the handshake on the target's behalf, not a
+            // host running that many services - and a connect follow-up cannot
+            // tell the difference, because it completes too. What it does do is
+            // the damage: a full handshake for every port in the range, aimed
+            // at one address. So the follow-up is skipped and the reason
+            // travels with each port.
+            //
+            // Still reported open, one row each. The device really did answer,
+            // only the operator can say whether that is the finding, and these
+            // are the open ports - the states that fold into a per-host count
+            // are deliberately the ones that say nothing, so folding these
+            // would take them off the results table altogether.
+            let unconfirmed = answers_everything(answered_ports.len(), ports.len());
+            for &port in &answered_ports {
+                if service_probe && !unconfirmed {
+                    follow_up_jobs.push((IpAddr::V4(target), port, true));
+                    continue;
+                }
+                let mut event = syn_open_event(IpAddr::V4(target), port, &scan_id);
+                if unconfirmed {
+                    event.error = Some(ANSWERS_EVERYTHING_REASON.to_string());
+                }
                 observe(&mut summary, &event);
                 emit(&event)?;
             }
-            ProbeState::Closed => tallies
-                .entry((host_index, "closed"))
-                .or_default()
-                .push(port),
-            ProbeState::Unanswered => tallies
-                .entry((host_index, "filtered"))
-                .or_default()
-                .push(port),
+            continue;
         }
-    }
-    for ((host_index, state), mut ports) in tallies {
-        ports.sort_unstable();
-        let target = raw_targets[host_index];
         let event = PortSummaryEvent {
             event: "port_summary",
             scan_id: scan_id.to_string(),
             host: target.to_string(),
             protocol: "tcp",
             state,
-            count: ports.len(),
-            ports: format_port_ranges(&ports),
+            count: answered_ports.len(),
+            ports: format_port_ranges(&answered_ports),
             // A host that never answered ARP was never sent to, so saying its
             // ports stayed quiet would claim a probe that never happened.
             error: if state == "filtered" {
@@ -558,6 +576,11 @@ async fn run_syn_scan(
         observe_summary(&mut summary, state, event.count);
         emit(&event)?;
     }
+    // Port-major, for the same reason the connect scan interleaves its own
+    // jobs: the follow-up's rate and its probes in flight are both taken from
+    // the front of this list, and gathering the open ports per host left them
+    // grouped by host.
+    follow_up_jobs.sort_by_key(|&(_, port, _)| port);
 
     for target in connect_targets {
         for &port in &ports {
@@ -565,7 +588,19 @@ async fn run_syn_scan(
         }
     }
 
-    let follow_up_limiter = RateLimiter::new(syn_runner::effective_rate(rate_limit_per_sec));
+    // Budgeted over the hosts the follow-up actually visits, not the targets the
+    // sweep started with. A sweep of a whole range can find every one of its
+    // open ports on a single machine, and the follow-up is a full handshake per
+    // port: without this that machine takes the entire follow-up rate.
+    let follow_up_hosts = follow_up_jobs
+        .iter()
+        .map(|(host, _, _)| *host)
+        .collect::<std::collections::HashSet<IpAddr>>()
+        .len();
+    let follow_up_limiter = RateLimiter::new(probe_rate(
+        syn_runner::effective_rate(rate_limit_per_sec),
+        follow_up_hosts,
+    ));
     let mut follow_ups = stream::iter(follow_up_jobs)
         .map(|(target, port, syn_open)| {
             let scan_id = scan_id.clone();
@@ -671,6 +706,36 @@ fn format_port_ranges(ports: &[u16]) -> String {
     out
 }
 
+/// The share of probed ports a host may answer before its answers stop saying
+/// anything about the host.
+///
+/// A SYN proxy completes the handshake for every port it is asked about, so the
+/// sweep sees the whole range open and a connect follow-up sees it established.
+/// Nothing in either answer separates the device from a host running that many
+/// services. Half is well clear of the busiest real host and well below what
+/// such a device produces, which is all of them.
+#[cfg(all(windows, feature = "syn-sweep"))]
+const ANSWERS_EVERYTHING_RATIO: f64 = 0.5;
+/// Below this many probed ports a high share proves nothing: a ten-port scan of
+/// a busy server legitimately finds most of them open.
+#[cfg(all(windows, feature = "syn-sweep"))]
+const ANSWERS_EVERYTHING_MIN_PORTS: usize = 100;
+/// What each port of such a host carries, so the reason is on the row the
+/// operator reads rather than only in a summary they have to go looking for.
+#[cfg(all(windows, feature = "syn-sweep"))]
+const ANSWERS_EVERYTHING_REASON: &str =
+    "this address answered SYN on most of the range, so it is answering for whatever is asked \
+     rather than reporting its own services; the service probe was skipped and this port is \
+     not confirmed";
+
+/// Whether a host answered so much of what it was asked that its answers are
+/// about the answering device rather than about the host.
+#[cfg(all(windows, feature = "syn-sweep"))]
+fn answers_everything(open: usize, probed: usize) -> bool {
+    probed >= ANSWERS_EVERYTHING_MIN_PORTS
+        && open as f64 >= probed as f64 * ANSWERS_EVERYTHING_RATIO
+}
+
 #[cfg(all(windows, feature = "syn-sweep"))]
 fn observe_summary(summary: &mut SummaryEvent, state: &str, count: usize) {
     summary.total += count;
@@ -744,6 +809,50 @@ fn preserve_syn_open(
             "follow-up connect returned {follow_up_state}"
         ))),
     }
+}
+
+/// What one host may be asked to answer per second through a socket.
+///
+/// Governs both socket paths: TCP connect and UDP. Set for the heavier of the
+/// two - a connect probe is a full handshake the target's stack accepts, tracks
+/// and then tears down, where a sweep probe is one frame it answers and
+/// forgets, so this sits above the sweep's per-host budget and still far below
+/// what the configured total used to put on a single machine.
+const PROBE_PER_HOST_RATE_PER_SEC: u64 = 100;
+/// The rate a socket scan may use however few hosts it has.
+///
+/// A single-target scan is the case the per-host budget would otherwise slow to
+/// a crawl, and it is also the one an operator runs deliberately against a
+/// machine they are looking at. A thousand handshakes a second covers every
+/// port on one host inside a minute while staying five times gentler than
+/// pointing the whole configured rate at it.
+const PROBE_RATE_FLOOR_PER_SEC: u64 = 1_000;
+
+/// The rate a socket scan of this many hosts may use.
+///
+/// The same shape as the sweep's rule: the budget only raises the ceiling, so a
+/// rate the operator lowered on purpose is still honoured, and a scan is never
+/// allowed more than was asked for. What it changes is the wide case - the
+/// configured total is shared across the hosts in the scan rather than aimed at
+/// whichever host the job list happened to start with.
+fn probe_rate(requested: u64, host_count: usize) -> u64 {
+    let spread = (host_count as u64).saturating_mul(PROBE_PER_HOST_RATE_PER_SEC);
+    requested.min(spread.max(PROBE_RATE_FLOOR_PER_SEC))
+}
+
+/// The (host, port) pair at this position in a port-major job list.
+///
+/// Port-major means every host is probed once before any host is probed twice.
+/// Host-major put the whole scan on one target at a time, and the two things
+/// that bound a scan are both taken from the front of the job list: the rate
+/// limiter's slots and the `concurrency` probes in flight. A scan of a thousand
+/// hosts therefore aimed its entire configured rate and every one of its
+/// in-flight sockets at the first host, worked down its ports, and moved on -
+/// so the host that happened to be first carried a load meant to be spread over
+/// the range. Interleaving spreads both without changing what is probed or how
+/// many probes there are.
+fn scan_job_at(index: usize, targets: &[IpAddr], ports: &[u16]) -> (IpAddr, u16) {
+    (targets[index % targets.len()], ports[index / targets.len()])
 }
 
 /// Sleeps shorter than this are not worth attempting: OS timers round up to a
@@ -3151,6 +3260,68 @@ mod tests {
         // The low-water mark is kept, so the summary still reports that the
         // scan was throttled at some point.
         assert_eq!(state.floor, 512);
+    }
+
+    #[cfg(all(windows, feature = "syn-sweep"))]
+    #[test]
+    fn a_host_answering_for_everything_is_told_apart_from_a_busy_one() {
+        // The case this exists for: a firewall completing the handshake for
+        // every port it is asked about.
+        assert!(answers_everything(65_535, 65_535));
+        assert!(answers_everything(400, 512));
+
+        // A genuinely busy host is not it. Twenty services on a full port scan
+        // has to stay a normal result, or the scan stops probing real findings.
+        assert!(!answers_everything(20, 65_535));
+        assert!(!answers_everything(255, 512));
+
+        // A narrow scan cannot tell the difference either way, so it does not
+        // try: every port of a ten-port web-and-mail check may legitimately
+        // answer.
+        assert!(!answers_everything(10, 10));
+        assert!(!answers_everything(
+            ANSWERS_EVERYTHING_MIN_PORTS - 1,
+            ANSWERS_EVERYTHING_MIN_PORTS - 1
+        ));
+    }
+
+    #[test]
+    fn no_single_host_carries_a_whole_range_s_probe_rate() {
+        // The configured total used to land wherever the job list started, so a
+        // scan of a range could put all of it on one machine. Spread over the
+        // hosts, each one is inside the per-host budget.
+        assert_eq!(probe_rate(5_000, 1), PROBE_RATE_FLOOR_PER_SEC);
+        assert_eq!(probe_rate(5_000, 50), 5_000);
+        assert_eq!(probe_rate(5_000, 2_540), 5_000);
+        assert!(probe_rate(5_000, 2_540) / 2_540 <= PROBE_PER_HOST_RATE_PER_SEC);
+
+        // A rate the operator lowered on purpose is still what they get, and a
+        // scan is never allowed more than it asked for.
+        assert_eq!(probe_rate(2, 1), 2);
+        assert_eq!(probe_rate(200, 2_540), 200);
+    }
+
+    #[test]
+    fn every_host_is_probed_once_before_any_host_is_probed_twice() {
+        // The ordering is what spreads both bounds on a scan - the rate
+        // limiter's slots and the probes in flight - across the range instead
+        // of aiming them at whichever host the list starts with.
+        let targets: Vec<IpAddr> = (1..=3)
+            .map(|last| IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, last)))
+            .collect();
+        let ports: Vec<u16> = vec![80, 443];
+        let host_count = targets.len();
+
+        let order: Vec<(IpAddr, u16)> = (0..host_count * ports.len())
+            .map(|index| scan_job_at(index, &targets, &ports))
+            .collect();
+
+        let first_round: Vec<IpAddr> = order[..host_count].iter().map(|job| job.0).collect();
+        assert_eq!(first_round, targets, "the first pass touches every host");
+        assert!(
+            order[..host_count].iter().all(|job| job.1 == ports[0]),
+            "and touches each of them on the same port"
+        );
     }
 
     #[test]

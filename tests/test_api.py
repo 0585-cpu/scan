@@ -2430,5 +2430,41 @@ class RescanAndRecaptureTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
 
 
+class PendingScanWorkTests(unittest.TestCase):
+    """What a resumed scan decides is still left to probe."""
+
+    def _group(self, ports, spans):
+        from netroach.api import _group_pending_scan_work
+
+        target = ipaddress.ip_address("10.0.0.1")
+        return _group_pending_scan_work([target], ports, spans), target
+
+    def test_a_span_wider_than_one_port_still_leaves_the_rest_pending(self):
+        # Coverage is decided per port, not by counting how many ports a span
+        # spells. Ports 80 and 443 against a span of 1-100 covers one of the
+        # two, and calling it twenty-one covered would mark the host finished
+        # and silently never probe 443.
+        groups, target = self._group([80, 443], {"10.0.0.1": [(1, 100)]})
+
+        self.assertEqual(groups, [([443], [target])])
+
+    def test_a_host_covered_end_to_end_is_left_alone(self):
+        groups, _ = self._group([80, 443], {"10.0.0.1": [(1, 500)]})
+
+        self.assertEqual(groups, [])
+
+    def test_a_host_with_nothing_done_is_asked_for_everything(self):
+        groups, target = self._group([80, 443], {})
+
+        self.assertEqual(groups, [([80, 443], [target])])
+
+    def test_gaps_between_spans_are_still_pending(self):
+        groups, target = self._group(
+            [22, 80, 443], {"10.0.0.1": [(1, 22), (400, 500)]}
+        )
+
+        self.assertEqual(groups, [([80], [target])])
+
+
 if __name__ == "__main__":
     unittest.main()

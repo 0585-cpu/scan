@@ -69,6 +69,22 @@ const SEND_BATCH_MAX: usize = 256;
 /// Bytes reserved per queued frame: a SYN frame plus the per-packet header the
 /// queue stores alongside it, rounded up with room to spare.
 const SEND_QUEUE_BYTES_PER_FRAME: u32 = 256;
+/// Neighbour lookups that may be in flight at once.
+///
+/// An address on this segment that nothing answers for costs about 3.2
+/// seconds, measured against empty addresses on the scanning machine's own
+/// subnet, where Windows retransmits its ARP and then gives up. Asked one
+/// after another, a /24 holding thirty live machines spends twelve minutes on
+/// the two hundred that are gone before one SYN reaches the wire, and the
+/// progress strip has nothing to show because no probe has been sent yet.
+///
+/// The wait belongs to the kernel rather than this machine, so the threads are
+/// asleep and the number is not a core count. It is held down instead by what
+/// is on the wire: an ARP request is a broadcast every host on the segment
+/// takes in, so this is how many of those may be outstanding at once. Sixty
+/// four clears a /24 in about thirteen seconds while keeping that broadcast
+/// well under what an ordinary host does when it boots.
+const ARP_RESOLVE_THREADS: usize = 64;
 
 /// How many frames to gather before handing them to the driver.
 ///
@@ -490,14 +506,24 @@ fn flush_queue(
 
 /// Reset the half-open connections the last drain found, giving each target
 /// its backlog slot back instead of leaving it held until the target times out.
+///
+/// The resets share the probes' rate limiter and their send batch. Paced,
+/// because a reset is a frame arriving at the target like any other and the
+/// per-host budget the sweep is held to means nothing if one more frame per
+/// probe goes out beside it unmetered - a host with many ports open is exactly
+/// where that doubling lands. Batched, because flushing each reset on its own
+/// cost a driver round trip per open port, which is the cost `SEND_BATCH_MAX`
+/// exists to avoid. Whatever is left queued flies on the round's final flush.
 #[allow(clippy::too_many_arguments)]
-fn close_opened(
+async fn close_opened(
     opened: &mut Vec<(Ipv4Addr, u16)>,
     targets: &[Ipv4Addr],
     routes: &[Option<Route>],
     queues: &mut BTreeMap<u32, SendQueue>,
     senders: &mut BTreeMap<u32, Capture<Active>>,
     queued: &mut BTreeMap<u32, usize>,
+    limiter: &RateLimiter,
+    batch_size: usize,
     secret: u64,
     source_port: u16,
     ip_id: &mut u16,
@@ -509,6 +535,7 @@ fn close_opened(
         let Some(route) = routes[host_index] else {
             continue;
         };
+        limiter.wait().await;
         // The target is waiting to hear the sequence after our SYN's.
         let sequence = syn_cookie(secret, host, port, source_port).wrapping_add(1);
         let frame = build_rst_frame(
@@ -525,11 +552,54 @@ fn close_opened(
             queue
                 .queue(None, &frame[..])
                 .with_context(|| format!("could not queue RST to {host}:{port}"))?;
-            *queued.entry(route.interface_index).or_insert(0) += 1;
+            let pending = queued.entry(route.interface_index).or_insert(0);
+            *pending += 1;
+            if *pending >= batch_size {
+                flush_queue(queues, senders, queued, route.interface_index)?;
+            }
         }
-        flush_queue(queues, senders, queued, route.interface_index)?;
     }
     Ok(())
+}
+
+/// Apply `f` to every item at once, keeping the input order.
+///
+/// The order is the whole point: the caller pairs each answer with the target
+/// at the same index, so a merge that returned them out of order would address
+/// frames to the wrong hosts rather than fail. Each thread takes one contiguous
+/// slice, which is enough because the case this exists for - a segment full of
+/// addresses nothing answers for - costs the same for every item, leaving
+/// nothing for work stealing to even out.
+fn map_in_parallel<T: Sync, R: Send>(
+    items: &[T],
+    threads: usize,
+    f: impl Fn(&T) -> R + Sync,
+) -> Result<Vec<R>> {
+    let threads = threads.min(items.len()).max(1);
+    // Never zero: `chunks` panics on a zero width, which an empty input would
+    // otherwise produce.
+    let per_thread = items.len().div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = items
+            .chunks(per_thread)
+            .map(|slice| scope.spawn(|| slice.iter().map(&f).collect::<Vec<_>>()))
+            .collect();
+        let mut mapped = Vec::with_capacity(items.len());
+        for handle in handles {
+            match handle.join() {
+                Ok(slice) => mapped.extend(slice),
+                Err(_) => return Err(anyhow!("a parallel worker thread panicked")),
+            }
+        }
+        Ok(mapped)
+    })
+}
+
+/// Resolve every target's route, several at a time.
+fn resolve_routes(targets: &[Ipv4Addr]) -> Result<Vec<Result<Route, netlink::RouteError>>> {
+    map_in_parallel(targets, ARP_RESOLVE_THREADS, |&target| {
+        resolve_route(target)
+    })
 }
 
 fn sweep_secret() -> u64 {
@@ -586,12 +656,16 @@ pub async fn run_syn_sweep(
     // quiet, and the two reasons are different from each other.
     let mut unreachable = std::collections::HashMap::<Ipv4Addr, &'static str>::new();
     let mut adapter_devices = BTreeMap::<u32, Device>::new();
-    for &target in targets {
+    // Every target's route is resolved before this loop rather than inside it.
+    // A dead address on this segment costs seconds of ARP each, and asking one
+    // at a time put that cost end to end ahead of the first probe.
+    let resolved = resolve_routes(targets)?;
+    for (&target, resolution) in targets.iter().zip(resolved) {
         // A host that will not answer ARP is down, and there is nothing to
         // address a frame to. Skipped rather than failing the run: an empty
         // address is the ordinary case in a subnet sweep, and failing over one
         // would stop the scan the way a self-address once did.
-        let route = match resolve_route(target) {
+        let route = match resolution {
             Ok(route) => route,
             Err(netlink::RouteError::NoNextHopMac(_)) => {
                 unreachable.insert(target, "host did not answer ARP; no probe was sent");
@@ -728,10 +802,13 @@ pub async fn run_syn_sweep(
                 &mut queues,
                 &mut senders,
                 &mut queued,
+                &limiter,
+                batch_size,
                 secret,
                 source_port,
                 &mut ip_id,
-            )?;
+            )
+            .await?;
             if round > 0 && states.get(index) != ProbeState::Unanswered {
                 continue;
             }
@@ -818,10 +895,20 @@ pub async fn run_syn_sweep(
             &mut queues,
             &mut senders,
             &mut queued,
+            &limiter,
+            batch_size,
             secret,
             source_port,
             &mut ip_id,
-        )?;
+        )
+        .await?;
+        // The resets this round's last drain produced are queued, not sent:
+        // they ride the send batch now rather than paying a driver round trip
+        // each. Nothing else flushes after this point, so a target whose slot
+        // this frees would otherwise hold it until it timed out.
+        for &interface_index in adapter_devices.keys() {
+            flush_queue(&mut queues, &mut senders, &mut queued, interface_index)?;
+        }
     }
     readers.finish()?;
     Ok(SweepOutcome {
@@ -839,6 +926,26 @@ mod tests {
     use crate::syn_sweep::{LinkLayer, SynAnswer};
 
     use super::*;
+
+    #[test]
+    fn a_parallel_map_answers_in_the_order_it_was_asked() {
+        // Enough items to be split over every thread, and a function whose
+        // answer names its own input, so a chunk merged out of order shows up
+        // as a value in the wrong slot rather than as a missing one.
+        let items: Vec<usize> = (0..1_000).collect();
+
+        let doubled = map_in_parallel(&items, ARP_RESOLVE_THREADS, |item| item * 2).unwrap();
+
+        assert_eq!(doubled.len(), items.len());
+        assert!(doubled.iter().enumerate().all(|(at, got)| *got == at * 2));
+    }
+
+    #[test]
+    fn a_parallel_map_over_nothing_starts_no_threads() {
+        let empty: [usize; 0] = [];
+
+        assert!(map_in_parallel(&empty, 8, |item| *item).unwrap().is_empty());
+    }
 
     #[test]
     fn packs_four_probe_states_into_one_byte() {

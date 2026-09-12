@@ -8,9 +8,11 @@ import platform
 import shutil
 import sqlite3
 import uuid
-from collections.abc import Iterable, Iterator, Mapping
+from bisect import bisect_right
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from operator import itemgetter
 from pathlib import Path
 from typing import Any
 
@@ -153,17 +155,14 @@ def merge_port_ranges(existing: str | None, ports: Iterable[int]) -> str:
     return format_port_ranges(merged)
 
 
-def merge_range_strings(existing: str | None, incoming: str | None) -> str:
-    """Merge two range strings without expanding either into ports.
+_span_low = itemgetter(0)
 
-    A summary covering ten thousand ports arrives as a handful of ranges, and
-    turning it into ten thousand integers to merge it would cost as much as the
-    per-probe lines the summary exists to replace.
-    """
-    points = parse_port_ranges(existing) + parse_port_ranges(incoming)
+
+def merge_spans(spans: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Sort inclusive (low, high) pairs and join the ones that touch."""
+    points = sorted(spans)
     if not points:
-        return ""
-    points.sort()
+        return []
     merged: list[tuple[int, int]] = [points[0]]
     for low, high in points[1:]:
         last_low, last_high = merged[-1]
@@ -171,7 +170,30 @@ def merge_range_strings(existing: str | None, incoming: str | None) -> str:
             merged[-1] = (last_low, max(last_high, high))
         else:
             merged.append((low, high))
-    return format_port_ranges(merged)
+    return merged
+
+
+def spans_cover(spans: Sequence[tuple[int, int]], port: int) -> bool:
+    """Whether `port` falls inside one of these merged, sorted spans.
+
+    Bisected on each span's low end alone. Searching for the pair `(port, ...)`
+    instead compares both ends, so a span of (1, 2000) sorts above the probe for
+    port 1 and the search reports it missing.
+    """
+    at = bisect_right(spans, port, key=_span_low)
+    return at > 0 and spans[at - 1][1] >= port
+
+
+def merge_range_strings(existing: str | None, incoming: str | None) -> str:
+    """Merge two range strings without expanding either into ports.
+
+    A summary covering ten thousand ports arrives as a handful of ranges, and
+    turning it into ten thousand integers to merge it would cost as much as the
+    per-probe lines the summary exists to replace.
+    """
+    return format_port_ranges(
+        merge_spans(parse_port_ranges(existing) + parse_port_ranges(incoming))
+    )
 
 
 def default_db_path() -> Path:
@@ -1245,7 +1267,17 @@ class SQLiteRepository:
             ).fetchone()
         return self._scan_job_row_to_dict(row) if row else None
 
-    def get_result_keys(self, scan_id: str, *, protocol: str) -> set[tuple[str, int]]:
+    def get_completed_port_spans(
+        self, scan_id: str, *, protocol: str
+    ) -> dict[str, list[tuple[int, int]]]:
+        """The ports a scan has already probed, per host, as sorted spans.
+
+        Spans rather than individual ports because a wide sweep folds almost
+        everything it finds: expanding the folded ranges back out measured 3.00
+        GB of resident memory for a seventeen-million-probe scan, allocated
+        before a resumed scan sent its first probe. The same coverage as spans
+        is a few pairs per host.
+        """
         with self.session() as conn:
             rows = conn.execute(
                 """
@@ -1262,14 +1294,15 @@ class SQLiteRepository:
                 """,
                 (scan_id, protocol),
             ).fetchall()
-        keys = {(str(row["host"]), int(row["port"])) for row in rows}
+        spans: dict[str, list[tuple[int, int]]] = {}
+        for row in rows:
+            port = int(row["port"])
+            spans.setdefault(str(row["host"]), []).append((port, port))
         # A folded port was probed; leaving it out here would make a resumed
         # scan repeat every port it had already finished.
         for row in folded:
-            host = str(row["host"])
-            for low, high in parse_port_ranges(row["ports"]):
-                keys.update((host, port) for port in range(low, high + 1))
-        return keys
+            spans.setdefault(str(row["host"]), []).extend(parse_port_ranges(row["ports"]))
+        return {host: merge_spans(host_spans) for host, host_spans in spans.items()}
 
     def get_results(
         self,

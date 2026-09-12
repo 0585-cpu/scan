@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from netroach.models import PortResult, ScanSummary, SendResult
-from netroach.storage import SQLiteRepository
+from netroach.storage import SQLiteRepository, spans_cover
 
 
 class StorageTests(unittest.TestCase):
@@ -1077,12 +1077,12 @@ class CollapsedStateTests(unittest.TestCase):
             repo.mark_scan_started(scan_id)
             self._write(repo, scan_id, "10.0.0.1", "filtered", 2000, first_port=1)
 
-            keys = repo.get_result_keys(scan_id, protocol="tcp")
+            spans = repo.get_completed_port_spans(scan_id, protocol="tcp")
 
-            self.assertEqual(len(keys), 2000)
-            self.assertIn(("10.0.0.1", 1), keys)
-            self.assertIn(("10.0.0.1", 2000), keys)
-            self.assertNotIn(("10.0.0.1", 2001), keys)
+            self.assertEqual(spans, {"10.0.0.1": [(1, 2000)]})
+            self.assertTrue(spans_cover(spans["10.0.0.1"], 1))
+            self.assertTrue(spans_cover(spans["10.0.0.1"], 2000))
+            self.assertFalse(spans_cover(spans["10.0.0.1"], 2001))
 
     def test_folded_ports_survive_a_backup_and_restore(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1094,7 +1094,10 @@ class CollapsedStateTests(unittest.TestCase):
             restored.import_database(exported)
 
             self.assertEqual(restored.count_results_by_state(scan_id), {"filtered": 2000})
-            self.assertEqual(len(restored.get_result_keys(scan_id, protocol="tcp")), 2000)
+            self.assertEqual(
+                restored.get_completed_port_spans(scan_id, protocol="tcp"),
+                {"10.0.0.1": [(1, 2000)]},
+            )
 
 
 _PNG_BYTES = bytes([137, 80, 78, 71, 13, 10, 26, 10]) + b"shot"
