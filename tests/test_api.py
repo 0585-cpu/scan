@@ -1454,7 +1454,12 @@ rate_limit_per_sec = 13
                     "web_screenshot",
                 )
                 self.assertEqual(timeout_ms, 5_000)
-                self.assertEqual(maximum, 2)
+                # The cap reaches the capture as the length of the list the
+                # database already selected under it - never as the number
+                # again. This layer's own cut is a plain head of the list, so
+                # re-applying the total here would take a budget already shared
+                # between hosts and put it back on the first one.
+                self.assertGreaterEqual(maximum, len(list(results)))
                 return ScreenshotCaptureSummary(candidates=1, captured=1, failed=0, web_screenshots=1)
 
             with patch("netroach.api.run_scan", side_effect=fake_run_scan):

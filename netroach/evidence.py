@@ -36,6 +36,21 @@ DEFAULT_SCREENSHOT_MAX = 20
 # than at the request, raising the API's limit alone left the capture throwing
 # on the first call and storing nothing.
 MAX_SCREENSHOT_LIMIT = 10_000
+# How many of one host's ports may take from the capture budget.
+#
+# The budget was a total only, so a host with more open ports than the whole
+# budget took it and left the hosts after it with nothing - which is the
+# damaging shape, because a host with no evidence at all reads as a host with
+# nothing to report.
+#
+# Ten because it covers the services a real host shows without reaching its
+# ephemeral tail: a full-port scan of a Windows host answers on 135, 139, 445,
+# 3389, 5985 and 47001 and then a run of RPC ports above 49152, and the lowest
+# ten take the first group. Five would cut WinRM, which is a finding. Against
+# the measured cost of a capture - 0.29s for a transcript, 1.07s for a console
+# window - ten a host is about three seconds per host, so 500 hosts is a
+# 24-minute evidence pass.
+EVIDENCE_PER_HOST = 10
 SCREENSHOT_WIDTH = 800
 SCREENSHOT_HEIGHT = 600
 # The browser viewport, which is not the transcript renderer's canvas above.

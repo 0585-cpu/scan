@@ -386,6 +386,10 @@ def _capture_scan_evidence(
 ) -> ScreenshotCaptureSummary | None:
     if not args.capture_evidence:
         return None
+    # Counted before the capture, which creates evidence and so changes what
+    # is still missing it. The budget cuts the candidate list per host as well
+    # as in total, so without this the CLI reports every scan as fully covered.
+    eligible = repo.count_automatic_evidence_candidates(scan_id)
     stored_results = repo.get_automatic_evidence_candidates(scan_id, limit=args.screenshot_max)
 
     def store_screenshot(
@@ -412,7 +416,10 @@ def _capture_scan_evidence(
         stored_results,
         store=store_screenshot,
         timeout_ms=args.screenshot_timeout_ms,
-        maximum=args.screenshot_max,
+        # The list the database selected, which already carries both the
+        # per-host share and the total. Re-cutting it here to the total would
+        # take a plain head of the list and undo the sharing.
+        maximum=max(1, len(stored_results)),
     )
     for error in summary.errors:
         print(f"warning: automatic evidence: {error}", file=sys.stderr)
@@ -424,6 +431,7 @@ def _capture_scan_evidence(
         captured=summary.captured,
         without_evidence=summary.failed,
         errors=summary.errors,
+        eligible=eligible,
     )
     return summary
 

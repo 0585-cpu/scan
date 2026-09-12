@@ -16,7 +16,12 @@ from operator import itemgetter
 from pathlib import Path
 from typing import Any
 
-from .evidence import detect_image_media_type, image_extension, safe_original_name
+from .evidence import (
+    EVIDENCE_PER_HOST,
+    detect_image_media_type,
+    image_extension,
+    safe_original_name,
+)
 from .models import PortResult, ScanSummary, SendResult
 from .oast import new_oast_token
 from .ports import parse_ports
@@ -1379,30 +1384,55 @@ class SQLiteRepository:
         return results
 
     def get_automatic_evidence_candidates(
-        self, scan_id: str, *, limit: int, include_captured: bool = False
+        self,
+        scan_id: str,
+        *,
+        limit: int,
+        per_host: int = EVIDENCE_PER_HOST,
+        include_captured: bool = False,
     ) -> list[dict[str, Any]]:
         """Open results evidence can be captured for.
+
+        `per_host` is how many of one host's ports may take from the budget.
+        Without it the list was ordered by host and cut at `limit` alone, so a
+        host with more open ports than the whole budget consumed it and every
+        host after that one was never a candidate - the scan then reported
+        evidence for the ports it captured while whole hosts had none at all,
+        and nothing in the summary distinguished that from full coverage.
+
+        Each host spends its share on its lowest ports, which is where the
+        services worth reporting sit: a full-port scan of a Windows host finds
+        135, 139, 445, 3389 and 5985 below a tail of ephemeral RPC ports above
+        49152, and a budget spent on the tail photographs nothing.
+
+        `limit` still bounds the total, because each capture costs a page load
+        or a console window and the pass would otherwise run for hours on a
+        wide scan.
 
         `include_captured` asks for every open result rather than only the ones
         still missing evidence - a recapture redoes the scan's evidence rather
         than filling its gaps, because the reason to run one is usually that
         what is there was taken with the wrong settings.
         """
-        if limit < 1:
+        if limit < 1 or per_host < 1:
             return []
         captured_filter = "" if include_captured else _EVIDENCE_NOT_CAPTURED_SQL
         query = f"""
             SELECT scan_id, host, port, protocol, state, latency_ms,
                    service_name, service_confidence, banner, evidence, error,
                    tags_json, note, created_at
-            FROM port_results
-            WHERE scan_id=? AND state IN ('open', 'open|filtered')
-              {captured_filter}
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY host ORDER BY port) AS host_rank
+                FROM port_results
+                WHERE scan_id=? AND state IN ('open', 'open|filtered')
+                  {captured_filter}
+            )
+            WHERE host_rank <= ?
             ORDER BY host, port
             LIMIT ?
         """
         with self.session() as conn:
-            rows = conn.execute(query, (scan_id, limit)).fetchall()
+            rows = conn.execute(query, (scan_id, per_host, limit)).fetchall()
             results = [_port_result_row_to_dict(row) for row in rows]
             self._attach_evidence_files(conn, results, scan_id)
         return results

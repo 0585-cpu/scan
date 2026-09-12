@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 
 from netroach.models import PortResult, ScanSummary, SendResult
@@ -1294,11 +1295,102 @@ class EvidenceCoverageTests(unittest.TestCase):
         )
         return repo, scan_id
 
+    def _scan_with_open_ports_per_host(self, tmp, counts):
+        """Open ports spread unevenly over several hosts.
+
+        The single-host fixture above cannot see a per-host budget at all: with
+        one host, sharing the budget between hosts and spending it all on the
+        first are the same behaviour.
+        """
+        repo = SQLiteRepository(Path(tmp) / "netroach.db")
+        scan_id = repo.create_scan_job(
+            targets=",".join(counts), ports="1-2000", scope=[], params={}
+        )
+        repo.add_port_results(
+            [
+                PortResult(
+                    scan_id=scan_id, host=host, port=port, protocol="tcp",
+                    state="open", latency_ms=1.0,
+                )
+                for host, ports in counts.items()
+                for port in ports
+            ]
+        )
+        return repo, scan_id
+
+    def test_one_host_cannot_take_the_whole_capture_budget(self):
+        """A host with many open ports used to leave the next hosts with none.
+
+        Ordered by host and port and cut at a total, the first host consumed
+        the candidate list and every host after it was never a candidate - so
+        the scan reported evidence while whole hosts had none at all.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._scan_with_open_ports_per_host(
+                tmp,
+                {
+                    "10.0.0.1": range(1, 51),
+                    "10.0.0.2": [22, 80, 443],
+                    "10.0.0.3": range(1, 51),
+                },
+            )
+
+            candidates = repo.get_automatic_evidence_candidates(
+                scan_id, limit=1000, per_host=10
+            )
+
+            taken = Counter(str(candidate["host"]) for candidate in candidates)
+            self.assertEqual(taken["10.0.0.1"], 10)
+            self.assertEqual(taken["10.0.0.2"], 3, "a host is never padded past what it has")
+            self.assertEqual(taken["10.0.0.3"], 10, "the third host is still reached")
+
+    def test_a_host_spends_its_budget_on_its_lowest_ports(self):
+        """Which ports the budget buys decides whether it bought anything.
+
+        A full-port scan of a Windows host finds its services low and a tail of
+        ephemeral RPC ports above 49152. Spent on the tail, a per-host budget
+        photographs nothing worth reporting.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._scan_with_open_ports_per_host(
+                tmp, {"10.0.0.1": [135, 139, 445, 3389, 5985, 49152, 49153, 49154]}
+            )
+
+            candidates = repo.get_automatic_evidence_candidates(
+                scan_id, limit=1000, per_host=5
+            )
+
+            self.assertEqual(
+                [int(candidate["port"]) for candidate in candidates],
+                [135, 139, 445, 3389, 5985],
+            )
+
+    def test_the_total_still_bounds_a_scan_of_many_hosts(self):
+        """The per-host budget raises coverage; it must not remove the ceiling
+        that keeps the evidence pass from running for hours."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, scan_id = self._scan_with_open_ports_per_host(
+                tmp, {f"10.0.0.{last}": range(1, 51) for last in range(1, 6)}
+            )
+
+            candidates = repo.get_automatic_evidence_candidates(
+                scan_id, limit=25, per_host=10
+            )
+
+            self.assertEqual(len(candidates), 25)
+            taken = Counter(str(candidate["host"]) for candidate in candidates)
+            self.assertEqual(sorted(taken.values(), reverse=True), [10, 10, 5])
+
     def test_the_eligible_count_ignores_the_capture_limit(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo, scan_id = self._scan_with_open_ports(tmp, 100)
 
-            self.assertEqual(len(repo.get_automatic_evidence_candidates(scan_id, limit=20)), 20)
+            # These hundred ports are all on one host, so the per-host budget
+            # is what binds rather than the total of twenty - which is the
+            # point of it. The eligible count still reports all hundred, and
+            # that gap is what tells the operator coverage was partial.
+            candidates = repo.get_automatic_evidence_candidates(scan_id, limit=20, per_host=10)
+            self.assertEqual(len(candidates), 10)
             self.assertEqual(repo.count_automatic_evidence_candidates(scan_id), 100)
 
     def test_a_scan_that_only_tried_some_of_its_ports_records_that(self):

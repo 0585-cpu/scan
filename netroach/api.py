@@ -1196,7 +1196,12 @@ def _capture_stored_evidence(
     candidates = repo.get_automatic_evidence_candidates(
         scan_id, limit=screenshot_max, include_captured=True
     )
-    eligible = len(candidates) if len(candidates) < screenshot_max else repo.count_open_results(scan_id)
+    # Always counted rather than inferred from the candidate list. "Fewer than
+    # the limit means that was all of them" stopped being true once a host's
+    # own share could cut the list: a recapture can come back short of the
+    # total and still have left ports out, and reporting those as eligible=
+    # captured is the one reading that hides partial coverage.
+    eligible = repo.count_open_results(scan_id)
     if not candidates:
         return
 
@@ -1247,7 +1252,9 @@ def _capture_stored_evidence(
         candidates,
         store=store_evidence,
         timeout_ms=screenshot_timeout_ms,
-        maximum=screenshot_max,
+        # See the scan path: the database already applied both the per-host
+        # share and the total, so re-cutting here could only undo that.
+        maximum=max(1, len(candidates)),
         capture_console=capture_console,
         should_stop=should_stop,
         on_examined=on_examined,
@@ -1445,7 +1452,10 @@ def _run_scan_job(
                 # takes a second or more each, for as many open ports as the
                 # scan found. Report what it is on, the way the sweep does.
                 examined = {"count": 0}
-                planned_evidence = min(eligible_evidence, screenshot_max)
+                # The candidate list itself, not a guess from the limit. The
+                # budget is applied per host as well as in total, so the total
+                # is no longer what the list's length will be.
+                planned_evidence = len(stored_results)
 
                 def examining(result: Mapping[str, Any]) -> None:
                     examined["count"] += 1
@@ -1461,7 +1471,13 @@ def _run_scan_job(
                     stored_results,
                     store=store_screenshot,
                     timeout_ms=screenshot_timeout_ms,
-                    maximum=screenshot_max,
+                    # The candidate list as the database selected it. Passing
+                    # the total here instead let this layer cut the list a
+                    # second time, and its cut is a plain head of the list -
+                    # so a budget already shared between hosts would be
+                    # re-concentrated on the first one and the fix would read
+                    # as applied while doing nothing.
+                    maximum=max(1, len(stored_results)),
                     should_stop=should_stop,
                     capture_console=capture_console,
                     on_examined=examining,
