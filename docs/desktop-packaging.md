@@ -80,7 +80,7 @@ The installer contains all three application layers:
 
 The destination PC does not need Python, Node.js, Rust, a separately installed browser, or internet access. The installer embeds the WebView2 offline installer, and Chromium is bundled for automatic web screenshot evidence. When the desktop app starts, it selects a free loopback port, starts the backend without a console window, waits for `/v1/health`, and opens the dashboard. Closing the app terminates the backend and its browser/engine process tree. User data remains in `%APPDATA%\Netroach`.
 
-The ordinary installer keeps Npcap optional: TCP connect scans and file PCAP analysis work without it. A private SYN-enabled NSIS build can instead embed an explicitly supplied official Npcap installer. It launches the normal Npcap UI when Npcap 1.88+ with `AdminOnly=0` is not already present, then fails closed unless that condition is observed.
+The ordinary installer keeps Npcap optional: TCP connect scans and file PCAP analysis work without it. A SYN-enabled build includes the Npcap-linked engine but does not include the Npcap installer by default. The destination user installs current official Npcap directly; diagnostics enable SYN only when a compatible driver is detected and otherwise keep the TCP Connect path available. A private personal NSIS build can still embed an explicitly supplied official Npcap installer when its licence and distribution boundary permit that use.
 
 ### Build Prerequisites
 
@@ -105,17 +105,24 @@ Build the NSIS installer:
 .\.venv\Scripts\python.exe tools\build_desktop.py
 ```
 
-Build the private, SYN-enabled NSIS installer for personal use:
+Build the SYN-enabled NSIS installer for a PC where the user installs Npcap separately:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\build_desktop.py `
   --syn-sweep `
   --npcap-sdk-lib C:\npcap-sdk\Lib\x64 `
-  --npcap-installer C:\path\to\npcap-installer.exe `
   --bundles nsis
 ```
 
-The Npcap SDK directory must contain `wpcap.lib` and `Packet.lib`. A SYN-enabled package always performs a fresh feature build of the engine; `--skip-engine-build`, `--engine-path`, and `--prepare-only` are rejected to prevent accidentally packaging a partial or connect-only binary. Before building, the script requires a valid Nmap Software LLC Authenticode signature on the supplied installer. The Npcap installer is copied only to an ignored staging directory and its SHA-256 is printed. After NSIS finishes, the private installer staging file is removed and the ordinary connect-scan engine is restored, so a later direct desktop build cannot silently reuse the private inputs. The installer is neither downloaded nor committed by the build. During installation, leave **Restrict Npcap driver's access to Administrators only** unchecked. Netroach does not uninstall Npcap. Npcap Free Edition is limited to five systems and may not be externally redistributed (apart from the exceptions stated by Npcap); do not publish or share a bundle containing it. Distributable products require Npcap OEM redistribution rights. The Npcap preinstall hook is NSIS-only, so SYN packaging rejects MSI or mixed bundle requests.
+Only for a private personal build whose use is permitted, append:
+
+```powershell
+  --npcap-installer C:\path\to\npcap-installer.exe
+```
+
+The Npcap SDK directory must contain `wpcap.lib` and `Packet.lib`. A SYN-enabled package always performs a fresh feature build of the engine; `--skip-engine-build`, `--engine-path`, and `--prepare-only` are rejected to prevent accidentally packaging a partial or connect-only binary. After bundling, the ordinary connect-scan engine is restored so a later direct desktop build cannot silently reuse the feature build.
+
+When `--npcap-installer` is supplied, the script additionally requires a valid Nmap Software LLC Authenticode signature, copies the installer only to an ignored staging directory, prints its SHA-256, and removes it after the NSIS build. The installer is neither downloaded nor committed. Leave **Restrict Npcap driver's access to Administrators only** unchecked when installing Npcap. Netroach does not remove the shared driver. Npcap Free Edition is limited to five systems and may not be externally redistributed except where the licence explicitly permits it; do not publish or share a bundle containing it. Distributable products require Npcap OEM redistribution rights. The embedded preinstall hook is NSIS-only.
 
 Run the script with the interpreter the build dependency was installed into. It
 freezes the backend with PyInstaller and fetches Playwright's Chromium using the

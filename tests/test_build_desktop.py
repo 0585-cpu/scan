@@ -72,7 +72,7 @@ class DesktopBuildToolTests(unittest.TestCase):
         environment = engine_build_environment(args, {"LIB": existing})
         self.assertEqual(environment["LIB"], f"{sdk}{os.pathsep}{existing}")
 
-    def test_personal_npcap_build_requires_paired_inputs_and_nsis(self):
+    def test_syn_build_requires_sdk_but_npcap_installer_is_optional(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             sdk = root / "Lib" / "x64"
@@ -82,16 +82,25 @@ class DesktopBuildToolTests(unittest.TestCase):
             installer = root / "npcap.exe"
             installer.write_bytes(b"abc")
 
-            for missing_sdk, missing_installer in ((None, installer), (sdk, None)):
-                with self.subTest(sdk=missing_sdk, installer=missing_installer):
-                    args = argparse.Namespace(
-                        syn_sweep=True,
-                        npcap_sdk_lib=missing_sdk,
-                        npcap_installer=missing_installer,
-                        bundles="nsis",
-                    )
-                    with self.assertRaises(SystemExit):
-                        validate_personal_npcap_build(args, system="Windows")
+            args = argparse.Namespace(
+                syn_sweep=True,
+                npcap_sdk_lib=None,
+                npcap_installer=installer,
+                bundles="nsis",
+            )
+            with self.assertRaisesRegex(SystemExit, "--npcap-sdk-lib"):
+                validate_personal_npcap_build(args, system="Windows")
+
+            args = argparse.Namespace(
+                syn_sweep=True,
+                npcap_sdk_lib=sdk,
+                npcap_installer=None,
+                bundles="nsis",
+            )
+            self.assertEqual(
+                validate_personal_npcap_build(args, system="Windows"),
+                (sdk.resolve(), None),
+            )
 
             args = argparse.Namespace(
                 syn_sweep=True,

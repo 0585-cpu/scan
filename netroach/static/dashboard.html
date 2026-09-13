@@ -213,22 +213,25 @@
       min-height: 100vh;
       display: grid;
       grid-template-columns: 56px minmax(0, 1fr);
+      transition: grid-template-columns 120ms ease;
+    }
+    .app:has(.rail:hover), .app:has(.rail:focus-within) {
+      grid-template-columns: 184px minmax(0, 1fr);
     }
     .rail {
       position: relative;
       z-index: 5;
-      width: 56px;
-      flex: 0 0 56px;
+      width: 100%;
+      flex: 0 0 auto;
       background: var(--surface);
       border-right: 1px solid var(--line);
       display: flex;
       flex-direction: column;
       align-items: stretch;
       padding: 8px 0;
-      transition: width 120ms ease, flex-basis 120ms ease;
       overflow: hidden;
     }
-    .rail:hover, .rail:focus-within { width: 184px; flex-basis: 184px; }
+    .rail:hover, .rail:focus-within { width: 100%; flex-basis: auto; }
     .rail-brand {
       height: 40px;
       display: flex;
@@ -264,7 +267,7 @@
     .rail-label { opacity: 0; transition: opacity 120ms ease; }
     .rail:hover .rail-label, .rail:focus-within .rail-label { opacity: 1; }
     @media (prefers-reduced-motion: reduce) {
-      .rail, .rail-label { transition: none; }
+      .app, .rail-label { transition: none; }
     }
     .shell {
       min-width: 0;
@@ -569,6 +572,42 @@
       font-weight: 400;
     }
     .check-row input { width: 16px; height: 16px; min-height: 0; accent-color: var(--accent); }
+    .scan-help-option {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+    }
+    .scan-help-option .check-row { display: inline-grid; }
+    .help-trigger {
+      width: auto;
+      min-width: 28px;
+      min-height: 28px;
+      padding: 2px 4px;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .help-tooltip {
+      display: none;
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 3px);
+      left: 0;
+      width: min(360px, 100%);
+      padding: 9px 10px;
+      border: 1px solid var(--line-strong);
+      background: #ffffff;
+      color: var(--text);
+      box-shadow: 2px 2px 0 rgba(0, 0, 0, .2);
+      font-size: 14px;
+      font-weight: 400;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+      pointer-events: none;
+    }
+    .help-trigger:hover + .help-tooltip,
+    .help-trigger:focus + .help-tooltip { display: block; }
     .status { color: var(--muted); font-size: 12px; min-height: 18px; overflow-wrap: anywhere; }
     .mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -831,9 +870,608 @@
     .authorization-box.nudge { animation: nudge 320ms ease; }
     @keyframes nudge { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
     @media (prefers-reduced-motion: reduce) { .authorization-box.nudge { animation: none; outline: 2px solid var(--state-error); } }
+
+    /* ControlDeck 2001: scoped visual layer. Existing controls, state and
+       event wiring stay authoritative; this block changes presentation only. */
+    body[data-cd2001] {
+      --bg: #ffffff;
+      --surface: #ffffff;
+      --surface-alt: #deded8;
+      --surface-sunken: #efefeb;
+      --sidebar: #deded8;
+      --sidebar-active: #bcbab4;
+      --line: #8a8a84;
+      --line-strong: #595a55;
+      --text: #202020;
+      --text-soft: #30302d;
+      --muted: #4d4d49;
+      --accent: #003d8f;
+      --accent-dark: #002f70;
+      --accent-soft: #e5e8ec;
+      --state-open: #3a5448;
+      --state-filtered: #555550;
+      --state-closed: #6f6f68;
+      --warn: #65512c;
+      --warn-soft: #f2ead6;
+      --warn-line: #9a8353;
+      --danger: #6b302b;
+      --danger-soft: #f3e2df;
+      --danger-line: #8b4a43;
+      --ok: #3a5448;
+      --ok-soft: #edf1ed;
+      --ok-line: #718477;
+      --focus: #18487b;
+      --radius: 0;
+      --radius-sm: 0;
+      --shadow: inset 1px 1px #fffefa, inset -1px -1px #8a8a84,
+        inset 2px 2px #deded8, inset -2px -2px #a0a09a;
+      --shadow-lift: 3px 3px 0 #757570;
+      --cd-control-height: 40px;
+      --cd-input-padding: 6px;
+      --cd-button-padding: 5px;
+      --cd-row-padding: 8px;
+      --cd-cell-padding: 12px;
+      --cd-panel-padding: 12px;
+      --cd-gap: 14px;
+      --cd-command-width: clamp(320px, 28%, 380px);
+      background: var(--bg);
+      font-family: Tahoma, "Dotum", "돋움", "Gulim", "굴림", sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+      -webkit-font-smoothing: auto;
+    }
+    body[data-cd2001] .mono,
+    body[data-cd2001] .cd-number,
+    body[data-cd2001] .summary-strip .v,
+    body[data-cd2001] .metric strong,
+    body[data-cd2001] .host-row .host-name,
+    body[data-cd2001] .host-row .host-open {
+      font-family: "Courier New", "Dotum", "돋움", monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    body[data-cd2001] button,
+    body[data-cd2001] a.action,
+    body[data-cd2001] .port-file-action,
+    body[data-cd2001] .preset-chip {
+      min-height: var(--cd-control-height);
+      border: 1px solid var(--line-strong);
+      border-radius: 0;
+      background: #c0c0c0;
+      color: var(--text);
+      box-shadow: inset 1px 1px #fffefa, inset -1px -1px #8a8a84,
+        inset 2px 2px #deded8, inset -2px -2px #a0a09a;
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1.5;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      transition: none;
+    }
+    body[data-cd2001] button:hover:not(:disabled),
+    body[data-cd2001] a.action:hover,
+    body[data-cd2001] .port-file-action:hover,
+    body[data-cd2001] .preset-chip:hover { background: #d0d0cc; color: var(--text); }
+    body[data-cd2001] button:active:not(:disabled),
+    body[data-cd2001] button.active,
+    body[data-cd2001] button[aria-pressed="true"],
+    body[data-cd2001] button[aria-selected="true"],
+    body[data-cd2001] .preset-chip.active {
+      background: #bcbab4;
+      border-color: var(--line-strong);
+      box-shadow: inset 1px 1px #595a55, inset -1px -1px #fffefa,
+        inset 2px 2px #8a8a84, inset -2px -2px #deded8;
+    }
+    body[data-cd2001] button.primary {
+      outline: 1px solid var(--line-strong);
+      outline-offset: 1px;
+      background: #c0c0c0;
+      border-color: var(--line-strong);
+      color: var(--text);
+    }
+    body[data-cd2001] button.primary:hover { background: #d0d0cc; color: var(--text); }
+    body[data-cd2001] button:disabled,
+    body[data-cd2001] a.action.disabled {
+      opacity: 1;
+      color: #3f3f3a;
+      background: #c0c0c0;
+      border-color: var(--line-strong);
+      box-shadow: inset 1px 1px #fffefa, inset -1px -1px #8a8a84,
+        inset 2px 2px #deded8, inset -2px -2px #a0a09a;
+      text-shadow: 1px 1px #fffefa;
+    }
+    body[data-cd2001] .preset-chip {
+      height: auto;
+      min-height: var(--cd-control-height);
+      padding: 0;
+      gap: 0;
+    }
+    body[data-cd2001] .preset-chip .preset-chip-apply,
+    body[data-cd2001] .preset-chip .preset-chip-apply:hover,
+    body[data-cd2001] .preset-chip .preset-chip-apply:active {
+      box-sizing: border-box;
+      min-height: var(--cd-control-height);
+      padding: var(--cd-button-padding) 10px;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      color: #202020;
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+    body[data-cd2001] button:focus-visible,
+    body[data-cd2001] a:focus-visible {
+      outline: 1px dotted var(--text);
+      outline-offset: -5px;
+      border-radius: 0;
+    }
+    body[data-cd2001] input,
+    body[data-cd2001] select,
+    body[data-cd2001] textarea {
+      min-height: var(--cd-control-height);
+      border: 1px solid var(--line-strong);
+      border-radius: 0;
+      background: #ffffff;
+      color: var(--text);
+      box-shadow: inset 1px 1px #595a55, inset -1px -1px #fffefa,
+        inset 2px 2px #8a8a84, inset -2px -2px #deded8;
+      font-size: 1rem;
+      padding: var(--cd-input-padding) 10px;
+    }
+    body[data-cd2001] input:focus-visible,
+    body[data-cd2001] select:focus-visible,
+    body[data-cd2001] textarea:focus-visible,
+    body[data-cd2001] summary:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+      border-radius: 0;
+    }
+    body[data-cd2001] input:disabled,
+    body[data-cd2001] select:disabled,
+    body[data-cd2001] textarea:disabled { background: #cccac4; color: #62625c; }
+    body[data-cd2001] .check-row input {
+      width: 18px;
+      height: 18px;
+      min-height: 0;
+      accent-color: #496a65;
+      box-shadow: none;
+    }
+    body[data-cd2001] .help-trigger {
+      min-width: 28px;
+      min-height: 28px;
+      padding: 2px 4px;
+      background: #c0c0c0;
+      color: #202020;
+      font-size: .875rem;
+    }
+    body[data-cd2001] .help-tooltip {
+      border: 1px solid #595a55;
+      background: #ffffff;
+      color: #202020;
+      box-shadow: inset 1px 1px #fffefa, inset -1px -1px #8a8a84,
+        2px 2px 0 rgba(0, 0, 0, .25);
+    }
+    body[data-cd2001] .helper,
+    body[data-cd2001] .status,
+    body[data-cd2001] .form-intro { font-size: .875rem; }
+
+    body[data-cd2001] .topbar {
+      min-height: 38px;
+      height: auto;
+      padding: 5px 10px;
+      background: #003d8f;
+      color: #e1e5e5;
+      border: 1px solid var(--line-strong);
+      box-shadow: inset 1px 1px #4f75a3, inset -1px -1px #001f49;
+    }
+    body[data-cd2001] .topbar h1,
+    body[data-cd2001] .topbar .status-strip { color: #e1e5e5; }
+    body[data-cd2001] .topbar h1 { font-size: 1.125rem; }
+    body[data-cd2001] .rail {
+      background: #deded8;
+      border-right: 1px solid var(--line-strong);
+      box-shadow: inset 1px 0 #fffefa, inset -1px 0 #8a8a84;
+    }
+    body[data-cd2001] .rail-brand { color: #003d8f; }
+    body[data-cd2001] .rail .nav button {
+      margin: 0 4px;
+      color: var(--text);
+      background: #c0c0c0;
+    }
+    body[data-cd2001] .rail .nav button.active {
+      color: var(--text);
+      background: #bcbab4;
+      box-shadow: inset 1px 1px #595a55, inset -1px -1px #fffefa,
+        inset 2px 2px #8a8a84, inset -2px -2px #deded8;
+    }
+    body[data-cd2001] .workspace { padding: 8px; }
+    body[data-cd2001] .view-head {
+      margin-bottom: 8px;
+      padding: 5px 10px;
+      background: #31597e;
+      color: #e1e5e5;
+      border: 1px solid var(--line-strong);
+    }
+    body[data-cd2001] .view-head h2,
+    body[data-cd2001] .view-head p { color: #e1e5e5; }
+    body[data-cd2001] .band,
+    body[data-cd2001] .result-pane,
+    body[data-cd2001] .viewer-panel,
+    body[data-cd2001] details.advanced-panel {
+      background: #ffffff;
+      border: 1px solid var(--line-strong);
+      border-radius: 0;
+      box-shadow: inset 1px 1px #fffefa, inset -1px -1px #8a8a84,
+        2px 2px 0 #8a8a84;
+    }
+    body[data-cd2001] .band-head,
+    body[data-cd2001] .viewer-head {
+      min-height: 34px;
+      padding: 4px 10px;
+      background: #31597e;
+      color: #e1e5e5;
+      border-bottom: 1px solid var(--line-strong);
+    }
+    body[data-cd2001] .band-head h3,
+    body[data-cd2001] .viewer-head strong { color: #e1e5e5; }
+    body[data-cd2001] .toolbar,
+    body[data-cd2001] .result-toolbar,
+    body[data-cd2001] .form-actions-secondary { background: #deded8; }
+    body[data-cd2001] .authorization-box,
+    body[data-cd2001] .selected-summary,
+    body[data-cd2001] .metric-warning,
+    body[data-cd2001] .result-folded,
+    body[data-cd2001] .status,
+    body[data-cd2001] .viewer-note {
+      border: 2px solid;
+      border-color: #595a55 #fffefa #fffefa #595a55;
+      border-radius: 0;
+      background: #ffffff;
+      box-shadow: 0 0 0 1px #8a8a84, inset 1px 1px #8a8a84;
+    }
+    body[data-cd2001] .status:empty { border: 0; box-shadow: none; background: transparent; }
+
+    body[data-cd2001] .summary-strip,
+    body[data-cd2001] .metrics {
+      gap: 4px;
+      padding: 5px;
+      background: #c0c0c0;
+      border: 1px solid var(--line-strong);
+      border-radius: 0;
+      box-shadow: inset 1px 1px #fffefa, inset -1px -1px #8a8a84;
+    }
+    body[data-cd2001] .summary-strip .cell,
+    body[data-cd2001] .metric {
+      min-width: 110px;
+      padding: 8px;
+      background: #1c1c1c;
+      color: #b0b0aa;
+      border: 2px solid;
+      border-color: #595a55 #fffefa #fffefa #595a55;
+      border-radius: 0;
+      box-shadow: 0 0 0 1px #8a8a84, inset 1px 1px #080808;
+    }
+    body[data-cd2001] .summary-strip .k,
+    body[data-cd2001] .metric span { color: #b0b0aa; font-size: .875rem; }
+    body[data-cd2001] .summary-strip .v,
+    body[data-cd2001] .metric strong { color: #c2c2b9; }
+    body[data-cd2001] .summary-strip .v.num,
+    body[data-cd2001] .metric strong { font-size: 1.75rem; line-height: 1.2; }
+
+    body[data-cd2001] .result-tabs,
+    body[data-cd2001] .tabs,
+    body[data-cd2001] .result-host-tabs,
+    body[data-cd2001] .result-state-tabs {
+      gap: 3px;
+      padding: 8px 10px 0;
+      background: #deded8;
+      border-bottom: 1px solid var(--line-strong);
+    }
+    body[data-cd2001] .result-tabs button,
+    body[data-cd2001] .result-tab {
+      min-height: var(--cd-control-height);
+      height: auto;
+      border: 1px solid var(--line-strong);
+      background: #c0c0c0;
+    }
+    body[data-cd2001] .result-tabs button.active,
+    body[data-cd2001] .result-tab.active {
+      position: relative;
+      top: 1px;
+      background: #ffffff;
+      color: var(--text);
+      border-bottom-color: #ffffff;
+      box-shadow: inset 1px 1px #fffefa, inset -1px 0 #8a8a84;
+    }
+    body[data-cd2001] .result-tab.active:hover { background: #ffffff; color: var(--text); }
+    body[data-cd2001] .table-wrap {
+      background: #ffffff;
+      border: 1px solid var(--line-strong);
+    }
+    body[data-cd2001] table { border-collapse: collapse; }
+    body[data-cd2001] th,
+    body[data-cd2001] td {
+      padding: var(--cd-row-padding) var(--cd-cell-padding);
+      border: 1px solid #8a8a84;
+      font-size: 1rem;
+    }
+    body[data-cd2001] th {
+      background: #c0c0c0;
+      color: var(--text);
+      box-shadow: inset 1px 1px #fffefa, inset -1px -1px #8a8a84,
+        inset 2px 2px #deded8, inset -2px -2px #a0a09a;
+    }
+    body[data-cd2001] tbody tr:nth-child(even) { background: #f5f5f5; }
+    body[data-cd2001] tbody tr:hover td,
+    body[data-cd2001] tr.clickable:hover td { background: #ebebeb; }
+    body[data-cd2001] tr.selected td {
+      background: #e5e8ec;
+      box-shadow: inset 3px 0 #003d8f;
+    }
+    body[data-cd2001] .progress-strip {
+      min-height: 38px;
+      height: auto;
+      background: #ffffff;
+      border: 2px solid;
+      border-color: #595a55 #fffefa #fffefa #595a55;
+      border-radius: 0;
+    }
+    body[data-cd2001] .strip-bar,
+    body[data-cd2001] .progress-line .track {
+      height: 10px;
+      background: #1c1c1c;
+      border: 1px solid #595a55;
+      border-radius: 0;
+    }
+    body[data-cd2001] .strip-bar i,
+    body[data-cd2001] .progress-line .track > i { background: #496a65; transition: none; }
+    body[data-cd2001] .pill { border-radius: 0; background: #ffffff; border-color: #8a8a84; }
+    body[data-cd2001] .evidence-thumb { border-radius: 0; border-color: #595a55; }
+
+    /* Latest ControlDeck adapter: content width, readable data, optional density.
+       Keep the scanner's form, result rendering and active-operation gates intact. */
+    body[data-cd2001][data-cd-density="compact"] {
+      --cd-control-height: 36px;
+      --cd-input-padding: 4px;
+      --cd-button-padding: 3px;
+      --cd-row-padding: 4px;
+      --cd-cell-padding: 10px;
+      --cd-panel-padding: 10px;
+      --cd-gap: 10px;
+    }
+    body[data-cd2001] .app { grid-template-columns: 56px minmax(0, 1fr); }
+    body[data-cd2001] .app:has(.rail:hover),
+    body[data-cd2001] .app:has(.rail:focus-within) { grid-template-columns: 184px minmax(0, 1fr); }
+    body[data-cd2001] .rail .nav button { justify-content: flex-start; padding-inline: 12px; }
+    body[data-cd2001] .shell { grid-template-rows: auto minmax(0, 1fr); }
+    body[data-cd2001] .workspace { container: cd-workspace / inline-size; }
+    body[data-cd2001] .scan-shell { flex-direction: row; gap: var(--cd-gap); }
+    body[data-cd2001] .command-pane {
+      flex: 0 0 var(--cd-command-width);
+      width: auto;
+      max-width: none;
+      min-width: 0;
+      gap: var(--cd-gap);
+    }
+    body[data-cd2001] .scan-results-column { width: auto; gap: var(--cd-gap); }
+    body[data-cd2001] .band-body,
+    body[data-cd2001] .advanced-body { padding: var(--cd-panel-padding); }
+    body[data-cd2001] form { gap: var(--cd-gap); }
+    body[data-cd2001] .form-section { margin-top: var(--cd-gap); padding-top: var(--cd-panel-padding); }
+    body[data-cd2001] .form-section.first { margin-top: 0; padding-top: 0; }
+    body[data-cd2001] label,
+    body[data-cd2001] .field-label,
+    body[data-cd2001] .check-row,
+    body[data-cd2001] .band-head h3,
+    body[data-cd2001] details.advanced-panel summary { font-size: 1rem; }
+    body[data-cd2001] .form-section > h4,
+    body[data-cd2001] .toolbar-label,
+    body[data-cd2001] .scan-estimate,
+    body[data-cd2001] .pill { font-size: .875rem; }
+    body[data-cd2001] .check-row { grid-template-columns: 18px minmax(0, 1fr); }
+    body[data-cd2001] .field { align-content: start; }
+    body[data-cd2001] button,
+    body[data-cd2001] a.action { padding-block: var(--cd-button-padding); }
+    body[data-cd2001] textarea { min-height: 80px; }
+    body[data-cd2001] .preset-row { align-items: end; }
+    body[data-cd2001] .preset-select { flex: 1 1 150px; min-width: 0; max-width: 100%; }
+    body[data-cd2001] .port-file-action { padding: var(--cd-button-padding) 10px; }
+    body[data-cd2001] .preset-save-row > .helper,
+    body[data-cd2001] .view-actions > .status,
+    body[data-cd2001] .form-actions-secondary > .status { flex-basis: 100%; }
+    body[data-cd2001] .band-head,
+    body[data-cd2001] .view-head,
+    body[data-cd2001] .viewer-head { flex-wrap: wrap; }
+    body[data-cd2001] .band-head-tools,
+    body[data-cd2001] .toolbar-group { min-width: 0; max-width: 100%; }
+    body[data-cd2001] .band-head-tools { flex: 1 1 480px; }
+    body[data-cd2001] .compact-input,
+    body[data-cd2001] .compact-select { min-width: 0; max-width: 100%; }
+    body[data-cd2001] #scanJobSearch,
+    body[data-cd2001] #scanResultSearch { flex: 1 1 240px; min-width: 0; }
+
+    body[data-cd2001] .status,
+    body[data-cd2001] .empty,
+    body[data-cd2001] .metric-warning {
+      padding: 6px 10px;
+      color: var(--text);
+      overflow-wrap: anywhere;
+      border: 2px solid;
+      border-color: #595a55 #fffefa #fffefa #595a55;
+      background: #ffffff;
+      box-shadow: 0 0 0 1px #8a8a84, inset 1px 1px #8a8a84;
+    }
+    /* setStatus already supplies the error text color; its boundary follows it. */
+    body[data-cd2001] .status { border-left-color: currentColor; }
+    body[data-cd2001] .metric-warning { color: var(--danger); border-left-color: currentColor; }
+    body[data-cd2001] .status:empty { display: none; }
+    body[data-cd2001] .host-rows > .empty,
+    body[data-cd2001] #scanHostRowsList > .empty { margin: var(--cd-panel-padding); }
+
+    body[data-cd2001] .summary-strip { flex-wrap: wrap; align-items: stretch; overflow: visible; }
+    body[data-cd2001] .summary-strip .cell,
+    body[data-cd2001] .summary-strip .cell.grow { flex: 1 1 160px; min-width: 0; }
+    body[data-cd2001] .summary-strip .v { font-size: 1rem; white-space: normal; overflow-wrap: anywhere; }
+    body[data-cd2001] .summary-strip .v.num { font-size: 1.75rem; white-space: nowrap; }
+    body[data-cd2001] .summary-strip details summary,
+    body[data-cd2001] .summary-strip .progress-line small { color: #c2c2b9; }
+    body[data-cd2001] .summary-strip details .mono { color: var(--text); }
+    body[data-cd2001] .summary-strip .progress-line { flex-wrap: wrap; }
+    body[data-cd2001] .summary-strip .progress-line b { font-size: 1rem; }
+    body[data-cd2001] .summary-strip .progress-line small { font-size: .875rem; }
+    body[data-cd2001] .result-tabs,
+    body[data-cd2001] .result-state-tabs { flex-wrap: wrap; }
+    body[data-cd2001] .result-progress { overflow-wrap: anywhere; }
+
+    body[data-cd2001] td .mono,
+    body[data-cd2001] .summary-strip .mono { font-size: inherit; }
+    body[data-cd2001] .cd-jobs-table { table-layout: fixed; min-width: 42rem; }
+    body[data-cd2001] .cd-job-id { width: 8.5rem; }
+    body[data-cd2001] .cd-job-state { width: 10rem; }
+    body[data-cd2001] .cd-job-number { width: 8rem; }
+    body[data-cd2001] .scan-jobs-wrap th:last-child,
+    body[data-cd2001] #scanJobs td:last-child:not([colspan]),
+    body[data-cd2001] .scan-results-wrap th:nth-child(2),
+    body[data-cd2001] #scanResults td:nth-child(2) { text-align: right; font-variant-numeric: tabular-nums; }
+    body[data-cd2001] #scanJobs td:last-child:not([colspan]),
+    body[data-cd2001] #scanResults td:nth-child(2) { white-space: nowrap; }
+    body[data-cd2001] #scanJobs td:nth-child(1):not([colspan]),
+    body[data-cd2001] #scanJobs td:nth-child(3):not([colspan]),
+    body[data-cd2001] #scanJobs td:nth-child(2):not([colspan]) .pill {
+      color: #111111;
+      font-weight: 600;
+    }
+    body[data-cd2001] #scanJobs td:nth-child(2):not([colspan]) .pill {
+      font-size: .9375rem;
+    }
+    body[data-cd2001] #scanResults td:nth-child(1):not([colspan]),
+    body[data-cd2001] #scanResults td:nth-child(2):not([colspan]) {
+      color: #111111;
+      font-weight: 700;
+    }
+    body[data-cd2001] .cd-results-table { table-layout: fixed; min-width: 88rem; }
+    body[data-cd2001] .cd-result-host { width: 11rem; }
+    body[data-cd2001] .cd-result-port { width: 5.5rem; }
+    body[data-cd2001] .cd-result-protocol { width: 6.5rem; }
+    body[data-cd2001] .cd-result-state,
+    body[data-cd2001] .cd-result-service { width: 9rem; }
+    body[data-cd2001] .cd-result-evidence,
+    body[data-cd2001] .cd-result-note { width: 12rem; }
+    body[data-cd2001] .cd-result-tags { width: 8rem; }
+    body[data-cd2001] .cd-results-table td { overflow-wrap: anywhere; }
+    body[data-cd2001] table:has(td.empty) { table-layout: auto; min-width: 0; }
+    body[data-cd2001] table:has(td.empty) colgroup,
+    body[data-cd2001] table:has(td.empty) thead { display: none; }
+    body[data-cd2001] .host-row {
+      display: grid;
+      grid-template-columns: minmax(10rem, 1fr) minmax(0, 3fr) max-content;
+      height: auto;
+      min-height: 33px;
+      padding: var(--cd-row-padding) var(--cd-cell-padding);
+      font-size: 1rem;
+      border: 1px solid var(--line);
+      border-top: 0;
+    }
+    body[data-cd2001] .host-row > span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: #111111;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    @container cd-workspace (max-width: 1000px) {
+      body[data-cd2001] .scan-shell { flex-direction: column; }
+      body[data-cd2001] .command-pane { flex-basis: auto; width: 100%; }
+      body[data-cd2001] .scan-results-column { width: 100%; }
+    }
+    @container cd-workspace (min-width: 680px) and (max-width: 1000px) {
+      body[data-cd2001] #scanForm { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+      body[data-cd2001] #scanForm > * { grid-column: 1 / -1; }
+      body[data-cd2001] #scanForm > .form-section:not(.first) { grid-column: auto; }
+    }
+    @container cd-workspace (max-width: 620px) {
+      body[data-cd2001] .host-row { grid-template-columns: minmax(0, 1fr) auto; }
+      body[data-cd2001] .host-row .host-open { grid-column: 1 / -1; grid-row: 2; }
+      body[data-cd2001] .host-row .host-state { grid-column: 2; grid-row: 1; }
+      body[data-cd2001] .band-head-tools { width: 100%; justify-content: stretch; }
+      body[data-cd2001] .summary-strip .cell { flex-basis: 140px; }
+    }
+    @supports not (container-type: inline-size) {
+      @media (max-width: 1100px) {
+        body[data-cd2001] .scan-shell { flex-direction: column; }
+        body[data-cd2001] .command-pane { flex-basis: auto; width: 100%; }
+        body[data-cd2001] .scan-results-column { width: 100%; }
+      }
+    }
+
+    @media (max-width: 760px) {
+      body[data-cd2001] .app { display: block; width: 100%; }
+      body[data-cd2001] .rail,
+      body[data-cd2001] .rail:hover,
+      body[data-cd2001] .rail:focus-within {
+        position: sticky;
+        top: 0;
+        width: 100%;
+        min-width: 100%;
+        max-width: 100%;
+        height: 52px;
+        flex: none;
+        flex-direction: row;
+        align-items: center;
+        padding: 4px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        border-right: 0;
+        border-bottom: 1px solid var(--line-strong);
+      }
+      body[data-cd2001] .rail-brand { width: 36px; height: 36px; flex: 0 0 36px; }
+      body[data-cd2001] .rail .nav {
+        flex: 1 0 auto;
+        flex-direction: row;
+        gap: 3px;
+        padding: 0;
+      }
+      body[data-cd2001] .rail .nav button {
+        width: 36px;
+        min-width: 36px;
+        min-height: 36px;
+        height: 36px;
+        padding: 0;
+        margin: 0;
+        gap: 0;
+      }
+      body[data-cd2001] .rail .nav button::before { width: 34px; flex-basis: 34px; }
+      body[data-cd2001] .rail-label { display: none; }
+      body[data-cd2001] .shell { grid-template-rows: auto minmax(0, 1fr); }
+      body[data-cd2001] .topbar { align-items: stretch; }
+      body[data-cd2001] .status-strip {
+        width: 100%;
+        justify-content: flex-start;
+        gap: 4px;
+      }
+      body[data-cd2001] .scan-shell { flex-direction: column; }
+      body[data-cd2001] .command-pane { flex-basis: auto; max-width: none; width: 100%; }
+      body[data-cd2001] .scan-results-column { width: 100%; }
+      body[data-cd2001] .summary-strip { align-items: stretch; }
+      body[data-cd2001] .summary-strip .cell { flex: 1 1 140px; }
+    }
+    @media (forced-colors: active) {
+      body[data-cd2001],
+      body[data-cd2001] .topbar,
+      body[data-cd2001] .view-head,
+      body[data-cd2001] .band-head,
+      body[data-cd2001] .summary-strip .cell,
+      body[data-cd2001] .metric { background: Canvas; color: CanvasText; box-shadow: none; }
+      body[data-cd2001] button,
+      body[data-cd2001] input,
+      body[data-cd2001] select,
+      body[data-cd2001] textarea,
+      body[data-cd2001] th { box-shadow: none; text-shadow: none; }
+      body[data-cd2001] :focus-visible { outline-color: Highlight; }
+    }
   </style>
 </head>
-<body>
+<body data-cd2001>
   <div class="progress-strip" id="progressStrip" hidden>
     <span class="strip-dot" id="stripDot">◉</span>
     <span class="strip-target mono" id="stripTarget"></span>
@@ -851,26 +1489,19 @@
     <aside class="rail">
       <div class="rail-brand" title="netroach">N</div>
       <nav class="nav" aria-label="대시보드 섹션">
-        <button type="button" data-view-target="overview" data-rail-icon="◈" class="active"><span class="rail-label">개요</span></button>
-        <button type="button" data-view-target="scans" data-rail-icon="◉"><span class="rail-label">포트 스캔</span></button>
-        <button type="button" data-view-target="pcap" data-rail-icon="⬡"><span class="rail-label">PCAP 분석</span></button>
-        <button type="button" data-view-target="capture" data-rail-icon="⬢"><span class="rail-label">라이브 캡처</span></button>
-        <button type="button" data-view-target="packets" data-rail-icon="◇"><span class="rail-label">패킷 전송</span></button>
-        <button type="button" data-view-target="oast" data-rail-icon="◎"><span class="rail-label">OAST 콜백</span></button>
-        <button type="button" data-view-target="plugins" data-rail-icon="▣"><span class="rail-label">플러그인</span></button>
-        <button type="button" data-view-target="diagnostics" data-rail-icon="⚙"><span class="rail-label">진단</span></button>
+        <button type="button" data-view-target="scans" data-rail-icon="◉" class="active"><span class="rail-label">포트 스캔</span></button>
       </nav>
       <div id="dbPath" style="display:none"></div>
     </aside>
     <div class="shell">
       <header class="topbar">
-        <h1 id="viewTitle">개요</h1>
+        <h1 id="viewTitle">포트 스캔</h1>
         <div class="status-strip" id="topStatus">
           <span class="pill warn">확인 중</span>
         </div>
       </header>
       <main class="workspace">
-        <section class="view active" id="view-overview">
+        <section class="view" id="view-overview">
           <div class="view-head">
             <div>
               <h2>개요</h2>
@@ -908,7 +1539,7 @@
           </div>
         </section>
 
-        <section class="view" id="view-scans">
+        <section class="view active" id="view-scans">
           <div class="view-head">
             <div>
               <h2>포트 스캔</h2>
@@ -984,15 +1615,23 @@
                   <div class="form-section"><h4>실행</h4>
                   <div class="form-grid">
                     <div class="field full">
-                      <label class="check-row"><input name="service_probe" type="checkbox" checked>서비스 탐지
-                        <span class="helper">SYN-open 포트만 TCP Connect로 재확인해 배너와 서비스를 분석하고 증적을 자동 수집합니다. 웹 포트는 브라우저 화면 증적을, 나머지는 실제 콘솔 창을 캡처합니다. 화면이 켜진 상태에서만 되고 포트당 시간이 더 걸립니다.</span>
-                      </label>
-                      <label class="check-row"><input id="scanConnectOnly" name="tcp_connect_only" type="checkbox">TCP Connect 스캔만 사용
-                        <span class="helper" id="scanConnectOnlyHelp">기본은 Npcap 기반 SYN 스캔입니다. 선택하면 SYN을 사용하지 않고 모든 TCP 포트에 연결합니다.</span>
-                      </label>
+                      <div class="scan-help-option">
+                        <label class="check-row" for="scanServiceProbe"><input id="scanServiceProbe" name="service_probe" type="checkbox" checked><span>서비스 탐지</span></label>
+                        <button class="help-trigger" id="scanServiceProbeHelpTrigger" type="button" aria-label="서비스 탐지 설명" aria-describedby="scanServiceProbeHelp">(?)</button>
+                        <span class="help-tooltip" id="scanServiceProbeHelp" role="tooltip">SYN-open 포트만 TCP Connect로 재확인해 배너와 서비스를 분석하고 증적을 자동 수집합니다. 웹 포트는 브라우저 화면 증적을, 나머지는 실제 콘솔 창을 캡처합니다. 화면이 켜진 상태에서만 되고 포트당 시간이 더 걸립니다.</span>
+                      </div>
+                      <div class="scan-help-option">
+                        <label class="check-row" for="scanConnectOnly"><input id="scanConnectOnly" name="tcp_connect_only" type="checkbox"><span>TCP Connect 스캔만 사용</span></label>
+                        <button class="help-trigger" id="scanConnectOnlyHelpTrigger" type="button" aria-label="TCP Connect 스캔 설명" aria-describedby="scanConnectOnlyHelp">(?)</button>
+                        <span class="help-tooltip" id="scanConnectOnlyHelp" role="tooltip">기본은 Npcap 기반 SYN 스캔입니다. 선택하면 SYN을 사용하지 않고 모든 TCP 포트에 연결합니다.</span>
+                      </div>
                     </div>
                     <div class="field full">
-                      <label class="check-row"><input name="udp_service_probe" type="checkbox">UDP 서비스 탐지<span class="helper">UDP 스캔에만 적용됩니다. 끄면 0 바이트 하나만 보내 닫힌 포트만 가려냅니다. 켜면 포트별 실제 요청(SNMP GetRequest, RIP 라우팅 테이블 요청, SIP OPTIONS 등)을 보내 열린 포트를 확정하지만, 대상 로그와 알람에 남습니다.</span></label>
+                      <div class="scan-help-option">
+                        <label class="check-row" for="scanUdpServiceProbe"><input id="scanUdpServiceProbe" name="udp_service_probe" type="checkbox"><span>UDP 서비스 탐지</span></label>
+                        <button class="help-trigger" id="scanUdpServiceProbeHelpTrigger" type="button" aria-label="UDP 서비스 탐지 설명" aria-describedby="scanUdpServiceProbeHelp">(?)</button>
+                        <span class="help-tooltip" id="scanUdpServiceProbeHelp" role="tooltip">UDP 스캔에만 적용됩니다. 끄면 0 바이트 하나만 보내 닫힌 포트만 가려냅니다. 켜면 포트별 실제 요청(SNMP GetRequest, RIP 라우팅 테이블 요청, SIP OPTIONS 등)을 보내 열린 포트를 확정하지만, 대상 로그와 알람에 남습니다.</span>
+                      </div>
                     </div>
                     <div class="field full authorization-box">
                       <label class="check-row"><input id="scanAuthorized" name="confirm_authorized" type="checkbox" required>스캔 권한을 확인했습니다</label>
@@ -1087,7 +1726,8 @@
                 <span class="status" id="scanJobCount"></span>
               </div>
               <div class="table-wrap scan-jobs-wrap">
-                <table>
+                <table class="cd-jobs-table">
+                  <colgroup><col class="cd-job-id"><col class="cd-job-state"><col><col class="cd-job-number"></colgroup>
                   <thead>
                     <!-- Keep selection compact; details belong in the summary below. -->
                     <tr><th>ID</th><th>상태</th><th>대상</th><th>open</th></tr>
@@ -1151,7 +1791,12 @@
               <div class="result-state-tabs" id="scanStateTabs" role="tablist" aria-label="결과 상태"></div>
             </div>
             <div class="table-wrap scan-results-wrap">
-              <table>
+              <table class="cd-results-table">
+                <colgroup>
+                  <col class="cd-result-host"><col class="cd-result-port"><col class="cd-result-protocol">
+                  <col class="cd-result-state"><col class="cd-result-service"><col>
+                  <col class="cd-result-evidence"><col class="cd-result-tags"><col class="cd-result-note">
+                </colgroup>
                 <thead>
                   <tr><th>호스트</th><th>포트</th><th>프로토콜</th><th>상태</th><th>서비스</th><th>배너</th><th>증적</th><th>태그</th><th>메모</th></tr>
                 </thead>
@@ -1515,7 +2160,7 @@
 
   <script>
     const state = {
-      view: 'overview',
+      view: 'scans',
       health: null,
       scans: [],
       scanId: null,

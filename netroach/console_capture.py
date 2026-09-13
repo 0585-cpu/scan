@@ -153,6 +153,7 @@ def _find_window_by_title(
         for hwnd, title in matches:
             if title.strip() == exact:
                 return hwnd
+        return None
     return matches[0][0]
 
 

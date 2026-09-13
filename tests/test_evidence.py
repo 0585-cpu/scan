@@ -188,6 +188,7 @@ class FakePage:
     def __init__(self, screenshot_failures: int, goto_failures: int = 0):
         self.screenshot_failures = screenshot_failures
         self.goto_failures = goto_failures
+        self.url = "http://127.0.0.1/"
         self.goto_calls = 0
         self.screenshot_calls = 0
         self.timeouts: list[float] = []
@@ -442,6 +443,15 @@ class ScreenshotRetryTests(unittest.TestCase):
         self.assertEqual(summary.failed, 0)
         self.assertEqual(page.screenshot_calls, 2)
         self.assertEqual(len(stored), 1)
+
+    def test_a_redirected_page_records_the_url_that_was_photographed(self):
+        page = FakePage(screenshot_failures=0)
+        page.url = "http://127.0.0.1:8443/admin"
+
+        summary, stored = self._capture(page)
+
+        self.assertEqual(summary.captured, 1)
+        self.assertEqual(stored[0][3], "http://127.0.0.1:8443/admin")
 
     def test_a_capture_that_keeps_failing_is_reported(self):
         page = FakePage(screenshot_failures=5)
@@ -787,6 +797,15 @@ class ConsoleCaptureTests(unittest.TestCase):
         self.assertEqual(
             _find_window_by_title(user32, "Telnet 10.0.0.4", exclude={7}, exact="Telnet 10.0.0.4"),
             9,
+        )
+        # Asking for an exact title must never fall back to a look-alike.
+        self.assertIsNone(
+            _find_window_by_title(
+                user32,
+                "Telnet 10.0.0.4",
+                exclude={7, 9},
+                exact="Telnet 10.0.0.4",
+            )
         )
         self.assertIsNone(
             _find_window_by_title(user32, "Telnet 10.0.0.4", exclude={7, 9, 41}, exact="Telnet 10.0.0.4")

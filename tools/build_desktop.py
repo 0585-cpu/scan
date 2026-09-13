@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cargo-toolchain", help="optional Rust toolchain, for example stable-x86_64-pc-windows-msvc")
     parser.add_argument("--cargo-target", help="optional Rust target triple")
     parser.add_argument("--engine-profile", default="release", choices=("release", "portable", "debug"))
-    parser.add_argument("--syn-sweep", action="store_true", help="build the engine and NSIS installer with TCP SYN sweep support")
+    parser.add_argument("--syn-sweep", action="store_true", help="build the engine and desktop installer with TCP SYN sweep support")
     parser.add_argument("--npcap-sdk-lib", type=Path, help="Npcap SDK library directory containing wpcap.lib and Packet.lib")
     parser.add_argument("--npcap-installer", type=Path, help="official Npcap installer to embed in the personal NSIS build")
     parser.add_argument("--engine-path", type=Path, help="use an existing netroach-engine binary")
@@ -120,7 +120,7 @@ def validate_personal_npcap_build(
     args: argparse.Namespace,
     *,
     system: str | None = None,
-) -> tuple[Path, Path] | None:
+) -> tuple[Path, Path | None] | None:
     enabled = bool(getattr(args, "syn_sweep", False))
     sdk_value = getattr(args, "npcap_sdk_lib", None)
     installer_value = getattr(args, "npcap_installer", None)
@@ -129,9 +129,9 @@ def validate_personal_npcap_build(
             raise SystemExit("--npcap-sdk-lib and --npcap-installer require --syn-sweep")
         return None
     if (system or platform.system()).lower() != "windows":
-        raise SystemExit("The personal Npcap SYN sweep installer can only be built for Windows")
-    if sdk_value is None or installer_value is None:
-        raise SystemExit("--syn-sweep requires both --npcap-sdk-lib and --npcap-installer")
+        raise SystemExit("The Npcap SYN sweep installer can only be built for Windows")
+    if sdk_value is None:
+        raise SystemExit("--syn-sweep requires --npcap-sdk-lib")
     if getattr(args, "skip_engine_build", False) or getattr(args, "engine_path", None) is not None:
         raise SystemExit("--syn-sweep requires a fresh engine build; do not reuse or skip the engine")
     if getattr(args, "prepare_only", False):
@@ -143,17 +143,20 @@ def validate_personal_npcap_build(
     for library in ("wpcap.lib", "Packet.lib"):
         if not (sdk / library).is_file():
             raise SystemExit(f"Npcap SDK library was not found: {sdk / library}")
-    installer = _require_file(installer_value, "Npcap installer")
-    if installer.suffix.lower() != ".exe":
-        raise SystemExit(f"Npcap installer must be an .exe file: {installer}")
+    installer = None
+    if installer_value is not None:
+        installer = _require_file(installer_value, "Npcap installer")
+        if installer.suffix.lower() != ".exe":
+            raise SystemExit(f"Npcap installer must be an .exe file: {installer}")
 
-    bundles = {
-        bundle.lower()
-        for bundle in re.split(r"[\s,]+", str(getattr(args, "bundles", "") or ""))
-        if bundle
-    }
-    if bundles != {"nsis"}:
-        raise SystemExit("The bundled Npcap preinstall check is supported only by an NSIS-only build")
+    if installer is not None:
+        bundles = {
+            bundle.lower()
+            for bundle in re.split(r"[\s,]+", str(getattr(args, "bundles", "") or ""))
+            if bundle
+        }
+        if bundles != {"nsis"}:
+            raise SystemExit("The bundled Npcap preinstall check is supported only by an NSIS-only build")
     return sdk, installer
 
 
@@ -557,11 +560,12 @@ def build_tauri(args: argparse.Namespace) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     npcap_inputs = validate_personal_npcap_build(args)
+    npcap_installer = npcap_inputs[1] if npcap_inputs is not None else None
     npcap_digest: str | None = None
-    if npcap_inputs is not None:
-        verify_npcap_installer_signature(npcap_inputs[1])
-        npcap_digest = file_sha256(npcap_inputs[1])
-    if npcap_inputs is None:
+    if npcap_installer is not None:
+        verify_npcap_installer_signature(npcap_installer)
+        npcap_digest = file_sha256(npcap_installer)
+    else:
         unstage_npcap_installer()
     try:
         engine = build_engine(args)
@@ -570,8 +574,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _stage_binary(engine, "netroach-engine")
         _stage_binary(backend, "netroach-backend")
         _stage_playwright_browsers(browsers)
-        if npcap_inputs is not None:
-            _, npcap_installer = npcap_inputs
+        if npcap_installer is not None:
             staged_digest = stage_npcap_installer(npcap_installer)
             if staged_digest != npcap_digest:
                 raise SystemExit("Npcap installer changed after its Authenticode verification")
@@ -587,8 +590,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Installers: {TAURI / 'target' / 'release' / 'bundle'}")
         return 0
     finally:
-        if npcap_inputs is not None:
+        if npcap_installer is not None:
             unstage_npcap_installer()
+        if npcap_inputs is not None:
             restore_standard_engine_resource(args)
 
 

@@ -627,9 +627,10 @@ class DashboardHostViewTests(unittest.TestCase):
         must sit beside that one checkbox."""
         html = dashboard_html()
 
-        service_row = html.split('name="service_probe"', 1)[1].split("</label>", 1)[0]
-        self.assertIn("배너", service_row)
-        self.assertIn("증적", service_row)
+        service_option = html.split('id="scanServiceProbe"', 1)[1].split("</div>", 1)[0]
+        self.assertIn('aria-describedby="scanServiceProbeHelp"', service_option)
+        self.assertIn("배너", service_option)
+        self.assertIn("증적", service_option)
         self.assertIn("화면이 켜진 상태에서만", html)
         self.assertIn("웹 포트는 브라우저 화면 증적", html)
 
@@ -789,9 +790,10 @@ class DashboardHostViewTests(unittest.TestCase):
         scan does unless the operator asks for the probes."""
         html = dashboard_html()
 
-        box = html.split('name="udp_service_probe"', 1)[1].split("</label>", 1)[0]
+        box = html.split('id="scanUdpServiceProbe"', 1)[1].split("</div>", 1)[0]
         # Unticked: `checked` would fall inside this slice if it were there.
         self.assertNotIn("checked", box)
+        self.assertIn('aria-describedby="scanUdpServiceProbeHelp"', box)
         self.assertIn("RIP", box)
         # A scan is one protocol, so one of the two ticks answers for it.
         self.assertIn("service_probe: tcp ? tcpServiceProbe", html)

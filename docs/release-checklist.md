@@ -52,7 +52,7 @@ py -3 tools\smoke_package.py dist-smoke-tar
 .\.venv\Scripts\python.exe tools\build_desktop.py --skip-engine-build --skip-backend-build
 ```
 
-For the private SYN-enabled NSIS build, supply both `--npcap-sdk-lib` and an official `--npcap-installer`, verify its Authenticode signer, record the printed SHA-256, and use `--bundles nsis`. Confirm the build removes `resources\installers\npcap-installer.exe` and restores the standard engine after bundling. Npcap Free Edition is limited to five systems and cannot be externally redistributed; never publish that personal-use bundle.
+For the normal SYN-enabled build, supply `--npcap-sdk-lib` and use `--bundles nsis`; do not supply an Npcap installer. Confirm the destination UI clearly directs the user to install official Npcap when the driver is absent, and confirm the build restores the standard engine after bundling. If an explicitly authorised private personal build supplies `--npcap-installer`, also verify its Authenticode signer and SHA-256, confirm staging removal, and never publish that Npcap-containing bundle.
 
 The final desktop command requires Node.js/npm, the Rust MSVC toolchain, and Visual Studio Build Tools with the Desktop C++ workload. Run it with the interpreter the build dependency was installed into: it freezes the backend and fetches Chromium using whichever Python is running it. Confirm that the NSIS installer is present under `desktop\src-tauri\target\release\bundle\nsis`.
 
@@ -74,7 +74,7 @@ The final desktop command requires Node.js/npm, the Rust MSVC toolchain, and Vis
 - Create an HTTP OAST session, call its `/oast/<token>` URL locally, and confirm the interaction is stored.
 - Confirm packet sending diagnostics report `packet_driver`, `packet_driver_available`, `elevated`, `raw_socket_privileged`, and a useful Windows Npcap or macOS/Linux privilege note.
 - Install the desktop bundle on a clean Windows VM without Python, Node.js, or Rust; verify startup, an authorized loopback scan, database persistence after restart, and backend termination after the window closes.
-- For a SYN-enabled bundle, start with a VM that has no Npcap. Confirm the Npcap UI appears, install with administrator-only access unchecked, verify Npcap 1.88+ and `AdminOnly=0`, then compare a bounded authorized LAN SYN scan with the connect scan. Confirm cancelling Npcap or selecting administrator-only access aborts Netroach installation.
+- For a normal SYN-enabled bundle, start with a VM that has no Npcap. Confirm Netroach installs but SYN stays unavailable with actionable official-install guidance while TCP Connect remains usable. Install official Npcap directly with administrator-only access unchecked, verify Npcap 1.88+ and `AdminOnly=0`, restart Netroach, then compare a bounded authorized LAN SYN scan with the connect scan.
 - Uninstall Netroach and confirm the shared Npcap driver remains installed.
 - On the clean offline VM, enable evidence capture against an authorized local HTTP service and confirm a `web_screenshot` PNG is stored without downloading Chromium.
 

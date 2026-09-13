@@ -1,37 +1,39 @@
 # Netroach 현재 개발 현황
 
-이 문서는 2026-09-11 기준 Netroach의 구현, 검증, 배포 상태를 한곳에 정리한 기준 문서다. 소스 기준은 `main`의 `0.2.2` 태그 시점, 제품 버전은 `0.2.2`이다.
+이 문서는 2026-09-13 기준 Netroach의 구현, 검증, 배포 상태를 한곳에 정리한 기준 문서다. 현재 릴리스 버전은 `0.2.5`이다.
 
 ## 1. 현재 배포 상태
 
 | 항목 | 현재 값 |
 | --- | --- |
 | 저장소 | 비공개 GitHub 저장소 `0585-cpu/scan` |
-| 브랜치/태그 | `main` / `v0.2.2` |
-| 릴리즈 | [Netroach 0.2.2 개인용 Npcap 포함 설치본](https://github.com/0585-cpu/scan/releases/tag/v0.2.2) |
-| 설치 파일 | `Netroach_0.2.2_x64-setup.exe` |
-| 설치 파일 크기 | 382,683,679 bytes |
-| 설치 파일 SHA-256 | `354f920bee897bb2ef3d817737ca36debf8f860c189b9a4775b739687552fc81` |
-| 내장 Npcap | 1.88, Nmap Software LLC Authenticode 서명 확인 |
+| 브랜치/기준 태그 | `main` / `v0.2.5` |
+| 최신 공개 릴리즈 | [Netroach 0.2.5](https://github.com/0585-cpu/scan/releases/tag/v0.2.5) |
+| 릴리스 설치본 | `Netroach_0.2.5_x64-setup.exe` |
+| 설치 파일 크기 | 382,457,038 bytes |
+| 설치 파일 SHA-256 | `db9a2f3655fbed3e836310ffb8f42267756296552c408781d4ef689dd8d990d9` |
+| 릴리스의 Npcap 정책 | 설치 파일에 포함하지 않음. 대상 PC 사용자가 공식 Npcap을 직접 설치 |
+| 현재 개발 PC Npcap | 1.88, 서비스 실행 중, `AdminOnly=0` |
+| 현재 개발 PC Netroach | 0.2.5 설치 및 실행 확인 |
 | Netroach 설치본 서명 | 코드 서명 없음 |
 
-릴리즈는 개인 사용 목적의 비공개 설치본이다. Npcap Free Edition 설치 파일을 포함하므로 공개하거나 제3자에게 재배포하지 않는다. 다른 사용자나 고객에게 배포하려면 Npcap OEM 재배포 권한과 그에 맞는 설치 절차가 필요하다.
+`0.2.5`부터 기본 배포 경계는 **Npcap 사용자 직접 설치**다. Netroach 설치본은 Npcap
+설치 파일을 포함하거나 자동 다운로드하지 않는다. SYN 엔진은 SDK로 빌드하지만 대상 PC에서
+공식 Npcap 설치와 접근 권한이 확인될 때만 사용할 수 있고, 그렇지 않으면 TCP Connect를
+사용한다. Npcap 포함 개인용 설치본은 별도의 재배포 권한과 명시적 요청이 있을 때만 만든다.
 
-2026-09-11에 개발 PC의 기존 설치를 이 릴리즈로 교체했다. 설치 훅은 Npcap 1.88과
-`AdminOnly=0`을 확인하고 포함된 Npcap UI 없이 바로 진행했으며, 이후 대시보드에서
-실제 LAN 대상 SYN 스캔이 동작함을 확인했다(8절).
+`0.2.5` 릴리스의 해시와 sidecar 일치, 생성된 NSIS 스크립트의 Npcap 설치 항목 부재,
+패키지 리소스 엔진의 `syn_sweep=true`와 버전 `0.2.5`를 확인했다. 현재 PC의 0.1.0을
+0.2.5로 교체한 뒤 실제 UI, health 응답, 이 PC의 Wi-Fi 주소에 대한 raw SYN도 확인했다.
 
-### 0.2.2 빌드 증적 (2026-09-11)
+### 0.2.5 릴리스 증적 (2026-09-13)
 
-- Npcap 입력: 1.88, Authenticode `Valid`, 서명자 `Nmap Software LLC`, SHA-256
-  `a2f4ec1e5ea353ff67efd24b2ebf081ba44532410fae8d5e146af0310aa4f56b` (0.2.1과 동일 파일).
-- 서명 검증은 원본과 staging 복사본에 대해 각각 1회씩, 총 2회 수행됐다.
-- NSIS 완료 뒤 private Npcap staging 제거 및 표준 connect 엔진 복원 확인.
+- `tools/build_desktop.py --syn-sweep --npcap-sdk-lib C:\npcap-sdk\Lib\x64 --bundles nsis`로 빌드했다.
+- Npcap 설치 파일 인수 없이 빌드했고, staging 및 번들 위치에 Npcap 설치 파일이 없음을 확인했다.
+- 생성된 NSIS 스크립트에 Npcap 참조가 없고, 패키지 리소스 엔진은 `0.2.5`, `syn_sweep=true`다.
+- NSIS 완료 뒤 표준 Connect 엔진(`syn_sweep=false`) staging 복원을 확인했다.
 - 설치 파일과 `.sha256` sidecar 일치 확인.
-- **설치본이 0.2.1보다 약 44MB 작은 이유**: Microsoft가 현재 배포하는 WebView2
-  오프라인 설치 프로그램이 202.9MB로, 0.1.0~0.2.1 빌드가 사용한 캐시본
-  246.6MB보다 작기 때문이다. 누락된 구성요소는 없다. 크기 차이를 보고 구성요소
-  누락을 의심하지 않도록 여기에 남긴다.
+- 설치 파일 자체는 코드 서명되지 않았다(`NotSigned`).
 
 ## 2. 제품 목적과 안전 경계
 
@@ -93,25 +95,30 @@ SYN-ACK은 `open`, RST는 `closed`, 최종 무응답은 `filtered`로 기록한�
 SYN-ACK 2개에 RST 1개로, 대상이 backlog 칸을 즉시 되찾는다. backlog가 한두 칸인
 임베디드·OT 장비에서 그 칸이 30~60초 동안 막히는 것을 막기 위한 것이다. 서비스 탐지용 후속 Connect가 실패해도 이미 관찰한 SYN-open 상태를 닫힘으로 낮추지 않는다. 루프백 대상은 raw SYN 대신 Connect 경로를 사용한다.
 
-## 5. Npcap 포함 개인용 설치 동작
+## 5. Npcap과 SYN 설치 동작
 
-개인용 빌드는 `tools/build_desktop.py`에 `--syn-sweep`, Npcap SDK 라이브러리 경로, 직접 받은 공식 Npcap 설치 파일을 명시해 만든다.
+기본 SYN 설치 후보는 `tools/build_desktop.py`에 `--syn-sweep`과 Npcap SDK 라이브러리
+경로만 지정해 만든다. SDK는 엔진 링크에만 필요하며 설치 파일에는 들어가지 않는다.
 
-설치 시 동작은 다음과 같다.
+대상 PC 사용 절차는 다음과 같다.
 
-1. Npcap 드라이버가 1.88 이상이고 레지스트리의 `AdminOnly=0`이면 바로 진행한다.
-2. 조건을 충족하지 않으면 설치본에 포함된 공식 Npcap UI를 UAC로 실행한다.
-3. 사용자는 **Restrict Npcap driver's access to Administrators only**를 선택하지 않아야 한다.
-4. Npcap 설치 후 버전과 `AdminOnly=0`을 다시 확인한다.
-5. 설치 취소, 실행 실패, 낮은 버전 또는 `AdminOnly=1`이면 Netroach 설치도 중단한다.
+1. Netroach는 Npcap이 없어도 설치한다.
+2. Npcap이 없거나 접근 권한이 없으면 SYN 기능을 비활성화하고 조치 안내를 표시한다.
+3. 그 상태에서도 `TCP Connect 스캔만 사용`은 동작한다.
+4. 사용자가 Npcap 공식 설치 파일을 직접 받아 설치한 뒤 Netroach를 재시작한다.
+5. 개인 PC에서 비관리자 SYN이 필요하면 Npcap 설치 시 관리자 전용 제한을 선택하지 않아
+   `AdminOnly=0`으로 둔다.
+6. 재시작 후 기능 진단에서 SYN 사용 가능 상태를 확인한다.
 
 `AdminOnly=0`은 일반 사용자 계정에서도 Npcap 캡처·송신 장치 접근을 허용한다. 개인 PC에서 비관리자 SYN 스캔을 사용하기 위해 선택한 설정이며, 여러 사용자가 공유하는 PC에서는 로컬 권한 범위를 고려해야 한다.
 
-Npcap은 다른 프로그램도 사용할 수 있는 시스템 공유 드라이버이므로 Netroach 제거 프로그램은 Npcap을 제거하지 않는다. 빌드가 끝나면 임시 Npcap 설치 파일과 SYN 전용 엔진 staging을 제거하고 표준 Connect 엔진을 복원한다.
+Npcap은 다른 프로그램도 사용할 수 있는 시스템 공유 드라이버이므로 Netroach 설치·제거
+프로그램은 Npcap을 설치하거나 제거하지 않는다. 빌드가 끝나면 SYN 전용 엔진 staging을
+표준 Connect 엔진으로 복원한다.
 
 ## 6. 대시보드와 동작 결함 수정
 
-`0.2.0`~`0.2.1`에서 반영된 주요 UI·동작 수정은 다음과 같다.
+`0.2.0`~`0.2.5`에서 반영된 주요 UI·동작 수정은 다음과 같다.
 
 - 검색 가능한 작업 목록을 선택 작업의 요약·내보내기·결과·증적보다 위로 이동
 - 작업 목록을 독립 스크롤 영역으로 만들어 긴 이력에서도 결과 영역 위치 유지
@@ -123,6 +130,20 @@ Npcap은 다른 프로그램도 사용할 수 있는 시스템 공유 드라이�
 - 데스크톱 WebView에서 새 창이 열리지 않아 보고서·증적·내보내기가 동작하지 않던 문제를 인페이지 뷰어로 전환
 - Linux/macOS의 Windows 전용 `ctypes` 타입 검사 오류 수정
 - OS 고정 경로 및 실제 타이머 정밀도에 의존하던 CI 테스트를 플랫폼 독립·결정적 테스트로 변경
+- ControlDeck 2001 테마 적용: Windows 2000 계열 파란 제목 표시줄, 회색 양각·음각
+  컨트롤, 디지털 상태 표시, 표 격자, 키보드 포커스·고대비 지원
+- 390px 모바일 폭에서 탐색 막대 압축, 상태 표시 줄바꿈, 결과 영역 수평 넘침 방지
+- 사이드바에는 포트 스캔만 남기고 시작 화면도 포트 스캔으로 변경. 제거된 화면의 코드와
+  API는 삭제하지 않고 탐색 메뉴에서만 숨김
+- 사이드바가 56px에서 184px로 확장될 때 같은 그리드 열도 함께 확장해 본문을 덮지 않도록 수정
+- 주요 스캔 버튼 글자를 최소 14px로 높이고 비활성 글자 대비를 개선하며, 긴 글자 줄바꿈과
+  프리셋 버튼의 중첩 양각 스타일을 정리
+- 서비스 탐지, TCP Connect 전용, UDP 서비스 탐지의 긴 설명을 `(?)` 도움말로 정리하고
+  마우스 호버·키보드 포커스·터치 포커스에서 표시. 체크박스 상태와 Npcap별 안내는 유지
+- 서비스 탐지 체크에 따른 기본 SYN 및 열린 포트 Connect 재확인 UI 회귀 테스트 복구
+- 작업 ID·상태·대상과 호스트 요약을 15~16px, 굵기 600으로 조정해 과도한 굵기 없이 가독성 개선
+- 웹 리다이렉트 증적에 촬영한 최종 URL 기록
+- 콘솔 캡처가 정확한 제목을 찾지 못했을 때 비슷한 다른 창을 선택하지 않도록 수정
 
 ## 7. 구조와 주요 소스
 
@@ -146,12 +167,30 @@ Tauri 데스크톱 창
 | `crates/netroach-engine/src/syn_sweep.rs` | SYN 패킷·쿠키·응답 검증 |
 | `crates/netroach-engine/src/netlink.rs` | Windows 라우트와 Npcap 장치 연결 |
 | `crates/netroach-engine/src/syn_runner.rs` | Npcap 송수신·재시도·상태 집계 |
-| `desktop/src-tauri/installer-hooks.nsh` | Npcap 버전·`AdminOnly` 설치 전후 검사 |
-| `tools/build_desktop.py` | 백엔드·엔진·브라우저·Npcap 포함 설치본 빌드 |
+| `desktop/src-tauri/installer-hooks.nsh` | 명시적으로 Npcap을 포함하는 사설 빌드의 설치 훅 |
+| `tools/build_desktop.py` | 백엔드·엔진·브라우저 및 선택적 Npcap 설치 파일을 조합하는 설치본 빌드 |
 | `tests/test_dashboard_browser.py` | 실제 Chromium과 격리 API/DB 기반 UI 회귀 검사 |
 | `docs/testing-and-measurement-ko.md` | 어느 진입점으로 무엇을 측정하는지와 실제로 밟은 함정들 |
 
 ## 8. 확인된 검증 결과
+
+### `0.2.5` 릴리스 검증 (2026-09-13)
+
+- Python 테스트 482개 통과, 기존 Scapy DNS 경고 1개
+- 실제 Chromium 대시보드 테스트 20개 통과
+- Rust 기본 빌드 60개 통과(단위 46, 통합 14)
+- Rust `syn-sweep` feature 90개 통과(단위 77, 통합 13)
+- Ruff, mypy 29개 소스 파일, `cargo fmt --check` 통과
+- 실제 Chromium에서 넓은 화면과 390×844 화면의 ControlDeck 테마·배치·넘침을 확인
+- Npcap SDK만으로 SYN 설치 후보 빌드, SHA-256 sidecar 일치, 내장 엔진
+  `syn_sweep=true`, Npcap 설치 파일 미포함 확인
+- 현재 PC 설치 레지스트리·실행 파일·health의 앱/엔진 버전이 모두 `0.2.5`로 일치
+- 현재 Npcap 1.88, `AdminOnly=0`, 서비스 실행 상태에서 비관리자 raw SYN으로 이 PC의
+  `198.51.100.39:18082` 임시 HTTP 포트를 `open`으로 확인(1.35ms, 오류 0). 임시 서버는 종료함
+- 재설치된 실제 패키지에서 사이드바 항목 1개, 기본 화면 `포트 스캔`, 확장 rail 184px와
+  본문 시작 184px(겹침 0), 주요 버튼 14px 및 기존 작업 39건 보존 확인
+- 재설치된 실제 패키지에서 도움말 `(?)` 3개, 서비스·Connect·UDP 설명의 포커스 표시,
+  체크 상태 보존 및 health의 앱/엔진 `0.2.5`, `syn_sweep=true`, Npcap 감지를 확인
 
 ### SYN 스윕 속도와 정확성 측정 (2026-09-11)
 
@@ -201,7 +240,7 @@ Tauri 데스크톱 창
 손실은 드롭 검사로 잡히지 않으며 `filtered` 비율이 유일한 신호다. 호스트당
 상한을 10으로 정한 근거가 이 측정이다.
 
-### `v0.2.2` 로컬 검증
+### `v0.2.2` 과거 로컬 검증
 
 - Python 테스트 450개 통과, 10개 건너뜀
 - Rust 기본 빌드 57개 통과 (단위 43, 통합 14)
@@ -212,8 +251,6 @@ Tauri 데스크톱 창
   빌드가 거부할 기능을 광고할 수 없다
 - 실제 스윕과 증적 수집에서 진행률이 단계별로 갱신되고, 단계가 끝나면 결과 기반
   진행률로 넘어감을 브라우저에서 확인
-
-`v0.2.2`의 GitHub Actions 실행은 푸시 후에 기록한다.
 
 ### `v0.2.1` 릴리즈 과정에서 확인한 것
 
@@ -267,7 +304,8 @@ Tauri 데스크톱 창
 
 다음 항목은 아직 최종 인수 증적이 없으므로 `UNVERIFIED`다.
 
-- Npcap이 없는 깨끗한 Windows VM에서 포함 설치, UAC, `AdminOnly=0`, 취소·재실행·제거 전 과정
+- Npcap이 없는 깨끗한 Windows VM에서 Netroach 설치, Connect fallback, 공식 Npcap 직접
+  설치, `AdminOnly=0`, 재시작 후 SYN 활성화, 제거 전 과정
 - **다른 대역 호스트에 대한 종단 SYN 스윕.** 라우트 해석은 확인했으나 게이트웨이
   너머 호스트에 실제로 SYN을 보내고 응답을 받는 경로는 아직 돌려보지 않았다.
   이 분기가 틀리면 해당 대역 전체가 조용히 `filtered`로 보고된다.
@@ -282,8 +320,9 @@ Tauri 데스크톱 창
 - **`error` 상태에서의 Governor 동작.** 임시 포트 고갈이 실제로 발생하는지 자체가
   미측정이다.
 
-0.2.4 이후 로컬 커밋 두 개(`c46ef28`, `30cf9b1`)의 변경 내용·측정치·남은 항목은
-`docs/scan-load-and-evidence-handoff-ko.md`에 있다. 아직 푸시하지 않았다.
+0.2.4 이후 커밋 두 개(`c46ef28`, `30cf9b1`)의 변경 내용·측정치·남은 항목은
+`docs/scan-load-and-evidence-handoff-ko.md`에 있다. 두 커밋과 문서 커밋 `1f28f56`은
+`origin/main`에 반영되어 있다.
 
 추가 제한은 다음과 같다.
 
@@ -294,11 +333,11 @@ Tauri 데스크톱 창
 
 ## 10. 다음 개발 우선순위
 
-1. 깨끗한 Windows VM에서 개인용 설치본 전체 설치·제거 시나리오 기록
+1. 깨끗한 Windows VM에서 Npcap 미설치 → Connect 사용 → 공식 Npcap 직접 설치 → SYN 활성화 기록
 2. 소유하거나 명시적으로 허가받은 LAN에서 비관리자 raw SYN과 Connect 결과 비교
-3. 현재 PC 설치본 교체가 필요하면 별도 승인 후 설치·실행·증적 수집
-4. 외부 배포가 필요해지는 경우 Npcap OEM 권한과 Netroach 코드 서명 체계 마련
-5. 이후 변경은 `docs/release-checklist.md`의 패키지·실기기 게이트를 분리해 기록
+3. UI의 `raw 소켓 제한됨` 문구가 SYN 제한으로 오해되지 않도록 패킷 전송 권한과 SYN
+   사용 가능 상태를 더 명확히 분리할지 검토
+4. 외부 배포 시 Netroach 코드 서명과, Npcap을 포함해야 한다면 OEM 재배포 권한 마련
 
 ## 11. 함께 볼 문서
 
@@ -306,7 +345,7 @@ Tauri 데스크톱 창
 - `docs/install.md`: 일반 설치·체크섬 확인
 - `docs/desktop-packaging.md`: Windows 데스크톱 빌드
 - `docs/syn-sweep-handoff.md`: SYN 구현 세부 인수인계
-- `docs/scan-load-and-evidence-handoff-ko.md`: 스캔 부하 분산·증적 예산 인수인계 (0.2.4 이후, 미푸시)
+- `docs/scan-load-and-evidence-handoff-ko.md`: 스캔 부하 분산·증적 예산 인수인계 (0.2.4 이후)
 - `docs/release-checklist.md`: 릴리즈 검증 체크리스트
 - `docs/development-handoff-ko.md`: 다른 PC에서 개발을 이어가기 위한 환경·이전 가이드
 - `docs/superpowers/specs/2026-09-10-syn-sweep-personal-installer-design.md`: SYN/Npcap 설계 기준

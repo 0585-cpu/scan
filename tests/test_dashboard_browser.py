@@ -72,6 +72,7 @@ class DashboardBrowserTests(unittest.TestCase):
             "rust_engine_available": True, "app_version": "test", "platform": "test",
             "rust_engine_version": "test", "scapy_available": True,
             "packet_driver": "Npcap", "raw_socket_privileged": False,
+            "syn_sweep_available": True,
         }
         dashboard_html.cache_clear()
         self.client = TestClient(create_app(str(self.repo.path)))
@@ -133,6 +134,7 @@ class DashboardBrowserTests(unittest.TestCase):
         self.held.clear()
 
     def test_job_picker_is_above_results_and_scrolls_independently(self):
+        self.page.wait_for_timeout(180)
         form = self.page.locator(".command-pane").bounding_box()
         jobs = self.page.locator(".scan-jobs-wrap").bounding_box()
         results = self.page.locator(".result-pane").bounding_box()
@@ -194,6 +196,291 @@ class DashboardBrowserTests(unittest.TestCase):
         self.page.locator("#scanReset").click()
         self.assertFalse(self.page.locator("#scanConnectOnly").is_disabled())
         self.assertFalse(self.page.locator("#scanConnectOnly").is_checked())
+
+    def test_scan_help_descriptions_open_from_their_question_mark(self):
+        cases = [
+            ("#scanServiceProbeHelpTrigger", "#scanServiceProbeHelp", "SYN-open 포트만"),
+            ("#scanConnectOnlyHelpTrigger", "#scanConnectOnlyHelp", "Npcap 기반 SYN 스캔"),
+            ("#scanUdpServiceProbeHelpTrigger", "#scanUdpServiceProbeHelp", "UDP 스캔에만 적용"),
+        ]
+        original_states = self.page.locator(
+            '[name="service_probe"], #scanConnectOnly, [name="udp_service_probe"]'
+        ).evaluate_all("nodes => nodes.map(node => node.checked)")
+
+        for trigger_selector, tooltip_selector, expected_text in cases:
+            with self.subTest(trigger=trigger_selector):
+                trigger = self.page.locator(trigger_selector)
+                tooltip = self.page.locator(tooltip_selector)
+                self.assertEqual(trigger.inner_text(), "(?)")
+                self.assertEqual(trigger.get_attribute("aria-describedby"), tooltip_selector[1:])
+                self.assertFalse(tooltip.is_visible())
+                trigger.hover()
+                self.assertTrue(tooltip.is_visible())
+                self.assertIn(expected_text, tooltip.inner_text())
+
+        self.assertEqual(
+            self.page.locator(
+                '[name="service_probe"], #scanConnectOnly, [name="udp_service_probe"]'
+            ).evaluate_all("nodes => nodes.map(node => node.checked)"),
+            original_states,
+        )
+
+    def test_scan_help_descriptions_open_for_keyboard_focus(self):
+        cases = [
+            ("#scanServiceProbeHelpTrigger", "#scanServiceProbeHelp"),
+            ("#scanConnectOnlyHelpTrigger", "#scanConnectOnlyHelp"),
+            ("#scanUdpServiceProbeHelpTrigger", "#scanUdpServiceProbeHelp"),
+        ]
+
+        for trigger_selector, tooltip_selector in cases:
+            with self.subTest(trigger=trigger_selector):
+                trigger = self.page.locator(trigger_selector)
+                tooltip = self.page.locator(tooltip_selector)
+                trigger.focus()
+                self.assertTrue(tooltip.is_visible())
+                self.assertEqual(trigger.get_attribute("type"), "button")
+
+    def test_scan_help_tooltips_stay_inside_a_phone_viewport(self):
+        self.page.set_viewport_size({"width": 390, "height": 844})
+
+        for trigger_selector, tooltip_selector in [
+            ("#scanServiceProbeHelpTrigger", "#scanServiceProbeHelp"),
+            ("#scanConnectOnlyHelpTrigger", "#scanConnectOnlyHelp"),
+            ("#scanUdpServiceProbeHelpTrigger", "#scanUdpServiceProbeHelp"),
+        ]:
+            with self.subTest(trigger=trigger_selector):
+                self.page.locator(trigger_selector).focus()
+                box = self.page.locator(tooltip_selector).bounding_box()
+                self.assertIsNotNone(box)
+                self.assertGreaterEqual(box["x"], 0, box)
+                self.assertLessEqual(box["x"] + box["width"], 390, box)
+                self.assertEqual(
+                    self.page.evaluate("document.documentElement.scrollWidth"),
+                    self.page.evaluate("document.documentElement.clientWidth"),
+                )
+
+    def test_control_deck_theme_is_scoped_and_preserves_native_disabled_state(self):
+        self.assertIsNotNone(self.page.locator("body").get_attribute("data-cd2001"))
+        self.assertEqual(
+            self.page.locator(".topbar").evaluate("node => getComputedStyle(node).backgroundColor"),
+            "rgb(0, 61, 143)",
+        )
+        self.assertEqual(
+            self.page.locator("#scanSubmit").evaluate("node => getComputedStyle(node).borderRadius"),
+            "0px",
+        )
+        self.assertNotEqual(
+            self.page.locator("#scanTargets").evaluate("node => getComputedStyle(node).boxShadow"),
+            "none",
+        )
+        self.assertEqual(
+            self.page.locator("#scanJobs").locator("xpath=ancestor::table/thead/tr/th[1]").evaluate(
+                "node => getComputedStyle(node).borderRightWidth"
+            ),
+            "1px",
+        )
+        self.assertTrue(self.page.locator("#scanSubmit").is_disabled())
+
+    def test_control_deck_job_and_host_summary_text_is_clear_without_heavy_bold(self):
+        self.select()
+        self.page.wait_for_function(
+            "document.querySelector('#scanHostRowsList .host-row .host-state')?.textContent.includes('완료')"
+        )
+
+        selectors = {
+            "job_id": "#scanJobs tr.selected td:nth-child(1)",
+            "job_state": "#scanJobs tr.selected td:nth-child(2) .pill",
+            "job_target": "#scanJobs tr.selected td:nth-child(3)",
+            "host_name": "#scanHostRowsList .host-row .host-name",
+            "host_open": "#scanHostRowsList .host-row .host-open",
+            "host_state": "#scanHostRowsList .host-row .host-state",
+        }
+        metrics = self.page.evaluate(
+            """selectors => Object.fromEntries(
+              Object.entries(selectors).map(([name, selector]) => {
+                const node = document.querySelector(selector);
+                const style = getComputedStyle(node);
+                return [name, {
+                  text: node.textContent.trim(),
+                  color: style.color,
+                  fontSize: parseFloat(style.fontSize),
+                  fontWeight: Number(style.fontWeight),
+                }];
+              })
+            )""",
+            selectors,
+        )
+
+        for name, item in metrics.items():
+            with self.subTest(name=name, text=item["text"]):
+                self.assertEqual(item["fontWeight"], 600, item)
+                self.assertEqual(item["color"], "rgb(17, 17, 17)", item)
+                self.assertGreaterEqual(
+                    item["fontSize"], 15 if name == "job_state" else 16, item
+                )
+
+    def test_control_deck_host_and_port_values_are_visually_emphasized(self):
+        self.select()
+        self.page.locator('[data-result-tab="ports"]').click()
+        self.page.wait_for_function("document.querySelectorAll('#scanResults tr').length === 2")
+
+        metrics = self.page.locator(
+            "#scanResults tr:first-child td:nth-child(-n+2)"
+        ).evaluate_all(
+            """nodes => {
+              const channel = value => {
+                value /= 255;
+                return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+              };
+              const rgb = value => (value.match(/\\d+(?:\\.\\d+)?/g) || []).slice(0, 3).map(Number);
+              const visibleBackground = node => {
+                let current = node;
+                while (current) {
+                  const value = getComputedStyle(current).backgroundColor;
+                  const parts = value.match(/\\d+(?:\\.\\d+)?/g) || [];
+                  if (parts.length < 4 || Number(parts[3]) > 0) return value;
+                  current = current.parentElement;
+                }
+                return 'rgb(255, 255, 255)';
+              };
+              const luminance = value => {
+                const [r, g, b] = rgb(value).map(channel);
+                return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+              };
+              return nodes.map(node => {
+                const style = getComputedStyle(node);
+                const foreground = luminance(style.color);
+                const background = luminance(visibleBackground(node));
+                return {
+                  text: node.textContent.trim(),
+                  fontWeight: Number(style.fontWeight),
+                  contrast: (Math.max(foreground, background) + 0.05) /
+                    (Math.min(foreground, background) + 0.05),
+                };
+              });
+            }"""
+        )
+
+        self.assertEqual(len(metrics), 2)
+        for item in metrics:
+            with self.subTest(text=item["text"]):
+                self.assertGreaterEqual(item["fontWeight"], 600, item)
+                self.assertGreaterEqual(item["contrast"], 7, item)
+
+    def test_sidebar_exposes_only_port_scan_and_opens_it_by_default(self):
+        self.page.reload()
+        self.page.wait_for_function("state.health?.rust_engine_available === true")
+
+        items = self.page.locator(".rail .nav [data-view-target]")
+        self.assertEqual(items.count(), 1)
+        self.assertEqual(items.first.get_attribute("data-view-target"), "scans")
+        self.assertEqual(self.page.evaluate("state.view"), "scans")
+        self.assertTrue(self.page.locator("#view-scans").is_visible())
+        self.assertEqual(self.page.locator("#viewTitle").inner_text(), "포트 스캔")
+
+    def test_expanded_sidebar_reflows_the_workspace_instead_of_covering_it(self):
+        self.page.wait_for_timeout(180)
+        collapsed = self.page.evaluate(
+            """() => {
+              const rail = document.querySelector('.rail').getBoundingClientRect();
+              const shell = document.querySelector('.shell').getBoundingClientRect();
+              return {railRight: rail.right, railWidth: rail.width, shellLeft: shell.left};
+            }"""
+        )
+        self.page.locator(".rail .nav button").first.hover()
+        self.page.wait_for_timeout(180)
+        expanded = self.page.evaluate(
+            """() => {
+              const rail = document.querySelector('.rail').getBoundingClientRect();
+              const shell = document.querySelector('.shell').getBoundingClientRect();
+              return {railRight: rail.right, railWidth: rail.width, shellLeft: shell.left};
+            }"""
+        )
+
+        self.assertAlmostEqual(collapsed["railRight"], collapsed["shellLeft"], delta=1)
+        self.assertGreaterEqual(expanded["railWidth"], 180)
+        self.assertAlmostEqual(expanded["railRight"], expanded["shellLeft"], delta=1)
+
+    def test_control_deck_scan_buttons_keep_labels_readable_and_unclipped(self):
+        metrics = self.page.evaluate(
+            """() => {
+              const selectors = [
+                '#scanRefresh', '#scanPresetSave', '#scanFillScope',
+                '#scanSubmit', '#scanReset', '.preset-chip-apply'
+              ];
+              const channel = value => {
+                value /= 255;
+                return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+              };
+              const rgb = value => (value.match(/\\d+(?:\\.\\d+)?/g) || []).slice(0, 3).map(Number);
+              const visibleBackground = node => {
+                let current = node;
+                while (current) {
+                  const value = getComputedStyle(current).backgroundColor;
+                  const parts = value.match(/\\d+(?:\\.\\d+)?/g) || [];
+                  if (parts.length < 4 || Number(parts[3]) > 0) return value;
+                  current = current.parentElement;
+                }
+                return 'rgb(255, 255, 255)';
+              };
+              const luminance = value => {
+                const [r, g, b] = rgb(value).map(channel);
+                return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+              };
+              return selectors.map(selector => {
+                const node = document.querySelector(selector);
+                const style = getComputedStyle(node);
+                const foreground = luminance(style.color);
+                const background = luminance(visibleBackground(node));
+                const contrast = (Math.max(foreground, background) + 0.05) /
+                  (Math.min(foreground, background) + 0.05);
+                return {
+                  selector,
+                  text: node.textContent.trim(),
+                  fontSize: parseFloat(style.fontSize),
+                  contrast,
+                  clippedX: node.scrollWidth > node.clientWidth + 1,
+                  clippedY: node.scrollHeight > node.clientHeight + 1,
+                };
+              });
+            }"""
+        )
+
+        for item in metrics:
+            with self.subTest(selector=item["selector"], text=item["text"]):
+                self.assertGreaterEqual(item["fontSize"], 14, item)
+                self.assertGreaterEqual(item["contrast"], 4.5, item)
+                self.assertFalse(item["clippedX"], item)
+                self.assertFalse(item["clippedY"], item)
+
+    def test_control_deck_navigation_stays_compact_on_a_phone_width(self):
+        self.page.set_viewport_size({"width": 390, "height": 844})
+
+        layout = self.page.evaluate(
+            """() => {
+              const rect = selector => {
+                const box = document.querySelector(selector).getBoundingClientRect();
+                return {width: box.width, height: box.height, top: box.top, bottom: box.bottom};
+              };
+              return {
+                body: rect('body'), app: rect('.app'), rail: rect('.rail'), shell: rect('.shell'),
+                topbar: rect('.topbar'), statusStrip: rect('.status-strip'),
+                client: document.documentElement.clientWidth,
+                scroll: document.documentElement.scrollWidth,
+                railStyle: {
+                  width: getComputedStyle(document.querySelector('.rail')).width,
+                  maxWidth: getComputedStyle(document.querySelector('.rail')).maxWidth,
+                  transform: getComputedStyle(document.querySelector('.rail')).transform,
+                },
+              };
+            }"""
+        )
+
+        self.assertLessEqual(layout["rail"]["height"], 56, layout)
+        self.assertEqual(layout["rail"]["width"], layout["client"], layout)
+        self.assertLessEqual(layout["shell"]["top"], 56, layout)
+        self.assertEqual(layout["scroll"], layout["client"], layout)
+        self.assertGreaterEqual(layout["topbar"]["bottom"], layout["statusStrip"]["bottom"], layout)
 
     def test_rescan_replaces_port_sources_scope_and_authorization(self):
         self.page.locator('[data-preset-apply="builtin-quick"]').click()

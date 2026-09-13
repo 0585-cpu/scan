@@ -682,7 +682,7 @@ class ApiTests(unittest.TestCase):
             self.assertIn("text/html", root.headers["content-type"])
             self.assertIn("Netroach 콘솔", root.text)
             self.assertIn("/v1/scans", root.text)
-            self.assertIn("data-view-target=\"overview\"", root.text)
+            self.assertIn("data-view-target=\"scans\"", root.text)
             self.assertIn("패킷 전송", root.text)
             self.assertIn("진단", root.text)
             self.assertIn("대상을 그대로 승인 범위로 사용", root.text)

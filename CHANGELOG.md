@@ -2,6 +2,19 @@
 
 All notable Netroach changes are tracked here.
 
+## 0.2.5 - 2026-09-13
+
+- Applied the scoped ControlDeck 2001 dashboard theme: Windows 2000-style title bars, raised controls, sunken inputs, charcoal readouts, grid tables, visible focus, forced-colors support, and compact mobile navigation without changing existing IDs or authorization states.
+- Reduced the sidebar to the port-scan entry, made port scanning the initial view, and reflow the workspace when the rail expands instead of covering the form.
+- Raised compact scan-button labels to at least 14px, improved disabled-label contrast, allowed long labels to wrap, and removed the nested raised-button styling that obscured preset names.
+- Made job IDs, status labels, targets, and host-summary values easier to read with 15-16px semibold text while keeping the selected-row and status-dot cues.
+- Replaced the three always-visible scan-mode explanations with accessible `(?)` help buttons that reveal the same text on mouse hover, keyboard focus, or touch focus without changing checkbox state.
+- Fixed the SYN-capable Chromium regression fixture so the default SYN and optional TCP Connect modes are exercised in the real browser suite.
+- Store the final same-host redirect URL with a web screenshot, so evidence records the page that was actually photographed.
+- Stop exact console-window searches from falling back to a similarly titled window.
+- Allow a SYN-enabled installer to use the Npcap SDK without embedding an Npcap installer; the user-direct official Npcap path is now the default packaging policy.
+- Includes the post-0.2.4 scan load distribution, parallel route resolution, rate-limited SYN resets, compact resume spans, and per-host evidence allocation work.
+
 ## 0.2.4 - 2026-09-11
 
 - Fixed a SYN-capable build defaulting to Connect scanning. The scan form read "health has not answered yet" as "this engine cannot SYN", ticked Connect-only on load, and never untied it, so every scan started from the dashboard was a Connect scan unless the operator noticed.

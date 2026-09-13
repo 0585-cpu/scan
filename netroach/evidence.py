@@ -417,7 +417,7 @@ def capture_web_screenshots(
                         page.set_default_timeout(left_ms() or 1)
                         image = _screenshot_with_one_retry(page, left_ms)
                         filename_host = re.sub(r"[^A-Za-z0-9_.-]+", "_", host)
-                        store(result, image, f"{filename_host}_{result['port']}.png", url, capture_agent)
+                        store(result, image, f"{filename_host}_{result['port']}.png", page.url, capture_agent)
                         captured += 1
                     except Exception as exc:  # noqa: BLE001 - one failed web service must not stop other captures.
                         errors.append(f"{url}: {str(exc)[:240]}")
