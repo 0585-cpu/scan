@@ -680,7 +680,14 @@ def capture_terminal_transcripts(
                 # socket open, which is the proof. UDP has no handshake to
                 # hold, so every UDP port spent a console window and its whole
                 # timeout on a connection that could never open.
-                image = capture_console_session(host, int(result.get("port") or 0))
+                # The identified service decides which client sits beside the
+                # console, so SSH found on a port other than 22 still gets an
+                # SSH pane rather than a telnet one that would never connect.
+                image = capture_console_session(
+                    host,
+                    int(result.get("port") or 0),
+                    service=str(result.get("service_name") or "") or None,
+                )
                 if image is not None:
                     capture_agent = "windows console capture"
             if image is None:

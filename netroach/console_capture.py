@@ -15,6 +15,7 @@ from __future__ import annotations
 import ctypes
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,24 @@ CAPTURE_POLL_INTERVAL_S = 0.2
 CAPTURE_SETTLE_S = 0.35
 # The client either paints quickly or is not installed at all.
 TELNET_READY_TIMEOUT_S = 6.0
+# How long to keep waiting for the SSH window to stop changing, and how often
+# to look. The prompt is several round trips away rather than a local redraw,
+# so the picture is taken when the client stops writing rather than after a
+# fixed wait that a slow target would outlast.
+SSH_PROMPT_TIMEOUT_S = 12.0
+SSH_PROMPT_POLL_S = 0.4
+# How long the window stays empty after it is titled, so the capture always
+# has a picture of "nothing yet" to compare against.
+SSH_TITLE_SETTLE_MS = 700
+# A line of console text changes thousands of pixels; the blinking cursor
+# changes a couple of hundred. The thresholds sit between the two, so "the
+# client wrote something" and "it has stopped writing" both survive the blink.
+SSH_PROMPT_WRITTEN_PIXELS = 1_500
+SSH_PROMPT_STILL_PIXELS = 400
+# Hosts reach the SSH pane inside a command string, so only what an address
+# can contain is allowed through: anything else would be command text rather
+# than a target.
+_SAFE_HOST = re.compile(r"[A-Za-z0-9._:-]{1,253}")
 # The client pane beside the console, as a share of the console's width.
 TELNET_PANE_WIDTH_RATIO = 0.36
 # Wide enough for a netstat line and the command above it, and no wider.
@@ -325,9 +344,228 @@ def compose_side_by_side(panes: list[bytes]) -> bytes | None:
     return output.getvalue()
 
 
+def _terminate_tree(process: subprocess.Popen) -> None:
+    """End the console and whatever it started.
+
+    `terminate` reaches the interpreter that owns the window and not the client
+    it launched, so an SSH session sitting on a password prompt would outlive
+    the capture - holding a connection open on the target, which is the one
+    thing a capture must not leave behind.
+    """
+    try:
+        subprocess.run(  # noqa: S603 - fixed executable, our own child's id.
+            ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - taskkill is always present.
+        pass
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:  # pragma: no cover - the tree ignored the kill.
+        process.kill()
+
+
 def telnet_executable() -> str | None:
     """Windows ships the telnet client switched off, so it is often absent."""
     return shutil.which("telnet")
+
+
+def ssh_executable() -> str | None:
+    """The OpenSSH client Windows ships, preferred over any other on PATH.
+
+    Windows has carried this since 1809, so a capture needs nothing installed.
+    It is taken by its own path first because a developer machine often has a
+    second `ssh` earlier on PATH - Git's, for one - and the options below are
+    written against this client's behaviour.
+    """
+    shipped = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe"
+    if shipped.is_file():
+        return str(shipped)
+    return shutil.which("ssh")
+
+
+# What the capture logs in as. A fixed name rather than the operator's, which
+# would otherwise be printed into every report; the server answers the same way
+# either way, because SSH does not say whether a user exists.
+SSH_CAPTURE_USER = "netroach-audit"
+SSH_READY_TIMEOUT_S = 12.0
+# Long enough for the prompt to be photographed, short enough that a server
+# which refuses outright still leaves its refusal on screen.
+SSH_HOLD_S = 30
+
+
+def build_ssh_capture_script(
+    host: str, port: int, *, title: str, known_hosts: Path, timeout_s: int = 8
+) -> str:
+    """A PowerShell session that opens SSH and stops at its login prompt.
+
+    PowerShell rather than a batch file for the hold at the end. `timeout` ends
+    immediately when the standard input it inherits is not a console, which a
+    capture launched from a service or a piped process always has - the window
+    was measured closing 2.7 seconds in, before the prompt it exists to
+    photograph had arrived. `Start-Sleep` does not care, and the window title
+    is set the same way the console pane sets its own.
+
+    Every option here is about not authenticating. The capture is meant to
+    reach the prompt and stop, so the operator's own credentials must not be
+    able to carry it past one: an agent or a key in the default location would
+    otherwise let the session succeed, and a capture that logged in is not
+    evidence of an open port - it is an unauthorised login.
+
+    `accept-new` against a throwaway known-hosts file is what lets this run
+    unattended. It records nothing in the operator's own file, and it is the
+    deliberate trade for the prompt: the host key is taken as given for one
+    session, so the picture proves a service answered, not that it is the host
+    it claims to be.
+    """
+    executable = ssh_executable()
+    if executable is None:  # pragma: no cover - guarded by the caller.
+        raise RuntimeError("no OpenSSH client")
+    options = [
+        "-p", str(int(port)),
+        "-o", "StrictHostKeyChecking=accept-new",
+        # Written to a file that goes away with the capture, so a scan never
+        # edits the operator's known hosts.
+        "-o", f"UserKnownHostsFile={known_hosts}",
+        "-o", "GlobalKnownHostsFile=NUL",
+        # The three ways this could authenticate without anyone typing.
+        "-o", "PubkeyAuthentication=no",
+        "-o", "GSSAPIAuthentication=no",
+        "-o", "IdentityAgent=none",
+        "-o", "PreferredAuthentications=keyboard-interactive,password",
+        "-o", "NumberOfPasswordPrompts=1",
+        "-o", f"ConnectTimeout={int(timeout_s)}",
+        f"{SSH_CAPTURE_USER}@{host}",
+    ]
+    arguments = ", ".join("'" + part.replace("'", "''") + "'" for part in options)
+    safe_title = title.replace("'", "''")
+    safe_executable = executable.replace("'", "''")
+    return (
+        f"$Host.UI.RawUI.WindowTitle = '{safe_title}'; "
+        # Titled, then held empty for a moment before the client runs. The
+        # capture decides the prompt has arrived by comparing against the
+        # window as it first found it, and against a target on the same machine
+        # the client can print its prompt inside the time it takes to notice
+        # the window at all - which made the first picture the reference for
+        # "nothing has happened yet" and every later one look unchanged.
+        f"Start-Sleep -Milliseconds {SSH_TITLE_SETTLE_MS}; "
+        f"& '{safe_executable}' @({arguments}); "
+        "Write-Host ''; "
+        "Write-Host '[stopped before sending a username, password, or key]'; "
+        f"Start-Sleep -Seconds {SSH_HOLD_S}"
+    )
+
+
+def _capture_when_settled(hwnd: int, *, deadline: float) -> bytes | None:
+    """Photograph the window once it stops changing, or when time runs out.
+
+    A fixed wait cannot serve both ends of this. The prompt is several round
+    trips away - banner, key exchange, then the authentication methods - so on
+    a slow target a short wait photographs a handshake in progress, and a wait
+    long enough for that target makes every fast one pay for it.
+
+    Settled means two things, not one: the picture stopped changing, and it is
+    no longer the empty window this started from. Without the second, a target
+    that takes four seconds to begin its handshake reads as settled
+    immediately - measured returning a title bar and a cursor - because a
+    window with nothing in it does not change either.
+
+    Both comparisons count changed pixels rather than testing the bytes,
+    because the console draws a blinking cursor. Byte equality made an empty
+    window look settled whenever the blink happened to land the same way
+    twice: a target eight seconds from its banner was photographed at under
+    four, showing a title bar and nothing else.
+    """
+    empty = _capture_window_png(hwnd)
+    previous: bytes | None = None
+    while time.monotonic() < deadline:
+        time.sleep(SSH_PROMPT_POLL_S)
+        current = _capture_window_png(hwnd)
+        if current is None:
+            # The window went before it settled; whatever was last read is all
+            # there is, and it is better than nothing.
+            break
+        written = _changed_pixels(current, empty) > SSH_PROMPT_WRITTEN_PIXELS
+        if written and _changed_pixels(current, previous) <= SSH_PROMPT_STILL_PIXELS:
+            return current
+        previous = current
+    # Out of time, or the window closed. Return what was last seen rather than
+    # nothing: a client that refused outright has already written its reason.
+    if previous is None or _changed_pixels(previous, empty) <= SSH_PROMPT_WRITTEN_PIXELS:
+        return None
+    return previous
+
+
+def _changed_pixels(current: bytes | None, other: bytes | None) -> int:
+    """How many pixels differ between two captures of the same window."""
+    if current is None or other is None:
+        return 1 << 30
+    try:
+        from PIL import Image, ImageChops
+    except ImportError:  # pragma: no cover - Pillow is a hard dependency here.
+        return 1 << 30
+    with Image.open(io.BytesIO(current)) as left, Image.open(io.BytesIO(other)) as right:
+        if left.size != right.size:
+            return 1 << 30
+        difference = ImageChops.difference(left.convert("RGB"), right.convert("RGB")).convert("L")
+    histogram = difference.histogram()
+    return sum(histogram[CONTENT_COLOUR_TOLERANCE + 1 :])
+
+
+def _capture_ssh_window(
+    user32: ctypes.CDLL, host: str, port: int, *, size: tuple[int, int] | None = None
+) -> bytes | None:
+    """Open the OpenSSH client on the port and photograph its login prompt.
+
+    Unlike the telnet client, this one is given a console title of our own, so
+    the window is found by a name no other capture shares - the port is in it,
+    and so is a token unique to this run.
+    """
+    if ssh_executable() is None:
+        return None
+    if not _SAFE_HOST.fullmatch(host):
+        return None
+    token = f"Netroach SSH {host}:{port} {uuid.uuid4().hex[:8]}"
+    with tempfile.TemporaryDirectory(prefix="netroach-ssh-") as tmp:
+        script = build_ssh_capture_script(
+            host, port, title=token, known_hosts=Path(tmp) / "known_hosts"
+        )
+        try:
+            # No stdin/stdout/stderr arguments, for the reason the console pane
+            # gives: naming any of them hands the child the parent's handles
+            # and it writes to those instead of the console it was given.
+            process = subprocess.Popen(  # noqa: S603 - fixed executable, target validated above.
+                ["powershell", "-NoProfile", "-Command", script],
+                creationflags=CREATE_NEW_CONSOLE,
+            )
+        except OSError:
+            return None
+        try:
+            hwnd = None
+            deadline = time.monotonic() + SSH_READY_TIMEOUT_S
+            while time.monotonic() < deadline:
+                hwnd = _find_window_by_title(user32, token, exact=token)
+                if hwnd is not None:
+                    width, height = size or (0, 0)
+                    user32.SetWindowPos(
+                        hwnd,
+                        0,
+                        *OFFSCREEN_POSITION,
+                        width,
+                        height,
+                        (SWP_NOSIZE if not size else 0) | SWP_NOZORDER | SWP_NOACTIVATE,
+                    )
+                    break
+                if process.poll() is not None:
+                    return None
+                time.sleep(CAPTURE_POLL_INTERVAL_S)
+            if hwnd is None:
+                return None
+            return _capture_when_settled(hwnd, deadline=time.monotonic() + SSH_PROMPT_TIMEOUT_S)
+        finally:
+            _terminate_tree(process)
 
 
 def _remaining_width(console_pane: bytes) -> int:
@@ -442,9 +680,47 @@ def _capture_telnet_window(
             process.kill()
 
 
+# Services whose conversation is lines of text a person can read, so a telnet
+# client sitting on the port photographs the real exchange - the greeting, the
+# capabilities, the login prompt. This is how an administrator checks them by
+# hand, and the picture is the same one.
+_LINE_PROTOCOL_SERVICES = frozenset({
+    "telnet", "pop3", "imap", "smtp", "submission", "ftp",
+    "nntp", "irc", "redis", "memcached",
+})
+# Ports to fall back on when nothing was identified, so the common cases still
+# get the right client without a service name to go by.
+_CLIENT_PANE_PORTS = {22: "ssh", 23: "telnet"}
+
+
+def client_pane_kind(port: int, service: str | None) -> str | None:
+    """Which client, if any, belongs beside the console for this port.
+
+    The console pane proves the port answered; the client pane shows what the
+    service says to someone arriving on it. Which client that is follows the
+    service rather than the port number, so SSH moved off 22 still gets an SSH
+    pane, and the port is only the fallback when nothing was identified.
+
+    A service that speaks in lines gets the telnet client, because the picture
+    it makes is the exchange itself. One that does not gets no client pane at
+    all: pointing telnet at TLS or at a binary protocol photographs the bytes
+    as mojibake, which looks like evidence and reads as nothing. Those keep the
+    console pane, which for a TLS service already carries the handshake, its
+    protocol version and its cipher - and a web port has its browser shot.
+    """
+    named = (service or "").strip().lower()
+    if not named:
+        # Nothing identified: try telnet, which is what this did for every
+        # service before any of them were told apart.
+        return _CLIENT_PANE_PORTS.get(port, "telnet")
+    if named == "ssh":
+        return "ssh"
+    return "telnet" if named in _LINE_PROTOCOL_SERVICES else None
+
+
 def capture_console_session(
     host: str, port: int, *, hold_s: float = 20.0, with_telnet: bool = True,
-    require_connection: bool = True,
+    require_connection: bool = True, service: str | None = None,
 ) -> bytes | None:
     """Run the session in a real console and return a PNG of that window.
 
@@ -524,15 +800,20 @@ def capture_console_session(
                 console_pane = crop_to_content(console_pane)
             if console_pane is None or not with_telnet:
                 return console_pane
-            telnet_pane = _capture_telnet_window(
-                user32, host, port, size=_telnet_pane_size(console_pane)
-            )
-            if telnet_pane is not None:
-                telnet_pane = crop_to_content(telnet_pane)
-                telnet_pane = _fit_pane_width(
-                    telnet_pane, _remaining_width(console_pane)
+            kind = client_pane_kind(port, service)
+            pane_size = _telnet_pane_size(console_pane)
+            if kind == "ssh":
+                client_pane = _capture_ssh_window(user32, host, port, size=pane_size)
+            elif kind == "telnet":
+                client_pane = _capture_telnet_window(user32, host, port, size=pane_size)
+            else:
+                client_pane = None
+            if client_pane is not None:
+                client_pane = crop_to_content(client_pane)
+                client_pane = _fit_pane_width(
+                    client_pane, _remaining_width(console_pane)
                 )
-            return compose_side_by_side([console_pane, telnet_pane or b""])
+            return compose_side_by_side([console_pane, client_pane or b""])
         finally:
             process.terminate()
             try:

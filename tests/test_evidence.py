@@ -531,6 +531,99 @@ def _slow_for_8080(host, port, **_kwargs):
     return b"png-bytes"
 
 
+class SshCaptureTests(unittest.TestCase):
+    """The SSH pane must reach a login prompt and never get past one."""
+
+    known_hosts = Path("C:/tmp/known_hosts")
+
+    def _script(self, host="10.0.0.5", port=22):
+        from netroach.console_capture import build_ssh_capture_script
+
+        return build_ssh_capture_script(
+            host, port, title="Netroach SSH token", known_hosts=self.known_hosts
+        )
+
+    def test_the_capture_cannot_authenticate_with_the_operators_credentials(self):
+        """The whole design is "stop at the prompt".
+
+        An agent with a loaded key, or a key in the default location, would
+        otherwise carry the session straight past the prompt - and a capture
+        that logged in is not evidence that a port is open, it is an
+        unauthorised login performed by the scanner.
+        """
+        script = self._script()
+
+        for option in (
+            "PubkeyAuthentication=no",
+            "GSSAPIAuthentication=no",
+            "IdentityAgent=none",
+            "PreferredAuthentications=keyboard-interactive,password",
+        ):
+            self.assertIn(option, script, option)
+
+    def test_the_capture_does_not_touch_the_operators_known_hosts(self):
+        """`accept-new` against the real file would record every target the
+        scan ever pointed at into the operator's own trust store."""
+        script = self._script()
+
+        self.assertIn("StrictHostKeyChecking=accept-new", script)
+        self.assertIn(f"UserKnownHostsFile={self.known_hosts}", script)
+        self.assertIn("GlobalKnownHostsFile=NUL", script)
+
+    def test_the_session_holds_the_window_open_without_timeout(self):
+        """`timeout` ends at once when the standard input it inherits is not a
+        console, which measured the window closing 2.7s in - before the prompt
+        it exists to photograph arrived."""
+        script = self._script()
+
+        self.assertIn("Start-Sleep -Seconds", script)
+        self.assertNotIn("timeout /t", script)
+
+    def test_the_login_name_is_ours_rather_than_the_operators(self):
+        from netroach.console_capture import SSH_CAPTURE_USER
+
+        self.assertIn(f"{SSH_CAPTURE_USER}@10.0.0.5", self._script())
+
+    def test_the_client_beside_the_console_follows_the_service(self):
+        from netroach.console_capture import client_pane_kind
+
+        # Named service wins, so SSH moved off 22 still gets an SSH pane.
+        self.assertEqual(client_pane_kind(2222, "ssh"), "ssh")
+        self.assertEqual(client_pane_kind(22, None), "ssh")
+        self.assertEqual(client_pane_kind(23, "telnet"), "telnet")
+
+    def test_a_service_that_speaks_in_lines_keeps_its_telnet_client(self):
+        """The telnet client is how these are checked by hand, and the picture
+        it makes is the exchange itself - the greeting, the capabilities, the
+        login prompt. Every service had one before any of them were told
+        apart, so losing it for the ones that were is a step backwards."""
+        from netroach.console_capture import client_pane_kind
+
+        for port, service in ((110, "pop3"), (143, "imap"), (25, "smtp"),
+                              (21, "ftp"), (4039, "pop3"), (6379, "redis")):
+            with self.subTest(service=service, port=port):
+                self.assertEqual(client_pane_kind(port, service), "telnet")
+
+    def test_nothing_is_pointed_at_a_protocol_it_cannot_read(self):
+        """Telnet on a TLS or binary port photographs mojibake, which looks
+        like evidence and says nothing. Those keep the console pane, which for
+        a TLS service already carries the handshake, its protocol version and
+        its cipher; a web port has its browser shot."""
+        from netroach.console_capture import client_pane_kind
+
+        for port, service in ((443, "https"), (993, "imaps"), (465, "smtps"),
+                              (445, "smb"), (135, "msrpc"), (3389, "rdp"),
+                              (3306, "mysql"), (80, "http")):
+            with self.subTest(service=service, port=port):
+                self.assertIsNone(client_pane_kind(port, service))
+
+    def test_an_unidentified_port_is_still_tried_with_telnet(self):
+        from netroach.console_capture import client_pane_kind
+
+        self.assertEqual(client_pane_kind(4039, None), "telnet")
+        self.assertEqual(client_pane_kind(23, None), "telnet")
+
+
 class ConsoleCaptureTests(unittest.TestCase):
     """A photograph of a console, with a drawing behind it when there is none."""
 
