@@ -395,11 +395,14 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
                     service_probe,
                     udp_retries,
                     &plugin_catalog,
+                    &rate_limiter,
                 )
                 .await;
                 if governor.should_sample(&event) {
                     // The retry is a fresh measurement of the same port, so it
-                    // is also the better answer to report.
+                    // is also the better answer to report - and a second probe
+                    // on the wire, which needs a slot of its own.
+                    rate_limiter.wait().await;
                     event = scan_one(
                         target,
                         port,
@@ -409,6 +412,7 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
                         service_probe,
                         udp_retries,
                         &plugin_catalog,
+                        &rate_limiter,
                     )
                     .await;
                     governor.record_sample(&event);
@@ -828,6 +832,24 @@ const PROBE_PER_HOST_RATE_PER_SEC: u64 = 100;
 /// pointing the whole configured rate at it.
 const PROBE_RATE_FLOOR_PER_SEC: u64 = 1_000;
 
+/// Room for the replies services actually send. 2048 cut off a memcached
+/// reply at 4000 bytes and, because Windows fails an oversized receive rather
+/// than truncating it, the port was reported as an error instead of open. A
+/// datagram may still be longer than this; that case is read now as the
+/// service answering at length.
+const UDP_RECEIVE_BYTES: usize = 9_000;
+
+/// WSAEMSGSIZE. Windows does not truncate a datagram that overruns the receive
+/// buffer, it fails the receive; POSIX truncates and reports success.
+const _: () = assert!(
+    UDP_RECEIVE_BYTES >= 4_000,
+    "the reply that was being reported as an error was 4000 bytes"
+);
+
+fn is_datagram_too_large(err: &std::io::Error) -> bool {
+    cfg!(windows) && err.raw_os_error() == Some(10_040)
+}
+
 /// The rate a socket scan of this many hosts may use.
 ///
 /// The same shape as the sweep's rule: the budget only raises the ceiling, so a
@@ -924,6 +946,7 @@ async fn scan_one(
     service_probe: bool,
     udp_retries: u8,
     plugin_catalog: &RuntimePluginCatalog,
+    rate_limiter: &RateLimiter,
 ) -> PortEvent {
     match protocol {
         Protocol::Tcp => {
@@ -946,6 +969,7 @@ async fn scan_one(
                 service_probe,
                 udp_retries,
                 plugin_catalog,
+                rate_limiter,
             )
             .await
         }
@@ -1070,6 +1094,7 @@ async fn scan_udp_one(
     service_probe: bool,
     retries: u8,
     plugin_catalog: &RuntimePluginCatalog,
+    rate_limiter: &RateLimiter,
 ) -> PortEvent {
     let host = target.to_string();
     let start = Instant::now();
@@ -1113,51 +1138,61 @@ async fn scan_udp_one(
     } else {
         vec![0]
     };
-    let mut buf = [0_u8; 2048];
+    let mut buf = [0_u8; UDP_RECEIVE_BYTES];
+    let mut replies_seen: u32 = 0;
     for attempt in 0..=retries {
+        // The slot the caller took covers the first datagram only. A retry is
+        // another datagram on the wire, and counting ports rather than packets
+        // put 21 a second on a link capped at 10, measured.
+        if attempt > 0 {
+            rate_limiter.wait().await;
+        }
         if let Err(err) = socket.send(&payload).await {
             return udp_error_or_closed_event(scan_id, host, port, start, err);
         }
+        let attempted = u16::from(attempt) + 1;
         match timeout(timeout_duration, socket.recv(&mut buf)).await {
-            Ok(Ok(size)) if udp_reply_answers(port, &payload, &buf[..size], service_probe) => {
-                let fingerprint = if service_probe {
-                    classify_udp_response_with_catalog(port, &buf[..size], plugin_catalog)
-                } else {
-                    ServiceFingerprint::default()
-                };
-                return PortEvent {
-                    event: "port",
-                    scan_id: scan_id.to_string(),
+            Ok(Ok(size)) => {
+                replies_seen += 1;
+                if udp_reply_answers(port, &payload, &buf[..size], service_probe) {
+                    let fingerprint = if service_probe {
+                        classify_udp_response_with_catalog(port, &buf[..size], plugin_catalog)
+                    } else {
+                        ServiceFingerprint::default()
+                    };
+                    let wording = udp_answer_wording(port, &payload, &buf[..size], service_probe);
+                    return udp_open_event(
+                        scan_id,
+                        host,
+                        port,
+                        start,
+                        fingerprint,
+                        format!(
+                            "udp response received ({size} bytes, attempt {attempted}; {wording})"
+                        ),
+                    );
+                }
+            }
+            Ok(Err(err)) if is_datagram_too_large(&err) => {
+                // A datagram arrived from the peer this socket is connected
+                // to, which is the service answering. It is only too long to
+                // read, and reporting that as an error hid an open port.
+                return udp_open_event(
+                    scan_id,
                     host,
                     port,
-                    protocol: "udp",
-                    state: "open".to_string(),
-                    latency_ms: Some(round2(start.elapsed().as_secs_f64() * 1000.0)),
-                    service_name: fingerprint.name,
-                    service_confidence: fingerprint.confidence,
-                    banner: fingerprint.banner,
-                    // What the record claims has to be what was done. With no
-                    // service probe out there nothing was correlated - the
-                    // reply is evidence that the port answered, and no more.
-                    evidence: Some(if service_probe {
-                        format!(
-                            "correlated udp response received ({size} bytes, attempt {})",
-                            attempt + 1
-                        )
-                    } else {
-                        format!(
-                            "udp response received ({size} bytes, attempt {}; neutral probe, service detection off)",
-                            attempt + 1
-                        )
-                    }),
-                    error: None,
-                };
+                    start,
+                    ServiceFingerprint::default(),
+                    format!(
+                        "udp response received on attempt {attempted}, longer than the {UDP_RECEIVE_BYTES} byte receive buffer and not read"
+                    ),
+                );
             }
-            Ok(Ok(_)) | Err(_) if attempt < retries => {
-                tokio::time::sleep(Duration::from_millis(50_u64 << attempt)).await;
-            }
-            Ok(Ok(_)) | Err(_) => break,
             Ok(Err(err)) => return udp_error_or_closed_event(scan_id, host, port, start, err),
+            Err(_) => {}
+        }
+        if attempt < retries {
+            tokio::time::sleep(Duration::from_millis(50_u64 << attempt)).await;
         }
     }
     PortEvent {
@@ -1171,7 +1206,35 @@ async fn scan_udp_one(
         service_name: None,
         service_confidence: None,
         banner: None,
-        evidence: Some(udp_no_response_evidence(retries, service_probe)),
+        evidence: Some(udp_no_answer_evidence(
+            u16::from(retries) + 1,
+            replies_seen,
+            service_probe,
+        )),
+        error: None,
+    }
+}
+
+fn udp_open_event(
+    scan_id: &str,
+    host: String,
+    port: u16,
+    start: Instant,
+    fingerprint: ServiceFingerprint,
+    evidence: String,
+) -> PortEvent {
+    PortEvent {
+        event: "port",
+        scan_id: scan_id.to_string(),
+        host,
+        port,
+        protocol: "udp",
+        state: "open".to_string(),
+        latency_ms: Some(round2(start.elapsed().as_secs_f64() * 1000.0)),
+        service_name: fingerprint.name,
+        service_confidence: fingerprint.confidence,
+        banner: fingerprint.banner,
+        evidence: Some(evidence),
         error: None,
     }
 }
@@ -1180,16 +1243,23 @@ async fn scan_udp_one(
 ///
 /// The line is quoted into the assessment report, so it names the method that
 /// was actually used: a neutral probe correlates nothing.
-fn udp_no_response_evidence(retries: u8, service_probe: bool) -> String {
-    format!(
-        "no UDP response after {} attempt(s) (open|filtered; {})",
-        retries + 1,
-        if service_probe {
-            "correlated response required"
-        } else {
-            "neutral probe, service detection off"
-        }
-    )
+/// A reply that failed to correlate was dropped and the record then said no
+/// response had come - measured against an agent that answered all three
+/// attempts with a mismatched request id. "Something is there but would not
+/// answer us" and "nothing is there" are different findings, so they read
+/// differently now.
+fn udp_no_answer_evidence(attempts: u16, replies_seen: u32, service_probe: bool) -> String {
+    if replies_seen > 0 {
+        return format!(
+            "{attempts} attempt(s), {replies_seen} reply(ies) received, none answering the probe (open|filtered)"
+        );
+    }
+    let mode = if service_probe {
+        ""
+    } else {
+        "; neutral probe, service detection off"
+    };
+    format!("no UDP response after {attempts} attempt(s) (open|filtered{mode})")
 }
 
 fn udp_error_or_closed_event(
@@ -2408,32 +2478,64 @@ fn udp_probe_payload(port: u16) -> Vec<u8> {
 /// answer: the socket is connected, and only that peer reaches it.
 fn udp_reply_answers(port: u16, request: &[u8], response: &[u8], service_probe: bool) -> bool {
     if service_probe {
-        udp_response_matches(port, request, response)
+        // No rule to judge by is not a failure to match: the socket is
+        // connected, so the datagram came from the service being probed.
+        udp_response_matches(port, request, response).unwrap_or(true)
     } else {
         !response.is_empty()
     }
 }
 
-fn udp_response_matches(port: u16, request: &[u8], response: &[u8]) -> bool {
+/// What the record may claim a reply proved.
+///
+/// Ten of the probed ports carry something to correlate against and the rest
+/// carry nothing, and the record called every reply correlated because the
+/// tick was on - measured, a memcached reply the `_` arm had waved through was
+/// filed as "correlated udp response received". The wording follows what was
+/// actually done with the bytes.
+fn udp_answer_wording(
+    port: u16,
+    request: &[u8],
+    response: &[u8],
+    service_probe: bool,
+) -> &'static str {
+    if !service_probe {
+        return "neutral probe, service detection off";
+    }
+    match udp_response_matches(port, request, response) {
+        Some(_) => "correlated with the probe",
+        None => "from the probed port; no correlation rule for this port",
+    }
+}
+
+/// Whether the reply answers what was sent, or `None` where the port has no
+/// rule to decide it by.
+fn udp_response_matches(port: u16, request: &[u8], response: &[u8]) -> Option<bool> {
     if response.is_empty() {
-        return false;
+        return Some(false);
     }
     match port {
         53 | 137 | 5353 => {
-            request.len() >= 2 && response.len() >= 2 && response[..2] == request[..2]
+            Some(request.len() >= 2 && response.len() >= 2 && response[..2] == request[..2])
         }
-        123 => request.len() >= 48 && response.len() >= 48 && response[24..32] == request[40..48],
-        161 | 162 => snmp_request_id(request)
-            .zip(snmp_request_id(response))
-            .is_some_and(|(request_id, response_id)| request_id == response_id),
+        123 => {
+            Some(request.len() >= 48 && response.len() >= 48 && response[24..32] == request[40..48])
+        }
+        161 | 162 => Some(
+            snmp_request_id(request)
+                .zip(snmp_request_id(response))
+                .is_some_and(|(request_id, response_id)| request_id == response_id),
+        ),
         // Every ONC RPC reply echoes the xid of the call it answers.
-        111 => request.len() >= 4 && response.len() >= 4 && response[..4] == request[..4],
-        500 => request.len() >= 8 && response.len() >= 8 && response[..8] == request[..8],
-        5683 => request.len() >= 4 && response.len() >= 4 && response[2..4] == request[2..4],
-        5060 => String::from_utf8_lossy(response)
-            .to_ascii_lowercase()
-            .contains("call-id: netroach"),
-        _ => true,
+        111 => Some(request.len() >= 4 && response.len() >= 4 && response[..4] == request[..4]),
+        500 => Some(request.len() >= 8 && response.len() >= 8 && response[..8] == request[..8]),
+        5683 => Some(request.len() >= 4 && response.len() >= 4 && response[2..4] == request[2..4]),
+        5060 => Some(
+            String::from_utf8_lossy(response)
+                .to_ascii_lowercase()
+                .contains("call-id: netroach"),
+        ),
+        _ => None,
     }
 }
 
@@ -3904,7 +4006,7 @@ mod tests {
         }
         reply.extend_from_slice(&0_u32.to_be_bytes());
 
-        assert!(udp_response_matches(111, &call, &reply));
+        assert_eq!(udp_response_matches(111, &call, &reply), Some(true));
         let fingerprint = classify_rpcbind_response(&reply).expect("an rpc reply");
         assert_eq!(fingerprint.name.as_deref(), Some("rpcbind"));
         assert_eq!(
@@ -3917,7 +4019,18 @@ mod tests {
         assert!(classify_rpcbind_response(b"not rpc at all").is_none());
         let mut other = reply.clone();
         other[..4].copy_from_slice(b"xxxx");
-        assert!(!udp_response_matches(111, &call, &other));
+        assert_eq!(udp_response_matches(111, &call, &other), Some(false));
+    }
+
+    #[test]
+    fn a_reply_too_long_to_read_is_still_a_service_answering() {
+        // Windows fails an oversized receive rather than truncating it, and
+        // the failure was filed as a socket error: measured, a 4000 byte
+        // memcached reply reported the port as error rather than open.
+        let oversized = std::io::Error::from_raw_os_error(10_040);
+        assert_eq!(is_datagram_too_large(&oversized), cfg!(windows));
+        let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        assert!(!is_datagram_too_large(&refused));
     }
 
     #[test]
@@ -3929,7 +4042,7 @@ mod tests {
         let snmp = udp_probe_payload(162);
         let mut reply = snmp.clone();
         reply[13] = 0xa2;
-        assert!(udp_response_matches(162, &snmp, &reply));
+        assert_eq!(udp_response_matches(162, &snmp, &reply), Some(true));
         assert!(udp_probe_payload(69).starts_with(&[0x00, 0x01]));
         assert_eq!(udp_probe_payload(123).len(), 48);
         assert!(udp_probe_payload(137).len() > 40);
@@ -3946,14 +4059,37 @@ mod tests {
 
     #[test]
     fn the_record_does_not_claim_a_correlation_that_was_not_made() {
-        // The evidence line is what the assessment report quotes. With no
-        // probe of ours out there nothing was correlated: the reply says the
-        // port answered, and no more.
-        let quiet = udp_no_response_evidence(1, false);
-        assert!(!quiet.contains("correlated"));
+        // The evidence line is what the assessment report quotes, and three
+        // things it used to say were not so.
+        //
+        // With no probe of ours out there nothing was correlated: the reply
+        // says the port answered, and no more.
+        let quiet = udp_no_answer_evidence(2, 0, false);
+        assert!(!quiet.contains("correlated"), "{quiet}");
         assert!(quiet.contains("service detection off"));
-        let probed = udp_no_response_evidence(1, true);
-        assert!(probed.contains("correlated response required"));
+
+        // A reply that failed to correlate was dropped and the line then said
+        // none had come - measured against an agent that answered all three
+        // attempts with a mismatched request id.
+        let answered = udp_no_answer_evidence(3, 3, true);
+        assert!(!answered.contains("no UDP response"), "{answered}");
+        assert!(answered.contains("3 reply(ies) received"), "{answered}");
+        assert!(udp_no_answer_evidence(3, 0, true).contains("no UDP response"));
+
+        // And a port with no rule to correlate against was called correlated
+        // because the tick was on.
+        let snmp = udp_probe_payload(161);
+        let mut snmp_reply = snmp.clone();
+        snmp_reply[13] = 0xa2;
+        assert_eq!(
+            udp_answer_wording(161, &snmp, &snmp_reply, true),
+            "correlated with the probe"
+        );
+        assert!(
+            udp_answer_wording(11211, b"version", b"VERSION 1.6.9", true)
+                .contains("no correlation rule")
+        );
+        assert!(udp_answer_wording(161, &snmp, &snmp_reply, false).contains("neutral probe"));
     }
 
     #[test]
@@ -3984,26 +4120,28 @@ mod tests {
     #[test]
     fn udp_response_correlation_checks_protocol_identifiers() {
         let dns = udp_probe_payload(53);
-        assert!(udp_response_matches(
-            53,
-            &dns,
-            &[dns[0], dns[1], 0x81, 0x80]
-        ));
-        assert!(!udp_response_matches(53, &dns, b"XX\x81\x80"));
+        assert_eq!(
+            udp_response_matches(53, &dns, &[dns[0], dns[1], 0x81, 0x80]),
+            Some(true)
+        );
+        assert_eq!(udp_response_matches(53, &dns, b"XX\x81\x80"), Some(false));
 
         let ntp = udp_probe_payload(123);
         let mut ntp_response = [0_u8; 48];
         ntp_response[24..32].copy_from_slice(&ntp[40..48]);
-        assert!(udp_response_matches(123, &ntp, &ntp_response));
+        assert_eq!(udp_response_matches(123, &ntp, &ntp_response), Some(true));
         ntp_response[24] ^= 1;
-        assert!(!udp_response_matches(123, &ntp, &ntp_response));
+        assert_eq!(udp_response_matches(123, &ntp, &ntp_response), Some(false));
 
         let snmp = udp_probe_payload(161);
         let mut snmp_response = snmp.clone();
         snmp_response[13] = 0xa2;
-        assert!(udp_response_matches(161, &snmp, &snmp_response));
+        assert_eq!(udp_response_matches(161, &snmp, &snmp_response), Some(true));
         snmp_response[20] = 2;
-        assert!(!udp_response_matches(161, &snmp, &snmp_response));
+        assert_eq!(
+            udp_response_matches(161, &snmp, &snmp_response),
+            Some(false)
+        );
     }
 
     #[test]
