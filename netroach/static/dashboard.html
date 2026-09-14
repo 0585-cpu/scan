@@ -2246,7 +2246,7 @@
       // TCP speed a closed port stops answering and reads as open|filtered
       // too, so this goes out slowly on purpose.
       {id: 'builtin-udp', name: 'UDP 주요 포트', builtin: true, values: {
-        ports: '53,69,123,137,161,162,500,520,1434,1900,3702,5060,5353,5683,11211',
+        ports: '53,69,111,123,137,161,162,500,520,1434,1900,3702,5060,5353,5683,11211',
         protocol: 'udp', udp_service_probe: false, udp_retries: 2, timeout_ms: 3000,
         concurrency: 32, rate_limit_per_sec: 200}}
     ];

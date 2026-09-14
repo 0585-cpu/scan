@@ -1,4 +1,4 @@
-﻿//! Windows/Npcap orchestration for the optional IPv4 SYN sweep.
+//! Windows/Npcap orchestration for the optional IPv4 SYN sweep.
 #![cfg(all(windows, feature = "syn-sweep"))]
 
 use anyhow::{anyhow, Context, Result};
@@ -243,7 +243,9 @@ fn library_loadable(name: &std::ffi::CStr) -> bool {
 /// Where Npcap puts its libraries, which is not a directory the loader searches.
 fn npcap_directory() -> std::path::PathBuf {
     let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
-    std::path::PathBuf::from(root).join("System32").join("Npcap")
+    std::path::PathBuf::from(root)
+        .join("System32")
+        .join("Npcap")
 }
 
 /// Load a library by its full path, letting its own directory satisfy what it

@@ -1505,7 +1505,11 @@ fn classify_passive_bytes(bytes: &[u8], known: Option<&str>) -> Option<ServiceFi
     {
         return Some(ServiceFingerprint {
             name: Some("smtp".to_string()),
-            confidence: if lower.contains("smtp") { Some(0.88) } else { Some(0.78) },
+            confidence: if lower.contains("smtp") {
+                Some(0.88)
+            } else {
+                Some(0.78)
+            },
             banner: Some(normalize_service_banner("smtp", &banner)),
         });
     }
@@ -1895,7 +1899,12 @@ fn product_and_version(greeting: &str) -> Option<(String, String)> {
         if GREETING_STATUS_WORDS.contains(&product.to_ascii_uppercase().as_str())
             || product.len() < 3
             || !product.starts_with(|character: char| character.is_ascii_alphabetic())
-            || product.chars().any(|character| !character.is_ascii_alphanumeric() && character != '-' && character != '_' && character != '.')
+            || product.chars().any(|character| {
+                !character.is_ascii_alphanumeric()
+                    && character != '-'
+                    && character != '_'
+                    && character != '.'
+            })
         {
             continue;
         }
@@ -1919,7 +1928,9 @@ fn looks_like_version(token: &str) -> bool {
     head.contains('.')
         && head.starts_with(|character: char| character.is_ascii_digit())
         && head.split('.').filter(|part| !part.is_empty()).count() >= 2
-        && head.split('.').all(|part| part.chars().all(|c| c.is_ascii_digit()))
+        && head
+            .split('.')
+            .all(|part| part.chars().all(|c| c.is_ascii_digit()))
 }
 
 fn x509_certificate_summary(der: &[u8]) -> Option<String> {
@@ -2244,6 +2255,7 @@ fn known_service(port: u16) -> Option<&'static str> {
         80 => Some("http"),
         88 => Some("kerberos"),
         110 => Some("pop3"),
+        111 => Some("rpcbind"),
         135 => Some("msrpc"),
         139 => Some("netbios-ssn"),
         143 => Some("imap"),
@@ -2298,6 +2310,7 @@ fn known_udp_service(port: u16) -> Option<&'static str> {
         67 | 68 => Some("dhcp"),
         69 => Some("tftp"),
         88 => Some("kerberos"),
+        111 => Some("rpcbind"),
         123 => Some("ntp"),
         137 => Some("netbios-ns"),
         138 => Some("netbios-dgm"),
@@ -2332,6 +2345,7 @@ fn udp_probe_payload(port: u16) -> Vec<u8> {
     match port {
         53 => dns_query_payload("netroach.invalid"),
         69 => b"\x00\x01netroach-test\x00octet\x00".to_vec(),
+        111 => rpcbind_dump_payload(),
         123 => {
             let mut payload = vec![0x1b];
             payload.resize(48, 0);
@@ -2394,6 +2408,8 @@ fn udp_response_matches(port: u16, request: &[u8], response: &[u8]) -> bool {
         161 | 162 => snmp_request_id(request)
             .zip(snmp_request_id(response))
             .is_some_and(|(request_id, response_id)| request_id == response_id),
+        // Every ONC RPC reply echoes the xid of the call it answers.
+        111 => request.len() >= 4 && response.len() >= 4 && response[..4] == request[..4],
         500 => request.len() >= 8 && response.len() >= 8 && response[..8] == request[..8],
         5683 => request.len() >= 4 && response.len() >= 4 && response[2..4] == request[2..4],
         5060 => String::from_utf8_lossy(response)
@@ -2448,6 +2464,23 @@ fn netbios_status_query_payload() -> Vec<u8> {
     payload
 }
 
+/// PMAPPROC_DUMP: the portmapper's own list of what is registered with it.
+/// That list is the finding - it says whether NFS is exported and on which
+/// port, to anyone who asks. It is a read call; nothing is registered or
+/// unregistered by it, and a portmapper that refuses the dump still answers,
+/// which is enough to report the port open.
+fn rpcbind_dump_payload() -> Vec<u8> {
+    let mut payload = b"SPrb".to_vec(); // xid, echoed back by the reply
+    payload.extend_from_slice(&0_u32.to_be_bytes()); // CALL
+    payload.extend_from_slice(&2_u32.to_be_bytes()); // rpc version
+    payload.extend_from_slice(&100_000_u32.to_be_bytes()); // portmapper
+    payload.extend_from_slice(&2_u32.to_be_bytes()); // program version
+    payload.extend_from_slice(&4_u32.to_be_bytes()); // PMAPPROC_DUMP
+    payload.extend_from_slice(&[0; 8]); // credential: AUTH_NULL, no body
+    payload.extend_from_slice(&[0; 8]); // verifier: AUTH_NULL, no body
+    payload
+}
+
 fn isakmp_probe_payload() -> Vec<u8> {
     let mut payload = b"NETROACH".to_vec();
     payload.extend_from_slice(&[0; 8]);
@@ -2498,6 +2531,11 @@ fn classify_udp_response_with_catalog(
     }
     if port == 69 {
         if let Some(fingerprint) = classify_tftp_response(bytes) {
+            return fingerprint;
+        }
+    }
+    if port == 111 {
+        if let Some(fingerprint) = classify_rpcbind_response(bytes) {
             return fingerprint;
         }
     }
@@ -2779,6 +2817,84 @@ fn classify_isakmp_response(bytes: &[u8]) -> Option<ServiceFingerprint> {
     })
 }
 
+/// The few programs worth naming outright. Everything else is reported by its
+/// number, which is what an advisory cites anyway.
+const RPC_PROGRAM_NAMES: &[(u32, &str)] = &[
+    (100000, "portmapper"),
+    (100003, "nfs"),
+    (100005, "mountd"),
+    (100021, "nlockmgr"),
+    (100024, "status"),
+    (100227, "nfs_acl"),
+];
+
+/// A dump on a busy host lists the same program once per version and per
+/// transport, and the banner is read by a person.
+const RPCBIND_DUMP_ENTRIES: usize = 8;
+
+fn be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    let field: [u8; 4] = bytes.get(offset..offset + 4)?.try_into().ok()?;
+    Some(u32::from_be_bytes(field))
+}
+
+fn classify_rpcbind_response(bytes: &[u8]) -> Option<ServiceFingerprint> {
+    // xid, then REPLY, then MSG_ACCEPTED, then the verifier, then the status.
+    // A rejected call is an RPC service answering too, but it is not a shape
+    // this walks, and the correlated reply already reported the port open.
+    if be_u32(bytes, 4)? != 1 || be_u32(bytes, 8)? != 0 {
+        return None;
+    }
+    let verifier_length = be_u32(bytes, 16)? as usize;
+    let entries = match be_u32(bytes, 20 + verifier_length) {
+        Some(0) => bytes
+            .get(24 + verifier_length..)
+            .map(rpcbind_dump_entries)
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let banner = if entries.is_empty() {
+        "rpcbind answered; no program list returned".to_string()
+    } else {
+        format!("rpcbind: {}", entries.join(", "))
+    };
+    Some(ServiceFingerprint {
+        name: Some("rpcbind".to_string()),
+        confidence: Some(0.95),
+        banner: Some(banner),
+    })
+}
+
+/// A pmaplist: a linked list written out as "another entry follows" ahead of
+/// each entry, ending at a zero.
+fn rpcbind_dump_entries(mut rest: &[u8]) -> Vec<String> {
+    let mut entries = Vec::new();
+    while entries.len() < RPCBIND_DUMP_ENTRIES && be_u32(rest, 0) == Some(1) {
+        let (Some(program), Some(version), Some(protocol), Some(port)) = (
+            be_u32(rest, 4),
+            be_u32(rest, 8),
+            be_u32(rest, 12),
+            be_u32(rest, 16),
+        ) else {
+            break;
+        };
+        let name = RPC_PROGRAM_NAMES
+            .iter()
+            .find(|(number, _)| *number == program)
+            .map_or_else(
+                || format!("program {program}"),
+                |(_, name)| (*name).to_string(),
+            );
+        let transport = match protocol {
+            6 => "tcp".to_string(),
+            17 => "udp".to_string(),
+            other => format!("proto{other}"),
+        };
+        entries.push(format!("{name} v{version} {transport}/{port}"));
+        rest = &rest[20..];
+    }
+    entries
+}
+
 fn classify_rip_response(bytes: &[u8]) -> Option<ServiceFingerprint> {
     if bytes.len() < 4 || bytes[0] != 2 || !matches!(bytes[1], 1 | 2) {
         return None;
@@ -3000,9 +3116,7 @@ fn clean_banner(value: &str) -> String {
         // both render as noise, and the control codes are rejected outright by
         // the spreadsheet the results are exported into - which the export had
         // to strip them for on its own.
-        .filter(|character| {
-            !character.is_control() && *character != char::REPLACEMENT_CHARACTER
-        })
+        .filter(|character| !character.is_control() && *character != char::REPLACEMENT_CHARACTER)
         .take(512)
         .collect()
 }
@@ -3386,7 +3500,10 @@ mod tests {
         // a device listing its services, a gateway advertising one - and
         // called it a mail server.
         let mention = classify_passive_bytes(b"NETGEAR router; smtp relay available\r\n", None);
-        assert_ne!(mention.and_then(|found| found.name).as_deref(), Some("smtp"));
+        assert_ne!(
+            mention.and_then(|found| found.name).as_deref(),
+            Some("smtp")
+        );
 
         let greeting = classify_passive_bytes(b"220 mail.example.com ESMTP Postfix\r\n", None)
             .expect("a mail server");
@@ -3408,7 +3525,10 @@ mod tests {
 
         // Nothing stated plainly: no guess is offered.
         assert_eq!(product_and_version("+OK Dovecot (Ubuntu) ready."), None);
-        assert_eq!(product_and_version("220 mail.example.com ESMTP Postfix"), None);
+        assert_eq!(
+            product_and_version("220 mail.example.com ESMTP Postfix"),
+            None
+        );
         // A hostname is not a product and a reply code is not a version.
         assert_eq!(product_and_version("220 host.example.com ready"), None);
         assert_eq!(product_and_version("* OK 1.2.3 server"), None);
@@ -3686,6 +3806,42 @@ mod tests {
         malformed_isakmp[17] = 0x20;
         malformed_isakmp[24..28].copy_from_slice(&1000_u32.to_be_bytes());
         assert!(classify_isakmp_response(&malformed_isakmp).is_none());
+    }
+
+    #[test]
+    fn rpcbind_dump_is_correlated_and_read_out() {
+        let call = udp_probe_payload(111);
+        assert_eq!(call.len(), 40);
+        assert_eq!(be_u32(&call, 12), Some(100_000)); // portmapper
+        assert_eq!(be_u32(&call, 20), Some(4)); // PMAPPROC_DUMP
+
+        // xid, REPLY, MSG_ACCEPTED, AUTH_NULL verifier, SUCCESS, then the list.
+        let mut reply = call[..4].to_vec();
+        for word in [1_u32, 0, 0, 0, 0] {
+            reply.extend_from_slice(&word.to_be_bytes());
+        }
+        for entry in [(100_000_u32, 2_u32, 17_u32, 111_u32), (100_003, 3, 6, 2049)] {
+            reply.extend_from_slice(&1_u32.to_be_bytes());
+            for word in [entry.0, entry.1, entry.2, entry.3] {
+                reply.extend_from_slice(&word.to_be_bytes());
+            }
+        }
+        reply.extend_from_slice(&0_u32.to_be_bytes());
+
+        assert!(udp_response_matches(111, &call, &reply));
+        let fingerprint = classify_rpcbind_response(&reply).expect("an rpc reply");
+        assert_eq!(fingerprint.name.as_deref(), Some("rpcbind"));
+        assert_eq!(
+            fingerprint.banner.as_deref(),
+            Some("rpcbind: portmapper v2 udp/111, nfs v3 tcp/2049")
+        );
+
+        // A datagram from something that is not rpcbind must not be read as a
+        // program list, and a reply to a different call must not count at all.
+        assert!(classify_rpcbind_response(b"not rpc at all").is_none());
+        let mut other = reply.clone();
+        other[..4].copy_from_slice(b"xxxx");
+        assert!(!udp_response_matches(111, &call, &other));
     }
 
     #[test]
