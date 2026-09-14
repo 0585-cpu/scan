@@ -2485,8 +2485,10 @@ fn udp_probe_payload(port: u16, nonce: u32) -> Vec<u8> {
         161 | 162 => vec![
             0x30, 0x29, 0x02, 0x01, 0x00, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c',
             0xa0, 0x1c, 0x02, 0x04,
-            // The request id, which the agent echoes.
-            identifier[0] & 0x7f, identifier[1], identifier[2], identifier[3],
+            // The request id, which the agent echoes. The leading byte
+            // stays below 0x80 so the INTEGER is positive, and above zero so
+            // the encoding is the minimal one a strict agent expects.
+            (identifier[0] & 0x7f).max(1), identifier[1], identifier[2], identifier[3],
             0x02, 0x01, 0x00, 0x02,
             0x01, 0x00, 0x30, 0x0e, 0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02,
             0x01, 0x01, 0x01, 0x00, 0x05, 0x00,

@@ -1365,6 +1365,42 @@ class EvidenceCoverageTests(unittest.TestCase):
                 [135, 139, 445, 3389, 5985],
             )
 
+    def test_a_port_that_answered_outranks_one_that_only_stayed_silent(self):
+        """A UDP scan fills the budget with ports that replied nothing.
+
+        `open|filtered` means the probe drew no reply, and it is worth a record
+        - but not ahead of a port that answered. Ranked by port alone, a host
+        whose 161 and 500 replied and whose thirteen other ports did not spent
+        nine of its ten places on silence and left 500 with no evidence at all,
+        which is the one row an assessment would have quoted.
+        """
+        answered = {161, 500}
+        ports = [53, 67, 68, 69, 80, 108, 111, 131, 161, 162, 445, 500, 514, 542, 3391]
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
+            scan_id = repo.create_scan_job(
+                targets="10.0.0.5", ports=",".join(map(str, ports)), scope=[],
+                params={"protocol": "udp"},
+            )
+            repo.add_port_results([
+                PortResult(
+                    scan_id=scan_id, host="10.0.0.5", port=port, protocol="udp",
+                    state="open" if port in answered else "open|filtered",
+                    latency_ms=1.0 if port in answered else None,
+                )
+                for port in ports
+            ])
+
+            candidates = repo.get_automatic_evidence_candidates(
+                scan_id, limit=1000, per_host=10
+            )
+
+            taken = {int(candidate["port"]) for candidate in candidates}
+            self.assertEqual(len(taken), 10)
+            self.assertTrue(answered <= taken, sorted(taken))
+            # The rest of the budget still goes to the lowest silent ports.
+            self.assertEqual(sorted(taken - answered), [53, 67, 68, 69, 80, 108, 111, 131])
+
     def test_the_total_still_bounds_a_scan_of_many_hosts(self):
         """The per-host budget raises coverage; it must not remove the ceiling
         that keeps the evidence pass from running for hours."""

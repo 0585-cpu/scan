@@ -201,9 +201,13 @@ def automatic_evidence_candidates(
 ) -> list[dict[str, Any]]:
     if maximum < 1 or maximum > MAX_SCREENSHOT_LIMIT:
         raise ValueError(f"screenshot maximum must be between 1 and {MAX_SCREENSHOT_LIMIT}")
+    # A port that answered comes before one that only failed to refuse, the
+    # way the stored query orders them: the budget is small and a reply is the
+    # finding. Ordering is otherwise the caller's.
+    ordered = sorted(results, key=lambda result: result.get("state") != "open")
     candidates: list[dict[str, Any]] = []
     seen: set[tuple[str, int, str]] = set()
-    for result in results:
+    for result in ordered:
         host = str(result.get("host") or "")
         protocol = str(result.get("protocol") or "tcp").lower()
         try:

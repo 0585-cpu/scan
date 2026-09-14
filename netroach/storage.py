@@ -1400,10 +1400,16 @@ class SQLiteRepository:
         evidence for the ports it captured while whole hosts had none at all,
         and nothing in the summary distinguished that from full coverage.
 
-        Each host spends its share on its lowest ports, which is where the
-        services worth reporting sit: a full-port scan of a Windows host finds
-        135, 139, 445, 3389 and 5985 below a tail of ephemeral RPC ports above
-        49152, and a budget spent on the tail photographs nothing.
+        Each host spends its share on the ports that answered first, and then
+        on its lowest ports. A UDP port that drew no reply is `open|filtered`
+        and is worth a record, but not ahead of one that replied: measured on
+        a host whose 161 and 500 answered and whose thirteen other ports did
+        not, the nine silent ports below 161 took nine of the ten places and
+        500 got none. Within a state the lowest ports come first, which is
+        where the services worth reporting sit: a full-port scan of a Windows
+        host finds 135, 139, 445, 3389 and 5985 below a tail of ephemeral RPC
+        ports above 49152, and a budget spent on the tail photographs
+        nothing.
 
         `limit` still bounds the total, because each capture costs a page load
         or a console window and the pass would otherwise run for hours on a
@@ -1422,7 +1428,9 @@ class SQLiteRepository:
                    service_name, service_confidence, banner, evidence, error,
                    tags_json, note, created_at
             FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY host ORDER BY port) AS host_rank
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY host ORDER BY state <> 'open', port
+                ) AS host_rank
                 FROM port_results
                 WHERE scan_id=? AND state IN ('open', 'open|filtered')
                   {captured_filter}
