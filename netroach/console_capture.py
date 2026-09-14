@@ -718,6 +718,11 @@ _LINE_PROTOCOL_SERVICES = frozenset({
 # Ports to fall back on when nothing was identified, so the common cases still
 # get the right client without a service name to go by.
 _CLIENT_PANE_PORTS = {22: "ssh", 23: "telnet"}
+# Where opening a client has a physical effect rather than a logged one. A raw
+# print port takes what arrives as the job to print, and telnet opens by
+# sending its option negotiation, so the fallback that points telnet at
+# anything unidentified would print a page. Mirrors the engine's list.
+_WRITE_UNSAFE_PORTS = frozenset({515, 9100, 9101, 9102, 9103, 9104, 9105, 9106, 9107})
 
 
 def client_pane_kind(port: int, service: str | None) -> str | None:
@@ -735,6 +740,8 @@ def client_pane_kind(port: int, service: str | None) -> str | None:
     console pane, which for a TLS service already carries the handshake, its
     protocol version and its cipher - and a web port has its browser shot.
     """
+    if port in _WRITE_UNSAFE_PORTS:
+        return None
     named = (service or "").strip().lower()
     if not named:
         # Nothing identified: try telnet, which is what this did for every

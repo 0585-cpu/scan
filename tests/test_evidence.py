@@ -689,6 +689,20 @@ class SshCaptureTests(unittest.TestCase):
             with self.subTest(service=service, port=port):
                 self.assertEqual(client_pane_kind(port, service), "telnet")
 
+    def test_no_client_is_opened_where_opening_one_prints_a_page(self):
+        """A raw print port takes what arrives as the job to print, and telnet
+        opens by sending option negotiation. The fallback pointed telnet at
+        anything unidentified, so a scan run without service detection - which
+        names nothing - would have put a page out of every printer in range."""
+        from netroach.console_capture import client_pane_kind
+
+        for port in (515, 9100, 9101, 9107):
+            with self.subTest(port=port):
+                self.assertIsNone(client_pane_kind(port, None))
+                self.assertIsNone(client_pane_kind(port, "telnet"))
+        # The port beside them is not a printer and keeps the fallback.
+        self.assertEqual(client_pane_kind(9108, None), "telnet")
+
     def test_nothing_is_pointed_at_a_protocol_it_cannot_read(self):
         """Telnet on a TLS or binary port photographs mojibake, which looks
         like evidence and says nothing. Those keep the console pane, which for

@@ -1253,6 +1253,20 @@ struct ServiceFingerprint {
     banner: Option<String>,
 }
 
+/// Ports where writing bytes has a physical effect rather than a logged one.
+///
+/// A raw print port takes whatever arrives as the job to print, so the HTTP
+/// request this sends to find out what is listening comes back out of the
+/// printer as a page - measured, 114 bytes of it on a silent port that
+/// identified as nothing. The port is still reported open and named; what is
+/// skipped is the guess that can only be made by writing to it. nmap excludes
+/// the same range from version detection, for the same reason.
+const WRITE_UNSAFE_PORTS: &[u16] = &[515, 9100, 9101, 9102, 9103, 9104, 9105, 9106, 9107];
+
+fn accepts_a_write_probe(port: u16) -> bool {
+    !WRITE_UNSAFE_PORTS.contains(&port)
+}
+
 async fn identify_service(
     stream: &mut TcpStream,
     host: &str,
@@ -1304,10 +1318,12 @@ async fn identify_service(
         return fallback_known_service(known);
     }
 
-    if let Some(fingerprint) =
-        probe_http(stream, host, port, timeout_duration, known, plugin_catalog).await
-    {
-        return fingerprint;
+    if accepts_a_write_probe(port) {
+        if let Some(fingerprint) =
+            probe_http(stream, host, port, timeout_duration, known, plugin_catalog).await
+        {
+            return fingerprint;
+        }
     }
 
     fallback_unknown_or_known(known)
@@ -2267,6 +2283,7 @@ fn known_service(port: u16) -> Option<&'static str> {
         587 => Some("smtp"),
         636 => Some("ldaps"),
         873 => Some("rsync"),
+        515 => Some("printer"),
         990 => Some("ftps"),
         853 => Some("dot"),
         993 => Some("imaps"),
@@ -2286,6 +2303,7 @@ fn known_service(port: u16) -> Option<&'static str> {
         6379 => Some("redis"),
         8080 => Some("http-alt"),
         8443 => Some("https"),
+        9100..=9107 => Some("pdl-datastream"),
         9200 | 9300 => Some("elasticsearch"),
         11211 => Some("memcached"),
         27017 => Some("mongodb"),
@@ -3806,6 +3824,20 @@ mod tests {
         malformed_isakmp[17] = 0x20;
         malformed_isakmp[24..28].copy_from_slice(&1000_u32.to_be_bytes());
         assert!(classify_isakmp_response(&malformed_isakmp).is_none());
+    }
+
+    #[test]
+    fn a_raw_print_port_is_never_written_to() {
+        // Measured before this guard: a silent port that identified as nothing
+        // received "GET / HTTP/1.0", 114 bytes, which a printer prints.
+        for port in [515, 9100, 9107] {
+            assert!(!accepts_a_write_probe(port));
+            assert!(known_service(port).is_some(), "and it is still named");
+        }
+        // Everything else still gets the guess, including the port beside them.
+        for port in [80, 9108, 12345] {
+            assert!(accepts_a_write_probe(port));
+        }
     }
 
     #[test]
