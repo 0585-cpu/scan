@@ -271,17 +271,21 @@ class DesktopBuildToolTests(unittest.TestCase):
         self.assertEqual(windows_runtime_architecture("aarch64-pc-windows-msvc"), "arm64")
         self.assertEqual(windows_runtime_architecture("i686-pc-windows-msvc"), "x86")
 
-    def test_playwright_install_downloads_only_headless_chromium(self):
+    def test_playwright_install_downloads_the_browser_that_has_a_window(self):
+        """`--only-shell` fetched a build with no user interface at all, which
+        can photograph a page and nothing else. The full build also shows its
+        own window, which is what puts the address bar - the padlock, the "not
+        secure", the address actually arrived at - into the evidence."""
         self.assertEqual(
             playwright_install_command("python"),
-            ["python", "-m", "playwright", "install", "--only-shell", "chromium"],
+            ["python", "-m", "playwright", "install", "chromium"],
         )
 
     def test_playwright_smoke_launches_headless_chromium(self):
         command = playwright_smoke_command("python")
 
         self.assertEqual(command[:2], ["python", "-c"])
-        self.assertIn("chromium.launch(headless=True)", command[2])
+        self.assertIn("chromium.launch(headless=True, channel='chromium')", command[2])
 
 
 class BrowserPruningTests(unittest.TestCase):
@@ -303,22 +307,25 @@ class BrowserPruningTests(unittest.TestCase):
         from tools.build_desktop import prune_stale_browser_revisions
 
         with tempfile.TemporaryDirectory() as tmp:
-            root = self._tree(tmp, "chromium_headless_shell-1228", "chromium_headless_shell-1234", "ffmpeg-1011")
+            root = self._tree(tmp, "chromium-1228", "chromium-1234", "ffmpeg-1011")
 
-            removed = prune_stale_browser_revisions(root, keep={"chromium_headless_shell-1234"})
+            removed = prune_stale_browser_revisions(root, keep={"chromium-1234"})
 
-            self.assertEqual(removed, ["chromium_headless_shell-1228"])
-            self.assertTrue((root / "chromium_headless_shell-1234").is_dir())
+            self.assertEqual(removed, ["chromium-1228"])
+            self.assertTrue((root / "chromium-1234").is_dir())
             # Only browser directories are considered; the helper tools stay.
             self.assertTrue((root / "ffmpeg-1011").is_dir())
 
     def test_the_newest_revision_of_each_family_is_kept(self):
         """The revision in use must never be the one deleted.
 
-        Asking Playwright which one it uses returned a `chromium-<rev>` path that
-        does not exist on disk when only the headless shell is installed, so the
-        real `chromium_headless_shell-<rev>` directory looked stale and the build
-        deleted the browser it had just installed.
+        Which directory that is has been got wrong before, in the opposite
+        direction: while only the headless shell was installed, Playwright
+        reported a `chromium-<rev>` path that was not on disk, so the shell
+        directory that was looked stale and the build deleted the browser it
+        had just installed. The full browser is what is installed now, and a
+        shell left behind by an older cache is no longer staged at all - so it
+        must still be pruned rather than kept beside it.
         """
         import tempfile
 
@@ -327,20 +334,18 @@ class BrowserPruningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._tree(
                 tmp,
-                "chromium_headless_shell-1228",
-                "chromium_headless_shell-1234",
-                "chromium-1200",
+                "chromium-1228",
+                "chromium-1234",
                 "ffmpeg-1011",
             )
 
             keep = newest_browser_revisions(root)
             removed = prune_stale_browser_revisions(root, keep=keep)
 
-            self.assertEqual(keep, {"chromium_headless_shell-1234", "chromium-1200"})
-            self.assertEqual(removed, ["chromium_headless_shell-1228"])
-            # Each family keeps its own newest, so the two prefixes cannot delete
-            # each other, and non-browser tools are never considered.
-            self.assertTrue((root / "chromium-1200").is_dir())
+            self.assertEqual(keep, {"chromium-1234"})
+            self.assertEqual(removed, ["chromium-1228"])
+            # Non-browser tools are never considered.
+            self.assertTrue((root / "chromium-1234").is_dir())
             self.assertTrue((root / "ffmpeg-1011").is_dir())
 
     def test_a_lone_revision_is_never_deleted(self):

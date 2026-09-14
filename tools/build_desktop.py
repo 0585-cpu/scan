@@ -23,7 +23,10 @@ RESOURCE_INSTALLERS = TAURI / "resources" / "installers"
 NPCAP_INSTALLER_RESOURCE = RESOURCE_INSTALLERS / "npcap-installer.exe"
 BACKEND_BUILD = ROOT / "target" / "desktop-backend"
 PLAYWRIGHT_CACHE = ROOT / "target" / "desktop-playwright"
-BROWSER_DIRECTORY_PREFIXES = ("chromium-", "chromium_headless_shell-")
+# Staged into the installer. The headless shell is deliberately not here:
+# `playwright install` no longer fetches it, and a cache left over from an
+# older build must not be carried into the package behind our back.
+BROWSER_DIRECTORY_PREFIXES = ("chromium-",)
 
 
 def file_sha256(path: Path) -> str:
@@ -343,14 +346,26 @@ def pyinstaller_command(python: str) -> list[str]:
 
 
 def playwright_install_command(python: str) -> list[str]:
-    return [python, "-m", "playwright", "install", "--only-shell", "chromium"]
+    """Fetch the full browser rather than the headless shell.
+
+    `--only-shell` fetched a build with no user interface at all, which is
+    enough to photograph a page and nothing else. The full build can also be
+    shown in its own window, which is what puts the address bar - the padlock,
+    the "not secure", the address actually arrived at - into the evidence.
+
+    Only one of the two is bundled. The shell beside it would be another 271MB
+    for a second way to do what the full build already does headlessly.
+    """
+    return [python, "-m", "playwright", "install", "chromium"]
 
 
 def playwright_smoke_command(python: str) -> list[str]:
+    # The channel is named for the same reason the evidence path names it: a
+    # headless launch picks the shell, and the shell is deliberately not here.
     script = (
         "from playwright.sync_api import sync_playwright; "
         "p=sync_playwright().start(); "
-        "b=p.chromium.launch(headless=True); "
+        "b=p.chromium.launch(headless=True, channel='chromium'); "
         "b.close(); p.stop()"
     )
     return [python, "-c", script]

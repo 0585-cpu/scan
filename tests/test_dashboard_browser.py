@@ -13,6 +13,7 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from netroach.dashboard import dashboard_html
+from netroach.evidence import BROWSER_CHANNEL
 from netroach.models import PortResult
 from netroach.storage import SQLiteRepository
 
@@ -47,7 +48,10 @@ class DashboardBrowserTests(unittest.TestCase):
         use_bundled_browser()
         cls.playwright = sync_playwright().start()
         try:
-            cls.browser = cls.playwright.chromium.launch()
+            # The same channel the evidence path launches: only the full
+            # browser is bundled, and a bare launch would look for the
+            # headless shell that is deliberately not there.
+            cls.browser = cls.playwright.chromium.launch(channel=BROWSER_CHANNEL)
         except PlaywrightError as error:
             cls.playwright.stop()
             if "Executable doesn't exist" in str(error):
