@@ -9,15 +9,17 @@ use futures::stream::{self, StreamExt};
 use ipnet::IpNet;
 use native_tls::TlsConnector;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::{DefaultHasher, RandomState};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::io::Write;
 #[cfg(all(windows, feature = "syn-sweep"))]
 use std::net::Ipv4Addr;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
@@ -1134,7 +1136,7 @@ async fn scan_udp_one(
     // of ours to correlate against, any reply from the peer is the answer:
     // something is listening.
     let payload = if service_probe {
-        udp_probe_payload(port)
+        udp_probe_payload(port, probe_nonce(target, port))
     } else {
         vec![0]
     };
@@ -1147,6 +1149,11 @@ async fn scan_udp_one(
         if attempt > 0 {
             rate_limiter.wait().await;
         }
+        // The round trip is this attempt's, not everything since the socket
+        // was opened: a reply on the third attempt used to be reported with
+        // two whole timeouts added to it, which at a 3s timeout read as six
+        // seconds of latency on a service answering in two milliseconds.
+        let sent = Instant::now();
         if let Err(err) = socket.send(&payload).await {
             return udp_error_or_closed_event(scan_id, host, port, start, err);
         }
@@ -1165,7 +1172,7 @@ async fn scan_udp_one(
                         scan_id,
                         host,
                         port,
-                        start,
+                        sent,
                         fingerprint,
                         format!(
                             "udp response received ({size} bytes, attempt {attempted}; {wording})"
@@ -1181,7 +1188,7 @@ async fn scan_udp_one(
                     scan_id,
                     host,
                     port,
-                    start,
+                    sent,
                     ServiceFingerprint::default(),
                     format!(
                         "udp response received on attempt {attempted}, longer than the {UDP_RECEIVE_BYTES} byte receive buffer and not read"
@@ -1219,7 +1226,7 @@ fn udp_open_event(
     scan_id: &str,
     host: String,
     port: u16,
-    start: Instant,
+    sent: Instant,
     fingerprint: ServiceFingerprint,
     evidence: String,
 ) -> PortEvent {
@@ -1230,7 +1237,7 @@ fn udp_open_event(
         port,
         protocol: "udp",
         state: "open".to_string(),
-        latency_ms: Some(round2(start.elapsed().as_secs_f64() * 1000.0)),
+        latency_ms: Some(round2(sent.elapsed().as_secs_f64() * 1000.0)),
         service_name: fingerprint.name,
         service_confidence: fingerprint.confidence,
         banner: fingerprint.banner,
@@ -2429,11 +2436,36 @@ fn effective_known_udp_service<'a>(
         .or_else(|| known_udp_service(port))
 }
 
-fn udp_probe_payload(port: u16) -> Vec<u8> {
+/// The value a probe puts in the field a reply has to echo.
+///
+/// Every one of these was a constant - the same DNS transaction id, the same
+/// SNMP request id of 1, the same ISAKMP cookie spelling NETROACH on every
+/// host of every scan. A field whose whole purpose is to tell this probe apart
+/// from anything else cannot do that while it reads the same everywhere. It is
+/// seeded once per process from the standard library's randomised hash state
+/// rather than from a clock, which two scans started in the same millisecond
+/// would share, and then varies by target and port.
+///
+/// Where the scanner names itself on the wire - the ISAKMP cookie, the SIP
+/// Call-ID - the name stays and the identifier is added beside it, because an
+/// operator reading the target's logs afterwards should be able to see that
+/// the traffic was this scan.
+fn probe_nonce(target: IpAddr, port: u16) -> u32 {
+    static SEED: OnceLock<u64> = OnceLock::new();
+    let seed = *SEED.get_or_init(|| RandomState::new().hash_one("netroach-udp-probe"));
+    let mut hasher = DefaultHasher::new();
+    seed.hash(&mut hasher);
+    target.hash(&mut hasher);
+    port.hash(&mut hasher);
+    hasher.finish() as u32
+}
+
+fn udp_probe_payload(port: u16, nonce: u32) -> Vec<u8> {
+    let identifier = nonce.to_be_bytes();
     match port {
-        53 => dns_query_payload("netroach.invalid"),
+        53 => dns_query_payload("netroach.invalid", nonce),
         69 => b"\x00\x01netroach-test\x00octet\x00".to_vec(),
-        111 => rpcbind_dump_payload(),
+        111 => rpcbind_dump_payload(nonce),
         123 => {
             let mut payload = vec![0x1b];
             payload.resize(48, 0);
@@ -2445,26 +2477,29 @@ fn udp_probe_payload(port: u16) -> Vec<u8> {
             }
             payload
         }
-        137 => netbios_status_query_payload(),
+        137 => netbios_status_query_payload(nonce),
         // 162 is the trap port and answers the same GetRequest. It had a
         // correlation rule and no payload, so it was probed with a single
         // zero byte that no request id can be read out of - the rule could
         // never match and the port could never be reported open.
         161 | 162 => vec![
             0x30, 0x29, 0x02, 0x01, 0x00, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c',
-            0xa0, 0x1c, 0x02, 0x04, 0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0x00, 0x02,
+            0xa0, 0x1c, 0x02, 0x04,
+            // The request id, which the agent echoes.
+            identifier[0] & 0x7f, identifier[1], identifier[2], identifier[3],
+            0x02, 0x01, 0x00, 0x02,
             0x01, 0x00, 0x30, 0x0e, 0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02,
             0x01, 0x01, 0x01, 0x00, 0x05, 0x00,
         ],
-        500 => isakmp_probe_payload(),
+        500 => isakmp_probe_payload(nonce),
         520 => rip_request_payload(),
         1434 => b"\x02".to_vec(),
         1900 => b"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: ssdp:all\r\n\r\n"
             .to_vec(),
         3702 => ws_discovery_probe_payload(),
-        5060 => sip_options_payload(),
-        5353 => dns_query_payload("_services._dns-sd._udp.local"),
-        5683 => coap_core_query_payload(),
+        5060 => sip_options_payload(nonce),
+        5353 => dns_query_payload("_services._dns-sd._udp.local", nonce),
+        5683 => coap_core_query_payload(nonce),
         11211 => b"version\r\n".to_vec(),
         _ => vec![0],
     }
@@ -2482,7 +2517,10 @@ fn udp_reply_answers(port: u16, request: &[u8], response: &[u8], service_probe: 
         // connected, so the datagram came from the service being probed.
         udp_response_matches(port, request, response).unwrap_or(true)
     } else {
-        !response.is_empty()
+        // Including an empty one. A zero length UDP payload is legal, and
+        // requiring bytes read a service that answers with none as silent.
+        let _ = response;
+        true
     }
 }
 
@@ -2511,9 +2549,9 @@ fn udp_answer_wording(
 /// Whether the reply answers what was sent, or `None` where the port has no
 /// rule to decide it by.
 fn udp_response_matches(port: u16, request: &[u8], response: &[u8]) -> Option<bool> {
-    if response.is_empty() {
-        return Some(false);
-    }
+    // An empty datagram is a legal one, and on a port with no rule it is the
+    // service answering as surely as a long reply is. Where there is a rule it
+    // fails it, which each arm decides for itself by the length it needs.
     match port {
         53 | 137 | 5353 => {
             Some(request.len() >= 2 && response.len() >= 2 && response[..2] == request[..2])
@@ -2530,11 +2568,21 @@ fn udp_response_matches(port: u16, request: &[u8], response: &[u8]) -> Option<bo
         111 => Some(request.len() >= 4 && response.len() >= 4 && response[..4] == request[..4]),
         500 => Some(request.len() >= 8 && response.len() >= 8 && response[..8] == request[..8]),
         5683 => Some(request.len() >= 4 && response.len() >= 4 && response[2..4] == request[2..4]),
-        5060 => Some(
-            String::from_utf8_lossy(response)
-                .to_ascii_lowercase()
-                .contains("call-id: netroach"),
-        ),
+        5060 => {
+            // Against the Call-ID this probe actually sent, rather than the
+            // fixed word every probe used to carry.
+            let sent = String::from_utf8_lossy(request).to_ascii_lowercase();
+            let call_id = sent
+                .split("call-id: ")
+                .nth(1)
+                .and_then(|tail| tail.split("\r\n").next())
+                .unwrap_or("netroach");
+            Some(
+                String::from_utf8_lossy(response)
+                    .to_ascii_lowercase()
+                    .contains(call_id),
+            )
+        }
         _ => None,
     }
 }
@@ -2554,9 +2602,21 @@ fn snmp_request_id(payload: &[u8]) -> Option<&[u8]> {
         })
 }
 
-fn dns_query_payload(name: &str) -> Vec<u8> {
+fn dns_query_payload(name: &str, nonce: u32) -> Vec<u8> {
+    let identifier = (nonce as u16).to_be_bytes();
     let mut payload = vec![
-        b'S', b'P', 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        identifier[0],
+        identifier[1],
+        0x01,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
     ];
     for label in name.trim_end_matches('.').split('.') {
         payload.push(label.len() as u8);
@@ -2567,9 +2627,21 @@ fn dns_query_payload(name: &str) -> Vec<u8> {
     payload
 }
 
-fn netbios_status_query_payload() -> Vec<u8> {
+fn netbios_status_query_payload(nonce: u32) -> Vec<u8> {
+    let identifier = (nonce as u16).to_be_bytes();
     let mut payload = vec![
-        b'S', b'P', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        identifier[0],
+        identifier[1],
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
     ];
     let mut name = [0_u8; 16];
     name[0] = b'*';
@@ -2589,8 +2661,8 @@ fn netbios_status_query_payload() -> Vec<u8> {
 /// port, to anyone who asks. It is a read call; nothing is registered or
 /// unregistered by it, and a portmapper that refuses the dump still answers,
 /// which is enough to report the port open.
-fn rpcbind_dump_payload() -> Vec<u8> {
-    let mut payload = b"SPrb".to_vec(); // xid, echoed back by the reply
+fn rpcbind_dump_payload(nonce: u32) -> Vec<u8> {
+    let mut payload = nonce.to_be_bytes().to_vec(); // xid, echoed back by the reply
     payload.extend_from_slice(&0_u32.to_be_bytes()); // CALL
     payload.extend_from_slice(&2_u32.to_be_bytes()); // rpc version
     payload.extend_from_slice(&100_000_u32.to_be_bytes()); // portmapper
@@ -2601,8 +2673,10 @@ fn rpcbind_dump_payload() -> Vec<u8> {
     payload
 }
 
-fn isakmp_probe_payload() -> Vec<u8> {
-    let mut payload = b"NETROACH".to_vec();
+fn isakmp_probe_payload(nonce: u32) -> Vec<u8> {
+    // The initiator cookie names the scan and then distinguishes this probe.
+    let mut payload = b"NETRO".to_vec();
+    payload.extend_from_slice(&nonce.to_be_bytes()[1..]);
     payload.extend_from_slice(&[0; 8]);
     payload.extend_from_slice(&[0x00, 0x10, 0x02, 0x00]);
     payload.extend_from_slice(&[0; 4]);
@@ -2621,12 +2695,25 @@ fn ws_discovery_probe_payload() -> Vec<u8> {
     b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><e:Envelope xmlns:e=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:w=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" xmlns:d=\"http://schemas.xmlsoap.org/ws/2005/04/discovery\"><e:Header><w:MessageID>uuid:00000000-0000-0000-0000-000000000000</w:MessageID><w:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To><w:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</w:Action></e:Header><e:Body><d:Probe /></e:Body></e:Envelope>".to_vec()
 }
 
-fn sip_options_payload() -> Vec<u8> {
-    b"OPTIONS sip:netroach.invalid SIP/2.0\r\nVia: SIP/2.0/UDP netroach.invalid;branch=z9hG4bK-netroach\r\nMax-Forwards: 1\r\nFrom: <sip:netroach@netroach.invalid>;tag=netroach\r\nTo: <sip:netroach.invalid>\r\nCall-ID: netroach\r\nCSeq: 1 OPTIONS\r\nContent-Length: 0\r\n\r\n".to_vec()
+fn sip_options_payload(nonce: u32) -> Vec<u8> {
+    let tag = sip_call_id(nonce);
+    format!(
+        "OPTIONS sip:netroach.invalid SIP/2.0\r\nVia: SIP/2.0/UDP netroach.invalid;branch=z9hG4bK-{tag}\r\nMax-Forwards: 1\r\nFrom: <sip:netroach@netroach.invalid>;tag={tag}\r\nTo: <sip:netroach.invalid>\r\nCall-ID: {tag}\r\nCSeq: 1 OPTIONS\r\nContent-Length: 0\r\n\r\n"
+    )
+    .into_bytes()
 }
 
-fn coap_core_query_payload() -> Vec<u8> {
-    b"\x40\x01SP\xbb.well-known\x04core".to_vec()
+/// Keeps the scanner's name where an operator reading the target's log will
+/// see it, and adds the part that makes this probe distinguishable.
+fn sip_call_id(nonce: u32) -> String {
+    format!("netroach-{nonce:08x}")
+}
+
+fn coap_core_query_payload(nonce: u32) -> Vec<u8> {
+    let identifier = (nonce as u16).to_be_bytes();
+    let mut payload = vec![0x40, 0x01, identifier[0], identifier[1]];
+    payload.extend_from_slice(b"\xbb.well-known\x04core");
+    payload
 }
 
 #[cfg(test)]
@@ -3988,7 +4075,7 @@ mod tests {
 
     #[test]
     fn rpcbind_dump_is_correlated_and_read_out() {
-        let call = udp_probe_payload(111);
+        let call = udp_probe_payload(111, PROBE);
         assert_eq!(call.len(), 40);
         assert_eq!(be_u32(&call, 12), Some(100_000)); // portmapper
         assert_eq!(be_u32(&call, 20), Some(4)); // PMAPPROC_DUMP
@@ -4033,28 +4120,100 @@ mod tests {
         assert!(!is_datagram_too_large(&refused));
     }
 
+    /// A fixed value stands in for the per-process one in these tests.
+    const PROBE: u32 = 0x5350_7262;
+
+    #[test]
+    fn a_probe_identifier_is_not_the_same_on_every_host() {
+        // Each of these was a constant: the same DNS transaction id, an SNMP
+        // request id of 1, a cookie spelling NETROACH. A field that exists to
+        // tell this probe apart cannot do it while it reads the same
+        // everywhere, and a stale reply to an earlier attempt matched as
+        // readily as the answer to this one.
+        let first = "10.0.0.1".parse().unwrap();
+        let second = "10.0.0.2".parse().unwrap();
+        for port in [53, 111, 137, 161, 500, 5060, 5353, 5683] {
+            let here = udp_probe_payload(port, probe_nonce(first, port));
+            let there = udp_probe_payload(port, probe_nonce(second, port));
+            assert_ne!(here, there, "port {port} probes two hosts identically");
+            // And the same host and port is asked the same thing twice, so a
+            // retry's reply is still recognised.
+            assert_eq!(here, udp_probe_payload(port, probe_nonce(first, port)));
+            // A reply echoing this probe's identifier still correlates.
+            assert_ne!(
+                udp_response_matches(port, &here, &echo_of(port, &here)),
+                Some(false),
+                "port {port}"
+            );
+        }
+        // The scanner still names itself where a target's log will show it.
+        assert!(udp_probe_payload(500, PROBE).starts_with(b"NETRO"));
+        let sip = String::from_utf8(udp_probe_payload(5060, PROBE)).unwrap();
+        assert!(sip.contains("netroach-"), "{sip}");
+    }
+
+    /// The part of a reply each port's rule looks at, echoed back.
+    fn echo_of(port: u16, request: &[u8]) -> Vec<u8> {
+        match port {
+            161 | 162 => {
+                let mut reply = request.to_vec();
+                reply[13] = 0xa2;
+                reply
+            }
+            123 => {
+                let mut reply = vec![0_u8; 48];
+                reply[24..32].copy_from_slice(&request[40..48]);
+                reply
+            }
+            5683 => request[..4].to_vec(),
+            5060 => {
+                let call_id = String::from_utf8_lossy(request)
+                    .split("Call-ID: ")
+                    .nth(1)
+                    .and_then(|tail| tail.split("\r\n").next())
+                    .unwrap_or_default()
+                    .to_string();
+                format!("SIP/2.0 200 OK\r\nCall-ID: {call_id}\r\n\r\n").into_bytes()
+            }
+            _ => request[..8.min(request.len())].to_vec(),
+        }
+    }
+
+    #[test]
+    fn an_empty_datagram_is_still_a_datagram() {
+        // A zero length UDP payload is legal. Requiring bytes read a service
+        // that answers with none as silent, on the neutral probe and on every
+        // port with no correlation rule.
+        assert!(udp_reply_answers(9_999, &[0], &[], false));
+        assert_eq!(udp_response_matches(9_999, &[0], &[]), None);
+        assert!(udp_reply_answers(9_999, &[0], &[], true));
+        // A port with a rule still needs the bytes the rule reads.
+        let dns = udp_probe_payload(53, PROBE);
+        assert_eq!(udp_response_matches(53, &dns, &[]), Some(false));
+    }
+
     #[test]
     fn udp_probe_payloads_are_service_specific() {
-        assert!(udp_probe_payload(53).len() > 12);
+        assert!(udp_probe_payload(53, PROBE).len() > 12);
         // The trap port answers the same GetRequest; a lone zero byte holds no
         // request id, so its correlation rule could never match.
-        assert_eq!(udp_probe_payload(162), udp_probe_payload(161));
-        let snmp = udp_probe_payload(162);
+        assert_eq!(udp_probe_payload(162, PROBE), udp_probe_payload(161, PROBE));
+        let snmp = udp_probe_payload(162, PROBE);
         let mut reply = snmp.clone();
         reply[13] = 0xa2;
         assert_eq!(udp_response_matches(162, &snmp, &reply), Some(true));
-        assert!(udp_probe_payload(69).starts_with(&[0x00, 0x01]));
-        assert_eq!(udp_probe_payload(123).len(), 48);
-        assert!(udp_probe_payload(137).len() > 40);
-        assert!(udp_probe_payload(500).starts_with(b"NETROACH"));
-        assert_eq!(&udp_probe_payload(520)[..2], &[0x01, 0x02]);
-        assert_eq!(udp_probe_payload(1434), b"\x02");
-        assert!(String::from_utf8_lossy(&udp_probe_payload(1900)).contains("M-SEARCH"));
-        assert!(String::from_utf8_lossy(&udp_probe_payload(3702)).contains("Probe"));
-        assert!(String::from_utf8_lossy(&udp_probe_payload(5060)).starts_with("OPTIONS "));
-        assert!(udp_probe_payload(5353).len() > 12);
-        assert!(udp_probe_payload(5683).starts_with(&[0x40, 0x01]));
-        assert_eq!(udp_probe_payload(11211), b"version\r\n");
+        assert!(udp_probe_payload(69, PROBE).starts_with(&[0x00, 0x01]));
+        assert_eq!(udp_probe_payload(123, PROBE).len(), 48);
+        assert!(udp_probe_payload(137, PROBE).len() > 40);
+        assert!(udp_probe_payload(500, PROBE).starts_with(b"NETRO"));
+        assert_eq!(&udp_probe_payload(520, PROBE)[..2], &[0x01, 0x02]);
+        assert_eq!(udp_probe_payload(1434, PROBE), b"\x02");
+        assert!(String::from_utf8_lossy(&udp_probe_payload(1900, PROBE)).contains("M-SEARCH"));
+        assert!(String::from_utf8_lossy(&udp_probe_payload(3702, PROBE)).contains("Probe"));
+        assert!(String::from_utf8_lossy(&udp_probe_payload(5060, PROBE)).starts_with("OPTIONS "));
+        assert!(udp_probe_payload(5353, PROBE).len() > 12);
+        assert!(udp_probe_payload(5683, PROBE).starts_with(&[0x40, 0x01]));
+        assert_eq!(udp_probe_payload(11211, PROBE), b"version\r\n");
     }
 
     #[test]
@@ -4078,7 +4237,7 @@ mod tests {
 
         // And a port with no rule to correlate against was called correlated
         // because the tick was on.
-        let snmp = udp_probe_payload(161);
+        let snmp = udp_probe_payload(161, PROBE);
         let mut snmp_reply = snmp.clone();
         snmp_reply[13] = 0xa2;
         assert_eq!(
@@ -4097,13 +4256,15 @@ mod tests {
         // Turning service detection off has to mean it: the probes are real
         // requests, and RIP's asks a router for its whole routing table.
         for port in [53, 123, 161, 500, 520, 1900, 5060] {
-            assert!(udp_probe_payload(port).len() > 1);
+            assert!(udp_probe_payload(port, PROBE).len() > 1);
         }
-        // Nothing of ours to correlate against, so any reply is the answer.
+        // Nothing of ours to correlate against, so any reply is the answer -
+        // an empty datagram included, which is legal and used to read as
+        // silence. The socket is connected, so it came from the service.
         assert!(udp_reply_answers(53, &[0], b"anything", false));
-        assert!(!udp_reply_answers(53, &[0], b"", false));
+        assert!(udp_reply_answers(53, &[0], b"", false));
         // And with a probe out there the correlation still decides.
-        let dns = udp_probe_payload(53);
+        let dns = udp_probe_payload(53, PROBE);
         assert!(udp_reply_answers(
             53,
             &dns,
@@ -4119,21 +4280,21 @@ mod tests {
     }
     #[test]
     fn udp_response_correlation_checks_protocol_identifiers() {
-        let dns = udp_probe_payload(53);
+        let dns = udp_probe_payload(53, PROBE);
         assert_eq!(
             udp_response_matches(53, &dns, &[dns[0], dns[1], 0x81, 0x80]),
             Some(true)
         );
         assert_eq!(udp_response_matches(53, &dns, b"XX\x81\x80"), Some(false));
 
-        let ntp = udp_probe_payload(123);
+        let ntp = udp_probe_payload(123, PROBE);
         let mut ntp_response = [0_u8; 48];
         ntp_response[24..32].copy_from_slice(&ntp[40..48]);
         assert_eq!(udp_response_matches(123, &ntp, &ntp_response), Some(true));
         ntp_response[24] ^= 1;
         assert_eq!(udp_response_matches(123, &ntp, &ntp_response), Some(false));
 
-        let snmp = udp_probe_payload(161);
+        let snmp = udp_probe_payload(161, PROBE);
         let mut snmp_response = snmp.clone();
         snmp_response[13] = 0xa2;
         assert_eq!(udp_response_matches(161, &snmp, &snmp_response), Some(true));
@@ -4203,7 +4364,7 @@ mod tests {
 
     #[test]
     fn udp_classifies_dns_fixture() {
-        let query = dns_query_payload("netroach.invalid");
+        let query = dns_query_payload("netroach.invalid", PROBE);
         let mut response = Vec::new();
         response.extend_from_slice(&query[..2]);
         response.extend_from_slice(&[0x81, 0x80]);
