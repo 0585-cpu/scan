@@ -288,6 +288,34 @@ class DesktopBuildToolTests(unittest.TestCase):
         self.assertIn("chromium.launch(headless=True, channel='chromium')", command[2])
 
 
+class BrowserStagingTests(unittest.TestCase):
+    def test_the_headless_shell_is_not_carried_into_the_installer(self):
+        """`playwright install chromium` fetches the shell beside the full
+        browser, and the full one renders headlessly too - the channel the
+        evidence path names sees to that. Copying the cache wholesale staged
+        701MB where 430MB ships, and the extra was a second way to do what the
+        browser already does."""
+        import shutil
+
+        from tools.build_desktop import EXCLUDED_BROWSER_PATTERNS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "cache"
+            for name in ("chromium-1234", "chromium_headless_shell-1234", "ffmpeg-1011"):
+                (source / name).mkdir(parents=True)
+                (source / name / "marker").write_text("x", encoding="utf-8")
+            destination = Path(tmp) / "staged"
+
+            shutil.copytree(
+                source,
+                destination,
+                ignore=shutil.ignore_patterns(".links", *EXCLUDED_BROWSER_PATTERNS),
+            )
+
+            staged = sorted(item.name for item in destination.iterdir())
+            self.assertEqual(staged, ["chromium-1234", "ffmpeg-1011"])
+
+
 class BrowserPruningTests(unittest.TestCase):
     """Playwright's own GC is disabled for this cache, so the build prunes it.
 

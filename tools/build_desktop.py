@@ -24,9 +24,12 @@ NPCAP_INSTALLER_RESOURCE = RESOURCE_INSTALLERS / "npcap-installer.exe"
 BACKEND_BUILD = ROOT / "target" / "desktop-backend"
 PLAYWRIGHT_CACHE = ROOT / "target" / "desktop-playwright"
 # Staged into the installer. The headless shell is deliberately not here:
-# `playwright install` no longer fetches it, and a cache left over from an
-# older build must not be carried into the package behind our back.
+# it is excluded on the way in, and a cache left over from an older build
+# must not be carried into the package behind our back either.
 BROWSER_DIRECTORY_PREFIXES = ("chromium-",)
+# Fetched by `playwright install chromium` but never shipped: the full
+# browser renders headlessly too, so the shell is only a second copy.
+EXCLUDED_BROWSER_PATTERNS = ("chromium_headless_shell-*",)
 
 
 def file_sha256(path: Path) -> str:
@@ -491,7 +494,16 @@ def _stage_playwright_browsers(source: Path) -> Path:
         return destination
     if destination.exists():
         shutil.rmtree(destination)
-    shutil.copytree(source, destination, ignore=shutil.ignore_patterns(".links"))
+    # `playwright install chromium` fetches the headless shell alongside the
+    # full browser, and the full one already renders headlessly - the channel
+    # the evidence path names sees to that. Copying both put 271MB of second
+    # way to do the same thing into the installer, measured at 701MB staged
+    # against the 430MB that ships.
+    shutil.copytree(
+        source,
+        destination,
+        ignore=shutil.ignore_patterns(".links", *EXCLUDED_BROWSER_PATTERNS),
+    )
     print(f"staged {destination.relative_to(ROOT)}", flush=True)
     return destination
 
