@@ -2,6 +2,15 @@
 
 All notable Netroach changes are tracked here.
 
+## 0.2.7 - 2026-09-14
+
+- Photograph the browser's own window for a web port, rather than the page alone. The window carries what the page cannot: the address actually arrived at, and the browser's judgement beside it - the padlock, the "not secure" on a plaintext management page, the warning on a certificate that does not match. It is moved off the visible desktop first, the way a console capture is, and where there is no desktop to draw on the capture stays headless and the page is the evidence as before.
+- Record something for a page behind a login box, which had no evidence at all. A browser driven by the capture does not render a 401 - it fails the navigation - and the transcript it fell back to had no mode for a web port, so the record read only that the port answered. One unauthenticated request now keeps the response head, where the finding is: the status, the authentication scheme and realm the server offers, the server header.
+- Stop writing a target's side of the conversation. The transcript prints replies under a label and a reader takes the unlabelled lines beside them for more of the same, but three were ours: "login as:" is PuTTY's wording and SSH never sends a prompt in the clear, "USER:" is a command a client sends rather than anything POP3 replied, and "User (host):" imitated the Windows ftp client with the real host name in it. The transcript now carries what the target said and what was sent, and nothing else.
+- Name a service by what it says rather than by the port it says it on. Telnet is identified by its option negotiation, which nothing else opens with - a switch on a port no table maps went from unknown to telnet with its model name as the banner. POP3, IMAP and memcached are no longer recognised only where the port already agreed; the greeting names the service and the port decides how sure that is. A banner that merely mentions SMTP is no longer a mail server. Where a greeting states a product and version plainly, they are split out as fields a reader can check an advisory against.
+- Bundle the browser that has a window. The headless shell can photograph a page and nothing else; only the full build ships, so the bundle is 430MB rather than 274MB, and not the 701MB both would cost.
+- Keep the client beside the console for services that speak in lines. POP3, IMAP, SMTP and FTP lost the telnet client pane in 0.2.6 - the pane that photographs their actual exchange. TLS and binary protocols still get none, because pointing telnet at those photographs mojibake that looks like evidence and says nothing.
+
 ## 0.2.6 - 2026-09-14
 
 - Start the SYN-enabled engine on a machine that has no Npcap. Linking Npcap's import library made `wpcap.dll` a load-time dependency, so the one binary that also carries connect and UDP scanning could not start at all without the driver - and said nothing, because the launcher sees a missing DLL rather than a message. The library is delay-loaded now, and the sweep asks for it before its first call so a forced SYN scan fails with a sentence naming Npcap instead of ending the process.
