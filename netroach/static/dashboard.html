@@ -627,7 +627,19 @@
       font-weight: 700;
       white-space: nowrap;
       max-width: 100%;
+      /* Kept on one line, so anything longer than its cell has to be cut
+         rather than allowed to run across the column beside it. The results
+         table lays out on fixed widths, and a service like "https · inferred"
+         needed two pixels more than the column had - which drew the tail of
+         the label over the banner column next to it. */
+      overflow: hidden;
       --dot: var(--muted);
+    }
+    .pill-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     /* State reads from the dot, not from a filled pastel shape: the colour
        still carries the meaning but stops covering the table in tint. */
@@ -2168,6 +2180,9 @@
       scanJobStatus: '',
       scanResultQuery: '',
       scanResultHost: '',
+      // Which strip disclosures the operator has opened, so a poll that
+      // rewrites the strip does not close them again.
+      openDisclosures: new Set(),
       scanResultState: '',
       recaptureWatch: null,
       recapturingScanId: null,
@@ -2309,6 +2324,19 @@
 
     function allScanPresets() {
       return [...BUILTIN_SCAN_PRESETS, ...state.scanPresets];
+    }
+
+    // Rewriting a list that has not changed is not free. Replacing the rows
+    // drops any text selected inside them, and a running scan polls every
+    // 700ms: measured on a live scan, the results table was rewritten six
+    // times in four seconds with byte-identical markup each time, so copying a
+    // host or a banner out of it was impossible for as long as the scan ran.
+    // Listeners are only re-attached when the rows were actually replaced -
+    // the surviving nodes keep the ones they already have.
+    function setRows(node, html) {
+      if (node.innerHTML === html) return false;
+      node.innerHTML = html;
+      return true;
     }
 
     function renderScanPresets() {
@@ -2871,7 +2899,12 @@ ${health.db}` : '데이터베이스 없음';
     }
 
     function pill(label, tone = '') {
-      return `<span class="pill ${escapeHtml(tone)}">${escapeHtml(label)}</span>`;
+      // The label sits in its own element so it can be trimmed with an
+      // ellipsis: `text-overflow` has no effect on a bare text node inside the
+      // flex container the pill is. `title` keeps the whole value reachable,
+      // because a service name is a finding and a trimmed one is not readable.
+      return `<span class="pill ${escapeHtml(tone)}" title="${escapeHtml(label)}">`
+        + `<span class="pill-label">${escapeHtml(label)}</span></span>`;
     }
 
     async function refreshHealth() {
@@ -3021,7 +3054,7 @@ ${health.db}` : '데이터베이스 없음';
       });
       $('scanJobCount').textContent = `${state.scans.length}건 중 ${jobs.length}건`;
       const emptyMessage = state.scans.length ? 'No matching scan jobs' : 'No scan jobs yet. Start a scan from the form.';
-      $('scanJobs').innerHTML = jobs.map((job) => `
+      const jobRows = jobs.map((job) => `
         <tr class="clickable ${job.id === state.scanId ? 'selected' : ''}" data-scan-row="${escapeHtml(job.id)}">
           <td class="mono" title="${escapeHtml(job.id)}">${escapeHtml(shortId(job.id))}</td>
           <td>${pill(job.status, stateClass(job.status))}</td>
@@ -3029,9 +3062,11 @@ ${health.db}` : '데이터베이스 없음';
           <td>${escapeHtml(job.summary?.open || 0)}</td>
         </tr>
       `).join('') || `<tr><td colspan="4" class="empty">${escapeHtml(emptyMessage)}</td></tr>`;
-      document.querySelectorAll('[data-scan-row]').forEach((node) => {
-        node.addEventListener('click', () => selectScan(node.dataset.scanRow));
-      });
+      if (setRows($('scanJobs'), jobRows)) {
+        document.querySelectorAll('[data-scan-row]').forEach((node) => {
+          node.addEventListener('click', () => selectScan(node.dataset.scanRow));
+        });
+      }
     }
 
     function selectedScanJob() {
@@ -3060,11 +3095,29 @@ ${health.db}` : '데이터베이스 없음';
     // label - "192.0.2.1 외 249개" - and keeps the whole list inside it.
     // A disclosure whose summary was the full range expression pushed the
     // progress numbers over the count beside them.
-    function stripDisclosure(label, full) {
+    function stripDisclosure(key, label, full) {
       const whole = text(full);
       if (!whole || whole === label) return escapeHtml(label);
-      return `<details class="ports-details"><summary>${escapeHtml(label)}</summary>`
+      const open = state.openDisclosures.has(key) ? ' open' : '';
+      return `<details class="ports-details" data-disclosure="${escapeHtml(key)}"${open}>`
+        + `<summary>${escapeHtml(label)}</summary>`
         + `<div class="mono">${escapeHtml(whole)}</div></details>`;
+    }
+
+    // A running scan polls, and every poll rewrites the strip - which threw
+    // away any list the operator had opened. On a scan of thousands of hosts
+    // that list is the only place the targets can be read in full, and it
+    // closed again before it could be: the disclosure was unreadable for
+    // exactly the scans that need it. Which ones are open is remembered here
+    // rather than in the markup, because the markup is what gets replaced.
+    function rememberDisclosures(root) {
+      root.querySelectorAll('details[data-disclosure]').forEach((node) => {
+        node.addEventListener('toggle', () => {
+          const key = node.dataset.disclosure;
+          if (node.open) state.openDisclosures.add(key);
+          else state.openDisclosures.delete(key);
+        });
+      });
     }
 
     function renderSummaryStrip(job, progress) {
@@ -3079,7 +3132,7 @@ ${health.db}` : '데이터베이스 없음';
       if (job.status === 'failed' && job.summary?.error) {
         strip.innerHTML = `
           <div class="cell"><span class="k">상태</span><span class="v">${pill(job.status, stateClass(job.status))}</span></div>
-          <div class="cell grow"><span class="k">대상</span><span class="v">${stripDisclosure(stripTargetLabel(job.targets), job.targets)}</span></div>
+          <div class="cell grow"><span class="k">대상</span><span class="v">${stripDisclosure('targets', stripTargetLabel(job.targets), job.targets)}</span></div>
           <div class="cell grow"><span class="k">실패 원인</span><span class="v">${escapeHtml(text(job.summary.error))}</span></div>
         `;
         return;
@@ -3100,25 +3153,27 @@ ${health.db}` : '데이터베이스 없음';
           : `<div class="cell"><span class="k">응답</span><span class="v num">${Number(progress.activity.answered || 0).toLocaleString()}</span></div>`;
         strip.innerHTML = `
           <div class="cell"><span class="k">상태</span><span class="v">${pill(job.status, stateClass(job.status))}</span></div>
-          <div class="cell grow"><span class="k">대상</span><span class="v">${stripDisclosure(stripTargetLabel(job.targets), job.targets)}</span></div>
+          <div class="cell grow"><span class="k">대상</span><span class="v">${stripDisclosure('targets', stripTargetLabel(job.targets), job.targets)}</span></div>
           <div class="cell grow"><span class="k">${escapeHtml(activity.label)}</span><div class="progress-line">
             <div class="track"><i style="width:${activity.percent}%"></i></div>
             <b>${activity.percent}%</b><small>${activity.done.toLocaleString()} / ${activity.total.toLocaleString()}</small>
           </div></div>
           ${trailing}
         `;
+        rememberDisclosures(strip);
         return;
       }
       strip.innerHTML = `
         <div class="cell"><span class="k">상태</span><span class="v">${pill(job.status, stateClass(job.status))}</span></div>
-        <div class="cell grow"><span class="k">대상</span><span class="v">${stripDisclosure(stripTargetLabel(job.targets), job.targets)}</span></div>
-        <div class="cell"><span class="k">포트</span><span class="v">${stripDisclosure(stripPortLabel(job.ports), job.ports)}</span></div>
+        <div class="cell grow"><span class="k">대상</span><span class="v">${stripDisclosure('targets', stripTargetLabel(job.targets), job.targets)}</span></div>
+        <div class="cell"><span class="k">포트</span><span class="v">${stripDisclosure('ports', stripPortLabel(job.ports), job.ports)}</span></div>
         <div class="cell grow"><span class="k">진행률</span><div class="progress-line">
           <div class="track"><i style="width:${Math.min(100, percent)}%"></i></div>
           <b>${percent}%</b>${counts}
         </div></div>
         <div class="cell"><span class="k">open</span><span class="v num">${open.toLocaleString()}</span></div>
       `;
+      rememberDisclosures(strip);
     }
 
     async function selectScan(scanId) {
@@ -4030,7 +4085,7 @@ ${health.db}` : '데이터베이스 없음';
       $('resultCount').textContent = `조건에 맞는 결과 ${payload.total || 0}건`;
       renderResultTabs(payload);
       renderResultPagination(payload);
-      $('scanResults').innerHTML = results.map((result) => {
+      const resultRows = results.map((result) => {
         const tags = Array.isArray(result.tags) ? result.tags.join(', ') : '';
         const serviceName = text(result.service_name || '');
         const inferredService = text(result.banner || '').includes('inferred from port mapping');
@@ -4056,6 +4111,7 @@ ${health.db}` : '데이터베이스 없음';
           <td>${escapeHtml(result.note || '')}</td>
         </tr>`;
       }).join('') || `<tr><td colspan="9" class="empty">결과가 없습니다</td></tr>`;
+      if (setRows($('scanResults'), resultRows)) {
       document.querySelectorAll('[data-evidence-target]').forEach((input) => {
         input.addEventListener('change', async () => {
           const file = input.files?.[0];
@@ -4093,6 +4149,7 @@ ${health.db}` : '데이터베이스 없음';
           viewImage(link.getAttribute('href'), link.dataset.evidenceView || 'evidence');
         });
       });
+      }
     }
 
     async function refreshPcaps(render = true) {

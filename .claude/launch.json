@@ -1,6 +1,14 @@
 {
   "version": "0.0.1",
   "configurations": [
-    {"name": "netroach", "runtimeExecutable": "python", "runtimeArgs": ["-m", "netroach", "serve", "--port", "8000"], "port": 8000}
+    {
+      "name": "netroach",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m", "netroach", "serve", "--port", "8000",
+        "--db", ".python-test/dashboard-preview.db"
+      ],
+      "port": 8000
+    }
   ]
 }

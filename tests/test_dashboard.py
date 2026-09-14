@@ -461,8 +461,29 @@ class DashboardTargetCompactionTests(unittest.TestCase):
         # the short label, since a full range expression as the summary pushed
         # the numbers beside it out of their cell.
         self.assertIn("compactTargetsHtml(job.targets)", html)
-        self.assertIn("stripDisclosure(stripTargetLabel(job.targets), job.targets)", html)
-        self.assertIn("stripDisclosure(stripPortLabel(job.ports), job.ports)", html)
+        self.assertIn("stripDisclosure('targets', stripTargetLabel(job.targets), job.targets)", html)
+        self.assertIn("stripDisclosure('ports', stripPortLabel(job.ports), job.ports)", html)
+        # Each disclosure carries a key, and the open ones are remembered
+        # outside the markup: a running scan rewrites this strip every 700ms,
+        # which closed the list again before it could be read - on exactly the
+        # wide scans whose targets cannot be read any other way.
+        self.assertIn("state.openDisclosures", html)
+        self.assertIn("data-disclosure=", html)
+
+    def test_unchanged_rows_are_left_alone(self):
+        """A running scan polls every 700ms, and replacing rows drops whatever
+        the operator had selected in them. Measured on a live scan the results
+        table was rewritten six times in four seconds with identical markup, so
+        copying a host out of it was impossible while the scan ran."""
+        html = dashboard_html()
+
+        self.assertIn("function setRows(node, html)", html)
+        self.assertIn("if (node.innerHTML === html) return false;", html)
+        self.assertIn("setRows($('scanResults'), resultRows)", html)
+        self.assertIn("setRows($('scanJobs'), jobRows)", html)
+        # Listeners are re-attached only when the rows really were replaced;
+        # doing it unconditionally would stack a new handler on every poll.
+        self.assertIn("if (setRows($('scanJobs'), jobRows)) {", html)
 
     def test_the_result_toolbar_sits_with_the_results(self):
         """Exports and the lifecycle buttons act on the scan the strip above
