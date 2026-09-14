@@ -1,4 +1,4 @@
-#[cfg(all(windows, feature = "syn-sweep"))]
+#[cfg(windows)]
 mod netlink;
 #[cfg(all(windows, feature = "syn-sweep"))]
 mod syn_runner;
@@ -69,6 +69,15 @@ enum Protocol {
     Udp,
 }
 
+impl Protocol {
+    fn as_str(self) -> &'static str {
+        match self {
+            Protocol::Tcp => "tcp",
+            Protocol::Udp => "udp",
+        }
+    }
+}
+
 #[derive(Parser)]
 struct ScanArgs {
     #[arg(long)]
@@ -99,6 +108,9 @@ struct ScanArgs {
     rate_limit_per_sec: u64,
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(0..=3))]
     udp_retries: u8,
+    /// Probe every address, including ones on this segment that answer no ARP.
+    #[arg(long)]
+    no_host_discovery: bool,
     #[arg(long, value_enum, default_value = "tcp")]
     protocol: Protocol,
     #[arg(long, default_value_t = false)]
@@ -372,6 +384,32 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
         process_rss_bytes: None,
         process_peak_rss_bytes: None,
     };
+
+    // Addresses on our own segment that answer no ARP hold nothing to probe,
+    // and probing them anyway is where a wide scan spends most of its time: a
+    // silent port costs the whole timeout, once per retry, per port. They are
+    // reported rather than dropped, with the reason, so a port stays in the
+    // assessment's table instead of vanishing from it.
+    let absent = if args.no_host_discovery {
+        Vec::new()
+    } else {
+        absent_on_link_hosts(&targets).await
+    };
+    if !absent.is_empty() {
+        for &target in &absent {
+            for &port in &ports {
+                let event = absent_host_event(&scan_id, target, port, protocol);
+                observe_summary(&mut summary, &event.state, 1);
+                emit(&event)?;
+            }
+        }
+    }
+    let absent: std::collections::HashSet<IpAddr> = absent.into_iter().collect();
+    let targets: Vec<IpAddr> = targets
+        .into_iter()
+        .filter(|target| !absent.contains(target))
+        .collect();
+    let planned_attempts = targets.len() * ports.len();
 
     let governor = Arc::new(Governor::new(concurrency));
     let scan_jobs = (0..planned_attempts).map(move |index| scan_job_at(index, &targets, &ports));
@@ -742,7 +780,6 @@ fn answers_everything(open: usize, probed: usize) -> bool {
         && open as f64 >= probed as f64 * ANSWERS_EVERYTHING_RATIO
 }
 
-#[cfg(all(windows, feature = "syn-sweep"))]
 fn observe_summary(summary: &mut SummaryEvent, state: &str, count: usize) {
     summary.total += count;
     match state {
@@ -875,6 +912,90 @@ fn probe_rate(requested: u64, host_count: usize) -> u64 {
 /// so the host that happened to be first carried a load meant to be spread over
 /// the range. Interleaving spreads both without changing what is probed or how
 /// many probes there are.
+/// What is recorded for a port that was never sent to. Saying it stayed quiet
+/// would claim a probe that never happened, which is the wording the sweep
+/// already uses for the same situation.
+const HOST_DID_NOT_ANSWER_ARP: &str = "host did not answer ARP; no probe was sent";
+
+/// How many neighbour resolutions run at once. Each blocks for about three
+/// seconds on an address that never answers, so a /24 serially is a quarter of
+/// an hour; ARP is a broadcast, so this stays well short of flooding a segment
+/// with them.
+const ARP_RESOLVE_CONCURRENCY: usize = 64;
+
+/// The row a port gets when its host was never sent to.
+///
+/// Filtered rather than absent from the results: an assessment's table has a
+/// line per port in scope, and a port that quietly disappeared would read as
+/// one nobody thought to check. The reason travels with it so the row is not
+/// mistaken for a probe that timed out.
+fn absent_host_event(scan_id: &str, host: IpAddr, port: u16, protocol: Protocol) -> PortEvent {
+    PortEvent {
+        event: "port",
+        scan_id: scan_id.to_string(),
+        host: host.to_string(),
+        port,
+        protocol: protocol.as_str(),
+        state: "filtered".to_string(),
+        latency_ms: None,
+        service_name: None,
+        service_confidence: None,
+        banner: None,
+        evidence: None,
+        error: Some(HOST_DID_NOT_ANSWER_ARP.to_string()),
+    }
+}
+
+/// The targets on this machine's own segment that answer no ARP.
+///
+/// Only those. A target behind a router is resolved by the router on our
+/// behalf, so ARP says nothing about whether the target is there, and skipping
+/// it on that evidence would drop a live host out of an assessment. On our own
+/// segment the answer is decisive the other way: an IPv4 packet cannot be
+/// delivered to an on-link address without its MAC.
+///
+/// This machine's own addresses are never called absent - the stack answers
+/// for them without a frame reaching the wire, and a scan of one's own subnet
+/// always includes them.
+#[cfg(windows)]
+async fn absent_on_link_hosts(targets: &[IpAddr]) -> Vec<IpAddr> {
+    let local: std::collections::HashSet<IpAddr> = netlink::local_ipv4_addresses()
+        .into_iter()
+        .map(IpAddr::V4)
+        .collect();
+    let candidates: Vec<std::net::Ipv4Addr> = targets
+        .iter()
+        .filter(|target| !local.contains(target))
+        .filter_map(|target| match target {
+            IpAddr::V4(address) => Some(*address),
+            IpAddr::V6(_) => None,
+        })
+        .collect();
+    stream::iter(candidates)
+        .map(|address| async move {
+            // ResolveIpNetEntry2 blocks, so it cannot run on a worker the
+            // scan's own futures are sharing.
+            let answered =
+                tokio::task::spawn_blocking(move || netlink::on_link_address_answers(address))
+                    .await
+                    .unwrap_or(None);
+            (address, answered)
+        })
+        .buffer_unordered(ARP_RESOLVE_CONCURRENCY)
+        .filter_map(|(address, answered)| async move {
+            (answered == Some(false)).then_some(IpAddr::V4(address))
+        })
+        .collect()
+        .await
+}
+
+/// Nothing to ask elsewhere: ARP is how an address on an Ethernet segment is
+/// found, and this is the only platform the packaged scanner ships for.
+#[cfg(not(windows))]
+async fn absent_on_link_hosts(_targets: &[IpAddr]) -> Vec<IpAddr> {
+    Vec::new()
+}
+
 fn scan_job_at(index: usize, targets: &[IpAddr], ports: &[u16]) -> (IpAddr, u16) {
     (targets[index % targets.len()], ports[index / targets.len()])
 }
@@ -4145,6 +4266,48 @@ mod tests {
         let mut other = reply.clone();
         other[..4].copy_from_slice(b"xxxx");
         assert_eq!(udp_response_matches(111, &call, &other), Some(false));
+    }
+
+    #[test]
+    fn a_host_that_answered_no_arp_keeps_its_row_and_says_why() {
+        // Dropping the row would take the port off an assessment's table, where
+        // it reads as one nobody checked. Measured on a real segment: ten
+        // addresses that answer no ARP still reported twenty ports each, and
+        // not one packet went to them.
+        let event = absent_host_event("scan", "10.0.0.7".parse().unwrap(), 161, Protocol::Udp);
+
+        assert_eq!(event.state, "filtered");
+        assert_eq!(event.protocol, "udp");
+        assert_eq!(event.error.as_deref(), Some(HOST_DID_NOT_ANSWER_ARP));
+        // Nothing was measured, so nothing is reported as measured.
+        assert!(event.latency_ms.is_none());
+        assert!(event.evidence.is_none());
+        assert!(event.service_name.is_none());
+        // The wording is the sweep's, which has reported this case since it
+        // shipped; two spellings of one finding would read as two findings.
+        assert_eq!(
+            HOST_DID_NOT_ANSWER_ARP,
+            "host did not answer ARP; no probe was sent"
+        );
+
+        let mut summary = SummaryEvent {
+            event: "summary",
+            scan_id: "scan".to_string(),
+            engine: "rust",
+            total: 0,
+            open: 0,
+            closed: 0,
+            open_filtered: 0,
+            filtered: 0,
+            error: 0,
+            concurrency_backoffs: 0,
+            concurrency_floor: 1,
+            elapsed_ms: 0.0,
+            process_rss_bytes: None,
+            process_peak_rss_bytes: None,
+        };
+        observe_summary(&mut summary, &event.state, 1);
+        assert_eq!((summary.total, summary.filtered, summary.error), (1, 1, 0));
     }
 
     #[test]

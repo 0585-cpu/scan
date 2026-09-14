@@ -53,6 +53,10 @@ class EngineSettings:
     service_probe: bool = True
     protocol: str = "tcp"
     udp_retries: int = 1
+    # Addresses on the scanner's own segment that answer no ARP hold nothing to
+    # probe, and probing them is where a wide scan spends most of its time.
+    # Off only for a segment where a host is expected not to answer ARP.
+    host_discovery: bool = True
     syn_sweep: bool = False
     syn_retries: int = 1
     plugin_paths: tuple[str, ...] = ()

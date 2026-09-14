@@ -167,6 +167,7 @@ class ScanCreateRequest(BaseModel):
     concurrency: int = Field(default=2000, ge=1, le=MAX_CONCURRENCY)
     rate_limit_per_sec: int = Field(default=5000, ge=1, le=MAX_RATE_LIMIT_PER_SEC)
     udp_retries: int = Field(default=DEFAULT_UDP_RETRIES, ge=0, le=3)
+    host_discovery: bool = True
     syn_sweep: bool = False
     syn_retries: int = Field(default=DEFAULT_SYN_RETRIES, ge=0, le=2)
     service_probe: bool = True
@@ -461,6 +462,7 @@ def create_app(
             service_probe=options["service_probe"],
             protocol=options["protocol"],
             udp_retries=options["udp_retries"],
+            host_discovery=options["host_discovery"],
             syn_sweep=options["syn_sweep"],
             syn_retries=options["syn_retries"],
             plugin_paths=resolved_plugin_paths,
@@ -1556,6 +1558,7 @@ def _scan_params(request: ScanCreateRequest, options: dict[str, Any]) -> dict[st
             "concurrency": options["concurrency"],
             "rate_limit_per_sec": options["rate_limit_per_sec"],
             "udp_retries": options["udp_retries"],
+            "host_discovery": options["host_discovery"],
             "syn_sweep": options["syn_sweep"],
             "syn_retries": options["syn_retries"],
             "service_probe": options["service_probe"],
@@ -1655,6 +1658,7 @@ def _start_scan_recovery(db_path) -> list[threading.Thread]:
                 service_probe=bool(params.get("service_probe", True)),
                 protocol=str(params.get("protocol", "tcp")),
                 udp_retries=int(params.get("udp_retries", DEFAULT_UDP_RETRIES)),
+                host_discovery=bool(params.get("host_discovery", True)),
                 syn_sweep=bool(params.get("syn_sweep", False)),
                 syn_retries=int(params.get("syn_retries", DEFAULT_SYN_RETRIES)),
                 plugin_paths=tuple(str(path) for path in params.get("plugins", ())),

@@ -13,22 +13,34 @@
 //! Getting this wrong returns no answers rather than wrong ones - a SYN sent to
 //! the wrong MAC is dropped by the first switch - so the sweep resolves it once
 //! per target and caches the result.
-#![cfg(all(windows, feature = "syn-sweep"))]
+//! The route and neighbour half of this compiles on Windows whether or not
+//! the sweep does: a connect or UDP scan cannot write a frame, but it still
+//! benefits from knowing that an on-link address answers no ARP at all, which
+//! means nothing is there to probe. Only the parts that hand a frame to pcap
+//! need the sweep's feature.
+#![cfg(windows)]
 use std::net::Ipv4Addr;
 
+#[cfg(feature = "syn-sweep")]
 use windows_sys::core::GUID;
+#[cfg(feature = "syn-sweep")]
 use windows_sys::Win32::NetworkManagement::IpHelper::{
-    ConvertInterfaceIndexToLuid, ConvertInterfaceLuidToGuid, FreeMibTable, GetBestRoute2,
-    GetIfEntry2, GetIpNetEntry2, GetUnicastIpAddressTable, ResolveIpNetEntry2, MIB_IF_ROW2,
+    ConvertInterfaceIndexToLuid, ConvertInterfaceLuidToGuid, GetIfEntry2, MIB_IF_ROW2,
+};
+use windows_sys::Win32::NetworkManagement::IpHelper::{
+    FreeMibTable, GetBestRoute2, GetIpNetEntry2, GetUnicastIpAddressTable, ResolveIpNetEntry2,
     MIB_IPFORWARD_ROW2, MIB_IPNET_ROW2, MIB_UNICASTIPADDRESS_ROW, MIB_UNICASTIPADDRESS_TABLE,
 };
+#[cfg(feature = "syn-sweep")]
 use windows_sys::Win32::NetworkManagement::Ndis::NET_LUID_LH;
 use windows_sys::Win32::Networking::WinSock::{AF_INET, IN_ADDR, SOCKADDR_INET};
 
+#[cfg(feature = "syn-sweep")]
 use crate::syn_sweep::LinkLayer;
 
 /// How to reach one target: the address to send from, and the framing to wrap
 /// the packet in (which carries the source and next-hop MACs).
+#[cfg(feature = "syn-sweep")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Route {
     pub source_ip: Ipv4Addr,
@@ -36,6 +48,7 @@ pub struct Route {
     pub interface_index: u32,
 }
 
+#[cfg(feature = "syn-sweep")]
 /// Why a target could not be addressed. Each names the target or interface so a
 /// failure points at the row that could not be resolved rather than the run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +62,7 @@ pub enum RouteError {
     AmbiguousPcapDevice(String),
 }
 
+#[cfg(feature = "syn-sweep")]
 impl std::fmt::Display for RouteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -65,8 +79,10 @@ impl std::fmt::Display for RouteError {
     }
 }
 
+#[cfg(feature = "syn-sweep")]
 impl std::error::Error for RouteError {}
 
+#[cfg(feature = "syn-sweep")]
 fn format_guid(guid: &GUID) -> String {
     format!(
         "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
@@ -84,6 +100,7 @@ fn format_guid(guid: &GUID) -> String {
     )
 }
 
+#[cfg(feature = "syn-sweep")]
 fn pcap_device_for_guid(guid: &GUID, devices: &[pcap::Device]) -> Result<pcap::Device, RouteError> {
     let guid = format_guid(guid);
     let expected = format!(r"\Device\NPF_{guid}");
@@ -100,6 +117,7 @@ fn pcap_device_for_guid(guid: &GUID, devices: &[pcap::Device]) -> Result<pcap::D
     Ok(matched)
 }
 
+#[cfg(feature = "syn-sweep")]
 pub fn pcap_device_for_interface(
     interface_index: u32,
     devices: &[pcap::Device],
@@ -139,6 +157,7 @@ fn read_in_addr(value: IN_ADDR) -> Ipv4Addr {
 
 /// The MAC of a captured interface, or None when it has none six bytes long
 /// (a tunnel or a virtual adapter that a wired scan would not use anyway).
+#[cfg(feature = "syn-sweep")]
 fn interface_mac(interface_index: u32) -> Option<[u8; 6]> {
     let mut row: MIB_IF_ROW2 = unsafe { std::mem::zeroed() };
     row.InterfaceIndex = interface_index;
@@ -214,8 +233,21 @@ pub fn local_ipv4_addresses() -> Vec<Ipv4Addr> {
     addresses
 }
 
-/// Everything the sweep needs to put a frame on the wire for one target.
-pub fn resolve_route(dest: Ipv4Addr) -> Result<Route, RouteError> {
+/// Where the stack would send a packet for this target. Discovery reads only
+/// `on_link` and the interface; the rest is what the sweep needs to frame a
+/// packet, and is absent from a build without it.
+pub struct BestRoute {
+    pub interface_index: u32,
+    #[cfg_attr(not(feature = "syn-sweep"), allow(dead_code))]
+    pub source_ip: Ipv4Addr,
+    /// The neighbour to resolve: the target itself when it is on our own
+    /// segment, the router otherwise.
+    #[cfg_attr(not(feature = "syn-sweep"), allow(dead_code))]
+    pub next_hop: Ipv4Addr,
+    pub on_link: bool,
+}
+
+fn best_route(dest: Ipv4Addr) -> Option<BestRoute> {
     let destination = sockaddr(dest);
     let mut route: MIB_IPFORWARD_ROW2 = unsafe { std::mem::zeroed() };
     let mut best_source: SOCKADDR_INET = unsafe { std::mem::zeroed() };
@@ -231,20 +263,45 @@ pub fn resolve_route(dest: Ipv4Addr) -> Result<Route, RouteError> {
         )
     };
     if result != 0 {
-        return Err(RouteError::NoRoute(dest));
+        return None;
     }
-
-    let interface_index = route.InterfaceIndex;
-    let source_ip = read_in_addr(unsafe { best_source.Ipv4.sin_addr });
-
     // GetBestRoute2 reports an unspecified next hop when the target is on-link,
     // and the neighbour to resolve is then the target itself.
     let next_hop = read_in_addr(unsafe { route.NextHop.Ipv4.sin_addr });
-    let next_hop = if next_hop.is_unspecified() {
-        dest
-    } else {
-        next_hop
-    };
+    let on_link = next_hop.is_unspecified();
+    Some(BestRoute {
+        interface_index: route.InterfaceIndex,
+        source_ip: read_in_addr(unsafe { best_source.Ipv4.sin_addr }),
+        next_hop: if on_link { dest } else { next_hop },
+        on_link,
+    })
+}
+
+/// Whether an address on our own segment answers ARP.
+///
+/// `None` where the question does not apply: a target behind a router, or one
+/// the stack has no route to at all. ARP is answered by the router for those,
+/// which says nothing about whether the target is there - so a scan must not
+/// read a silent neighbour cache as an absent host and skip it.
+///
+/// On our own segment it is decisive in the other direction. A frame cannot be
+/// delivered to an on-link IPv4 address without its MAC, so an address that
+/// answers no ARP has nothing on it to probe.
+pub fn on_link_address_answers(dest: Ipv4Addr) -> Option<bool> {
+    let route = best_route(dest)?;
+    if !route.on_link {
+        return None;
+    }
+    Some(neighbour_mac(route.interface_index, dest).is_some())
+}
+
+/// Everything the sweep needs to put a frame on the wire for one target.
+#[cfg(feature = "syn-sweep")]
+pub fn resolve_route(dest: Ipv4Addr) -> Result<Route, RouteError> {
+    let route = best_route(dest).ok_or(RouteError::NoRoute(dest))?;
+    let interface_index = route.interface_index;
+    let source_ip = route.source_ip;
+    let next_hop = route.next_hop;
 
     let source_mac =
         interface_mac(interface_index).ok_or(RouteError::NoInterfaceMac(interface_index))?;
@@ -261,7 +318,7 @@ pub fn resolve_route(dest: Ipv4Addr) -> Result<Route, RouteError> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "syn-sweep"))]
 mod tests {
     use windows_sys::core::GUID;
 

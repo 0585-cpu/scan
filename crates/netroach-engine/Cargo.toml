@@ -18,7 +18,12 @@ tokio = { version = "1.39", features = ["full"] }
 tokio-native-tls = "0.3"
 x509-parser = "0.16"
 pcap = { version = "2", optional = true }
-windows-sys = { version = "0.61", optional = true, features = [
+
+# IP Helper answers the routing and neighbour questions. The sweep needs it to
+# address a frame; a connect or UDP scan needs it to know that an address on
+# this segment answers no ARP, which means there is nothing there to probe.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",
     "Win32_Networking_WinSock",
@@ -28,7 +33,7 @@ windows-sys = { version = "0.61", optional = true, features = [
 
 [features]
 default = []
-syn-sweep = ["dep:pcap", "dep:windows-sys"]
+syn-sweep = ["dep:pcap"]
 
 # These drive Npcap directly, so they only build when the sweep feature
 # pulls the pcap crate in - the default build and its tests never touch them.

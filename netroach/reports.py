@@ -826,6 +826,7 @@ def scan_configuration(job: dict[str, Any]) -> list[tuple[str, Any]]:
         ("동시 실행 수", params.get("concurrency")),
         ("초당 속도", params.get("rate_limit_per_sec")),
         ("UDP 재시도", params.get("udp_retries")),
+        ("호스트 탐색", params.get("host_discovery")),
         ("서비스 탐지", params.get("service_probe")),
         ("증적 수집", params.get("capture_evidence", params.get("capture_screenshots"))),
     ]

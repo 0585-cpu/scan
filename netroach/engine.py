@@ -244,6 +244,8 @@ def _build_rust_engine_command(
         command.extend(["--protocol", settings.protocol])
     if settings.service_probe:
         command.append("--service-probe")
+    if not settings.host_discovery:
+        command.append("--no-host-discovery")
     if settings.syn_sweep:
         command.extend(["--syn-sweep", "--syn-retries", str(settings.syn_retries)])
     if plugin_catalog_file is not None:

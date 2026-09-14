@@ -75,6 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--syn-retries", type=int, choices=range(0, 3), help="SYN retries after the initial probe (0-2)")
     scan.add_argument("--no-service-probe", action="store_true", help="disable service fingerprint probes")
     scan.add_argument(
+        "--no-host-discovery",
+        action="store_true",
+        help="probe every address, including ones on this segment that answer no ARP",
+    )
+    scan.add_argument(
         "--capture-evidence",
         dest="capture_evidence",
         action="store_true",
@@ -271,6 +276,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         values=vars(args),
         explicit_fields=cli_explicit_scan_fields(args),
         disable_service_probe=args.no_service_probe,
+        disable_host_discovery=args.no_host_discovery,
     )
     scope = require_active_authorization(args.confirm_authorized, options["scope"])
     targets, target_expr = resolve_targets(
@@ -302,6 +308,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         service_probe=options["service_probe"],
         protocol=options["protocol"],
         udp_retries=options["udp_retries"],
+        host_discovery=options["host_discovery"],
         syn_sweep=options["syn_sweep"],
         syn_retries=options["syn_retries"],
         plugin_paths=plugin_paths,
@@ -461,6 +468,8 @@ def cli_explicit_scan_fields(args: argparse.Namespace) -> set[str]:
         explicit.add("exclude")
     if getattr(args, "no_service_probe", False):
         explicit.add("service_probe")
+    if getattr(args, "no_host_discovery", False):
+        explicit.add("host_discovery")
     return explicit
 
 

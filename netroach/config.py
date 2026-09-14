@@ -46,6 +46,7 @@ class ScanConfig:
     max_hosts: int | None = None
     max_attempts: int | None = None
     udp_retries: int | None = None
+    host_discovery: bool | None = None
     syn_sweep: bool | None = None
     syn_retries: int | None = None
 
@@ -188,6 +189,9 @@ def parse_scan_config(data: dict[str, Any], *, label: str) -> ScanConfig:
         max_hosts=_optional_int(data.get("max_hosts"), f"{label}.max_hosts"),
         max_attempts=_optional_int(data.get("max_attempts"), f"{label}.max_attempts"),
         udp_retries=_optional_int(data.get("udp_retries"), f"{label}.udp_retries"),
+        host_discovery=_optional_bool(
+            data.get("host_discovery"), f"{label}.host_discovery"
+        ),
         syn_sweep=_optional_bool(data.get("syn_sweep"), f"{label}.syn_sweep"),
         syn_retries=_optional_int(data.get("syn_retries"), f"{label}.syn_retries"),
     )
@@ -220,6 +224,11 @@ def merge_scan_configs(configs: Iterable[ScanConfig]) -> ScanConfig:
             max_hosts=config.max_hosts if config.max_hosts is not None else result.max_hosts,
             max_attempts=config.max_attempts if config.max_attempts is not None else result.max_attempts,
             udp_retries=config.udp_retries if config.udp_retries is not None else result.udp_retries,
+            host_discovery=(
+                config.host_discovery
+                if config.host_discovery is not None
+                else result.host_discovery
+            ),
             syn_sweep=config.syn_sweep if config.syn_sweep is not None else result.syn_sweep,
             syn_retries=config.syn_retries if config.syn_retries is not None else result.syn_retries,
         )
@@ -233,6 +242,7 @@ def resolve_scan_options(
     values: dict[str, Any],
     explicit_fields: set[str],
     disable_service_probe: bool = False,
+    disable_host_discovery: bool = False,
 ) -> dict[str, Any]:
     scan = config.effective_scan(env)
     explicit_port_source = any(field in explicit_fields and values.get(field) is not None for field in PORT_SOURCE_FIELDS)
@@ -253,6 +263,11 @@ def resolve_scan_options(
         scan.service_probe,
         DEFAULT_SERVICE_PROBE,
     )
+    host_discovery = _scalar_value(
+        "host_discovery", values, explicit_fields, scan.host_discovery, True
+    )
+    if disable_host_discovery:
+        host_discovery = False
     if disable_service_probe:
         service_probe = False
 
@@ -286,6 +301,7 @@ def resolve_scan_options(
             scan.udp_retries,
             DEFAULT_UDP_RETRIES,
         ),
+        "host_discovery": host_discovery,
         "syn_sweep": _scalar_value(
             "syn_sweep",
             values,

@@ -1645,6 +1645,13 @@
                         <span class="help-tooltip" id="scanUdpServiceProbeHelp" role="tooltip">UDP 스캔에만 적용됩니다. 기본값은 켬입니다. 끄면 0 바이트 하나만 보내, ICMP 도달 불가가 돌아오는 닫힌 포트만 가려냅니다 — 열려 있는 서비스는 그 한 바이트에 응답하지 않으므로 전부 open|filtered로 남습니다. 켜면 포트별 실제 요청(SNMP GetRequest, RIP 라우팅 테이블 요청, SIP OPTIONS 등)을 보내 열린 포트를 확정하지만, 대상 로그와 알람에 남습니다.</span>
                       </div>
                     </div>
+                    <div class="field full">
+                      <div class="scan-help-option">
+                        <label class="check-row" for="scanHostDiscovery"><input id="scanHostDiscovery" name="host_discovery" type="checkbox" checked><span>호스트 탐색</span></label>
+                        <button class="help-trigger" id="scanHostDiscoveryHelpTrigger" type="button" aria-label="호스트 탐색 설명" aria-describedby="scanHostDiscoveryHelp">(?)</button>
+                        <span class="help-tooltip" id="scanHostDiscoveryHelp" role="tooltip">같은 네트워크 대역의 주소 중 ARP에 응답하지 않는 곳에는 프로브를 보내지 않습니다. 이더넷에서는 MAC 없이 패킷을 전달할 수 없으므로, ARP에 답하지 않는 주소에는 점검할 대상이 없습니다. 해당 포트는 결과표에 남고 "프로브를 보내지 않음" 사유가 붙습니다. 라우팅을 거치는 대역에는 적용되지 않습니다 — 그쪽 ARP는 라우터가 대신 답하므로 대상의 생존 여부를 말해주지 않습니다. ARP에 응답하지 않는 장비가 있는 대역에서만 끄십시오.</span>
+                      </div>
+                    </div>
                     <div class="field full authorization-box">
                       <label class="check-row"><input id="scanAuthorized" name="confirm_authorized" type="checkbox" required>스캔 권한을 확인했습니다</label>
                       <span class="helper">소유했거나 명시적으로 허가받은 시스템만 스캔하세요.</span>
@@ -2231,7 +2238,8 @@
     // The authorization checkbox is deliberately absent: a restored tick would
     // defeat the gate that makes every scan a deliberate act.
     const PRESET_FIELDS = ['ports', 'top_ports', 'port_profile', 'protocol', 'concurrency', 'timeout_ms',
-      'rate_limit_per_sec', 'udp_retries', 'tcp_connect_only', 'syn_retries', 'service_probe', 'udp_service_probe'];
+      'rate_limit_per_sec', 'udp_retries', 'tcp_connect_only', 'syn_retries', 'service_probe', 'udp_service_probe',
+      'host_discovery'];
 
     const BUILTIN_SCAN_PRESETS = [
       {id: 'builtin-quick', name: '빠른 점검', builtin: true, values: {top_ports: 100, protocol: 'tcp', service_probe: true}},
@@ -4367,6 +4375,7 @@ ${health.db}` : '데이터베이스 없음';
         concurrency: Number(form.get('concurrency') || 2000),
         rate_limit_per_sec: Number(form.get('rate_limit_per_sec') || 5000),
         udp_retries: Number(form.get('udp_retries') || 0),
+        host_discovery: form.get('host_discovery') === 'on',
         // Checked at submit rather than when the tick is drawn: a saved preset
         // restores tcp_connect_only, so a preset made on a SYN build would
         // otherwise turn SYN back on where the engine cannot do it.
