@@ -76,7 +76,7 @@ Template-based raw packet sending and live capture generally need Npcap and an e
 3. Run `netroach diagnostics`.
 4. Confirm `packet_driver` is `Npcap`, `packet_driver_available` is `true`, and `raw_socket_privileged` is `true`.
 
-TCP connect scanning and file-based PCAP analysis do not require Npcap. Live capture does.
+TCP connect scanning and file-based PCAP analysis do not require Npcap, on the ordinary build and on the SYN-enabled build alike: the SYN build delay-loads the Npcap library, so it starts and scans by connect without the driver and only the SYN sweep itself fails, with a message saying so. Live capture and the SYN sweep do require Npcap.
 
 ## Build The Self-Contained Windows Installer
 

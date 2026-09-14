@@ -59,7 +59,16 @@ def collect_diagnostics() -> DiagnosticReport:
         rust_engine=rust_engine,
         rust_engine_available=rust_engine is not None,
         rust_engine_version=read_engine_version(rust_engine),
-        syn_sweep_available=read_engine_syn_sweep(rust_engine),
+        # Both halves, because either one alone is a scan that cannot run. The
+        # engine answers whether it was built to sweep, which is a compile-time
+        # fact it keeps even on a machine with no driver - and since the SYN
+        # build stopped shipping an Npcap installer, "built for it, driver not
+        # installed yet" is the ordinary state of a fresh install rather than an
+        # edge case. Offering SYN there fails the scan; connect always works.
+        # `bool()` because a platform that cannot say reports the driver as
+        # None, and "cannot say" has to read as no for the same reason every
+        # other uncertain answer here does.
+        syn_sweep_available=bool(read_engine_syn_sweep(rust_engine) and packet.driver_available),
         scapy_available=importlib.util.find_spec("scapy") is not None,
         database_path=os.fspath(default_db_path()),
         packet_driver=packet.driver,

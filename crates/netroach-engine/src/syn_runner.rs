@@ -1,4 +1,4 @@
-//! Windows/Npcap orchestration for the optional IPv4 SYN sweep.
+﻿//! Windows/Npcap orchestration for the optional IPv4 SYN sweep.
 #![cfg(all(windows, feature = "syn-sweep"))]
 
 use anyhow::{anyhow, Context, Result};
@@ -13,6 +13,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Instant};
+use windows_sys::Win32::System::LibraryLoader::LoadLibraryA;
 
 use crate::netlink::{self, pcap_device_for_interface, resolve_route, Route};
 use crate::syn_sweep::{
@@ -227,6 +228,34 @@ pub(crate) fn sweep_rate(requested: u64, host_count: usize) -> u64 {
         .max(SYN_RATE_FLOOR_PER_SEC)
         .min(SYN_RATE_CEILING_PER_SEC);
     requested.min(allowed)
+}
+
+/// Whether the loader can resolve this library on this machine.
+fn library_loadable(name: &std::ffi::CStr) -> bool {
+    // SAFETY: a null-terminated string, and the handle is only tested. Not
+    // freed: where it resolves, this is a library the caller is about to use
+    // anyway, and dropping our reference would buy nothing.
+    !unsafe { LoadLibraryA(name.as_ptr().cast()) }.is_null()
+}
+
+/// Fail with something the operator can act on when Npcap is not installed.
+///
+/// wpcap is delay-loaded, so the engine starts and scans by connect without the
+/// driver - see build.rs. The cost of that is where the absence now shows up:
+/// an unresolved delay-load raises a Win32 exception at the first pcap call
+/// rather than returning an error, and nothing here would catch it, so the
+/// process would end mid-scan with no message. Asking the loader first turns
+/// that into an ordinary failed scan carrying its reason.
+fn ensure_npcap_present() -> Result<()> {
+    if !library_loadable(c"wpcap.dll") {
+        return Err(anyhow!(
+            "Npcap is not installed on this machine, so the SYN sweep has no driver to send \
+             through. Install Npcap from its official installer and leave \"Restrict Npcap \
+             driver's access to Administrators only\" unchecked, or run this scan with TCP \
+             connect scanning, which needs no driver."
+        ));
+    }
+    Ok(())
 }
 
 fn ensure_remote_target(target: Ipv4Addr, source_ip: Ipv4Addr) -> Result<()> {
@@ -644,6 +673,8 @@ pub async fn run_syn_sweep(
     if config.retries > 2 {
         return Err(anyhow!("SYN retries must be between 0 and 2"));
     }
+    // Before the first pcap call, which is the device list below.
+    ensure_npcap_present()?;
 
     let total = targets
         .len()
@@ -926,6 +957,17 @@ mod tests {
     use crate::syn_sweep::{LinkLayer, SynAnswer};
 
     use super::*;
+
+    #[test]
+    fn a_missing_driver_is_told_apart_from_a_present_one() {
+        // The sweep asks this before its first pcap call, because wpcap is
+        // delay-loaded: an unresolved delay-load raises a Win32 exception
+        // instead of returning, which would end the process mid-scan with
+        // nothing said. A wrong answer either way is therefore either a scan
+        // refused on a machine that could run it, or that silent ending.
+        assert!(library_loadable(c"kernel32.dll"));
+        assert!(!library_loadable(c"netroach-no-such-library.dll"));
+    }
 
     #[test]
     fn a_parallel_map_answers_in_the_order_it_was_asked() {

@@ -53,6 +53,48 @@ class EngineSynSweepCapabilityTests(unittest.TestCase):
         self.assertIs(read_engine_syn_sweep(None), False)
 
 
+class SynSweepAvailabilityTests(unittest.TestCase):
+    """A SYN build still needs the driver the build alone cannot supply.
+
+    The engine reports a compile-time fact, which it keeps on a machine with no
+    Npcap - and since the SYN build stopped shipping an Npcap installer, that is
+    the ordinary state of a fresh install.
+    """
+
+    def _report(self, *, engine_can_syn: bool, driver_present: bool):
+        from netroach.diagnostics import PacketCapability, collect_diagnostics
+
+        capability = PacketCapability(
+            driver="Npcap",
+            driver_available=driver_present,
+            elevated=True,
+            raw_socket_privileged=driver_present,
+            note="",
+        )
+        with (
+            patch("netroach.diagnostics.collect_packet_capability", return_value=capability),
+            patch("netroach.diagnostics.resolve_engine_path", return_value="netroach-engine"),
+            patch("netroach.diagnostics.read_engine_syn_sweep", return_value=engine_can_syn),
+            patch("netroach.diagnostics.read_engine_version", return_value="0.2.5"),
+        ):
+            return collect_diagnostics()
+
+    def test_a_syn_build_without_the_driver_does_not_offer_syn(self):
+        report = self._report(engine_can_syn=True, driver_present=False)
+
+        self.assertFalse(report.syn_sweep_available)
+
+    def test_a_syn_build_with_the_driver_offers_syn(self):
+        report = self._report(engine_can_syn=True, driver_present=True)
+
+        self.assertTrue(report.syn_sweep_available)
+
+    def test_a_connect_only_build_never_offers_syn(self):
+        report = self._report(engine_can_syn=False, driver_present=True)
+
+        self.assertFalse(report.syn_sweep_available)
+
+
 class DiagnosticsTests(unittest.TestCase):
     def test_read_engine_version(self):
         completed = subprocess.CompletedProcess(

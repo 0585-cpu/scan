@@ -285,6 +285,64 @@ evidence stored per host: {'127.0.0.1': 10, '127.0.0.2': 3}
 
 DB에 두 호스트 모두 증적 행이 남았다.
 
+## 4-A. Npcap을 따로 설치하는 정책과 지연 로딩 (0.2.5)
+
+0.2.5에서 `--npcap-installer`가 선택이 되면서 SYN 빌드가 Npcap 설치 파일 없이
+나갈 수 있게 됐다. 그 정책에는 딸린 문제가 하나 있었다.
+
+`wpcap.lib`는 임포트 라이브러리라서 링크하면 **`wpcap.dll`이 로드 타임 의존성**이
+된다. `dumpbin /DEPENDENTS`로 확인했다. 로드 타임 의존성은 해결하지 못하면
+프로세스가 **시작 자체를 못 한다**. 바이너리는 하나뿐이므로 결과는:
+
+- Npcap이 없는 PC에서 `netroach-engine.exe`가 실행되지 않음
+- SYN뿐 아니라 **TCP connect와 UDP 스캔까지 전부** 실패
+- 실패가 말이 없다. 실행기는 없는 DLL을 볼 뿐 전달할 메시지가 없다
+
+0.2.4까지는 SYN 빌드에 Npcap 설치 파일이 항상 포함되고 NSIS 훅이 설치를 강제했으니
+일어날 수 없는 상태였다. 정책이 바뀌면서 **갓 설치한 PC의 평범한 초기 상태**가 됐다.
+
+### 고친 방법
+
+`crates/netroach-engine/build.rs`(신규)가 SYN 기능 + Windows MSVC일 때만 붙인다.
+
+```rust
+println!("cargo:rustc-link-arg-bins=/DELAYLOAD:wpcap.dll");
+println!("cargo:rustc-link-arg-bins=delayimp.lib");
+```
+
+`-bins`인 이유: 모든 타깃에 적용하면 wpcap을 직접 쓰지 않고 엔진을 실행만 하는
+통합 테스트 바이너리에도 붙어 `LNK4199` 경고가 난다.
+
+지연 로딩만으로는 부족하다. **해결되지 않은 지연 로드는 값을 돌려주는 대신 Win32
+예외를 일으켜** 프로세스를 그대로 끝낸다. 그래서 첫 pcap 호출(`Device::list()`)
+앞에서 드라이버를 먼저 확인한다.
+
+```rust
+fn library_loadable(name: &CStr) -> bool { ... LoadLibraryA ... }
+```
+
+`run_syn_sweep`의 인자 검증 직후 `ensure_npcap_present()?`가 들어간다.
+
+`syn_sweep_available`도 두 조건을 모두 본다. 엔진이 보고하는 것은 컴파일 타임
+사실이라 드라이버가 없는 기계에서도 참이기 때문이다.
+
+```python
+syn_sweep_available=bool(read_engine_syn_sweep(rust_engine) and packet.driver_available)
+```
+
+### 검증
+
+`dumpbin`으로 `wpcap.dll`이 로드 타임 목록에서 빠지고 지연 로드 목록으로 옮겨간
+것을 확인했고, 라이브러리 이름을 일시적으로 없는 이름으로 바꿔 "Npcap 없음"을
+재현했다.
+
+```
+SYN 스캔  -> Error: Npcap is not installed on this machine, ...  (exit 1, 크래시 없음)
+connect   -> {"event":"summary", "total":1, "open":1, ...}        (같은 바이너리로 동작)
+```
+
+**이것이 핵심이다. connect 스캔이 Npcap 없이 되는 것이 이 수정의 목적이다.**
+
 ## 5. 조정할 만한 상수
 
 | 파일 | 상수 | 값 |
