@@ -2650,6 +2650,13 @@ fn classify_udp_response_with_catalog(
     }
 }
 
+/// The recursion-available bit is the one a reflection finding turns on: a
+/// resolver that offers recursion to a query from outside its own network is
+/// what an attacker aims at a victim, spoofing the victim as the source so the
+/// answer lands there. The scan cannot be that attacker - its socket is
+/// connected and its source address is the machine's own, so every answer
+/// comes back here - but it is what decides whether the port is a finding or a
+/// caption, and the record said only the rcode.
 fn classify_dns_response(port: u16, bytes: &[u8]) -> Option<ServiceFingerprint> {
     if bytes.len() < 12 || bytes[2] & 0x80 == 0 {
         return None;
@@ -2659,11 +2666,19 @@ fn classify_dns_response(port: u16, bytes: &[u8]) -> Option<ServiceFingerprint> 
     let authorities = u16::from_be_bytes([bytes[8], bytes[9]]);
     let additionals = u16::from_be_bytes([bytes[10], bytes[11]]);
     let service = if port == 53 { "dns" } else { "mdns" };
+    // REFUSED is the server declining this source outright, whatever the bit
+    // in the header advertises, and multicast DNS has no recursion to offer.
+    let recursion = match (port, rcode, bytes[3] & 0x80 != 0) {
+        (53, 5, _) => " recursion=refused",
+        (53, _, true) => " recursion=available",
+        (53, _, false) => " recursion=unavailable",
+        _ => "",
+    };
     Some(ServiceFingerprint {
         name: Some(service.to_string()),
         confidence: Some(0.95),
         banner: Some(format!(
-            "{service} response rcode={rcode} answers={answers} authorities={authorities} additionals={additionals}"
+            "{service} response rcode={rcode}{recursion} answers={answers} authorities={authorities} additionals={additionals}"
         )),
     })
 }
@@ -3824,6 +3839,35 @@ mod tests {
         malformed_isakmp[17] = 0x20;
         malformed_isakmp[24..28].copy_from_slice(&1000_u32.to_be_bytes());
         assert!(classify_isakmp_response(&malformed_isakmp).is_none());
+    }
+
+    #[test]
+    fn a_dns_reply_says_whether_it_recurses_for_a_stranger() {
+        // A resolver that recurses for a source outside its own network is
+        // what a reflection attack is pointed at. The record carried the rcode
+        // and the section counts, which do not distinguish that resolver from
+        // an authoritative server that answers nobody else's questions.
+        let header = |flags: [u8; 2]| {
+            let mut bytes = vec![b'S', b'P', flags[0], flags[1]];
+            bytes.extend_from_slice(&[0, 1, 0, 0, 0, 0, 0, 0]);
+            bytes
+        };
+        let banner = |flags: [u8; 2]| {
+            classify_dns_response(53, &header(flags))
+                .and_then(|fingerprint| fingerprint.banner)
+                .unwrap_or_default()
+        };
+        // QR set, RA set, NXDOMAIN: it answered our question and offers more.
+        assert!(banner([0x81, 0x83]).contains("recursion=available"));
+        // QR set, RA clear: authoritative only.
+        assert!(banner([0x81, 0x03]).contains("recursion=unavailable"));
+        // REFUSED outranks the advertised bit - it declined this source.
+        assert!(banner([0x81, 0x85]).contains("recursion=refused"));
+        // Multicast DNS has no recursion to offer and is not asked about it.
+        let mdns = classify_dns_response(5353, &header([0x81, 0x80]))
+            .and_then(|fingerprint| fingerprint.banner)
+            .unwrap_or_default();
+        assert!(!mdns.contains("recursion"), "{mdns}");
     }
 
     #[test]
