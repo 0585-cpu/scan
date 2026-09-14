@@ -2525,6 +2525,17 @@
       return Boolean(state.health);
     }
 
+    // Why SYN is unavailable, which decides what the operator is asked to do.
+    // syn_sweep_available needs both the build and the driver, and the two have
+    // opposite remedies: a build without the feature needs a different build,
+    // while a build with it needs Npcap installed. Since the SYN build stopped
+    // shipping an Npcap installer, the second is the ordinary state of a fresh
+    // install - and telling that operator to go and find another build sends
+    // them after the one thing that is already correct.
+    function npcapMissing() {
+      return state.health?.diagnostics?.packet_driver_available === false;
+    }
+
     // Reads only the form's current values - no network calls, no side effects.
     function estimateScanScale() {
       const targets = asList($('scanTargets').value);
@@ -4262,7 +4273,9 @@ ${health.db}` : '데이터베이스 없음';
       if (!tcp) $('scanConnectOnly').checked = false;
       $('scanConnectOnlyHelp').textContent = syn
         ? '기본은 Npcap 기반 SYN 스캔입니다. 선택하면 SYN을 사용하지 않고 모든 TCP 포트에 연결합니다.'
-        : '이 빌드는 SYN 스캔을 지원하지 않아 TCP Connect 스캔만 사용합니다. SYN을 쓰려면 Npcap을 포함한 빌드가 필요합니다.';
+        : npcapMissing()
+          ? 'SYN 스캔에는 Npcap이 필요한데 이 PC에서 찾지 못했습니다. 공식 Npcap 설치 파일로 설치하고 "Restrict Npcap driver\'s access to Administrators only"를 체크하지 않은 뒤 Netroach를 다시 시작하세요. 그때까지는 TCP Connect 스캔만 사용합니다.'
+          : '이 빌드는 SYN 스캔을 지원하지 않아 TCP Connect 스캔만 사용합니다.';
     }
 
     $('scanForm').addEventListener('submit', async (event) => {

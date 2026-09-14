@@ -1,10 +1,11 @@
 """Exercise the shipped dashboard in Chromium against an isolated real API/DB.
 
-Install the desktop-build extra and Chromium, or set PLAYWRIGHT_BROWSERS_PATH
-to the packaged browser directory. No packets are sent and no user DB is read.
+Chromium comes from the packaged browser directory in this repository unless
+PLAYWRIGHT_BROWSERS_PATH says otherwise. No packets are sent and no user DB is read.
 """
 
 import base64
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,25 @@ from netroach.dashboard import dashboard_html
 from netroach.models import PortResult
 from netroach.storage import SQLiteRepository
 
+BUNDLED_BROWSERS = Path(__file__).resolve().parents[1] / "desktop" / "src-tauri" / "resources" / "playwright"
+
+
+def use_bundled_browser() -> None:
+    """Point Playwright at the browser this repository already carries.
+
+    Without this the suite skips under the plain `pytest` the project
+    documents, because Chromium is not on Playwright's default path - and a
+    skipped suite reads as a passing one. What it guards is not spare: the
+    fixtures here cover the SYN-versus-Connect regression that reached users in
+    0.2.4, so the guard for a bug that already shipped would be inert in the
+    only command anyone runs.
+
+    An explicit setting wins, so a machine with its own browsers keeps them.
+    """
+    if os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or not BUNDLED_BROWSERS.is_dir():
+        return
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(BUNDLED_BROWSERS)
+
 
 class DashboardBrowserTests(unittest.TestCase):
     @classmethod
@@ -24,6 +44,7 @@ class DashboardBrowserTests(unittest.TestCase):
             from playwright.sync_api import sync_playwright
         except ImportError:
             raise unittest.SkipTest("playwright is not installed") from None
+        use_bundled_browser()
         cls.playwright = sync_playwright().start()
         try:
             cls.browser = cls.playwright.chromium.launch()
@@ -196,6 +217,34 @@ class DashboardBrowserTests(unittest.TestCase):
         self.page.locator("#scanReset").click()
         self.assertFalse(self.page.locator("#scanConnectOnly").is_disabled())
         self.assertFalse(self.page.locator("#scanConnectOnly").is_checked())
+
+    def test_an_unavailable_syn_scan_names_the_remedy_it_actually_has(self):
+        """A missing driver and a build without the feature need opposite things.
+
+        The SYN build stopped shipping an Npcap installer, so "built for SYN,
+        driver not installed yet" is the ordinary state of a fresh install.
+        Telling that operator they need a build that includes Npcap sends them
+        after the one part that is already correct.
+        """
+        cases = [
+            (False, "Npcap이 필요한데 이 PC에서 찾지 못했습니다", "포함한 빌드"),
+            (True, "이 빌드는 SYN 스캔을 지원하지 않아", "설치 파일로 설치"),
+        ]
+        for driver_present, expected, forbidden in cases:
+            with self.subTest(driver_present=driver_present):
+                self.page.evaluate(
+                    "present => { state.health.diagnostics.syn_sweep_available = false;"
+                    " state.health.diagnostics.packet_driver_available = present;"
+                    " updateTcpScanAvailability(); }",
+                    driver_present,
+                )
+                help_text = self.page.locator("#scanConnectOnlyHelp").inner_text()
+
+                self.assertIn(expected, help_text)
+                self.assertNotIn(forbidden, help_text)
+                # Either way the scan that does work is the one left selected.
+                self.assertTrue(self.page.locator("#scanConnectOnly").is_checked())
+                self.assertTrue(self.page.locator("#scanConnectOnly").is_disabled())
 
     def test_scan_help_descriptions_open_from_their_question_mark(self):
         cases = [

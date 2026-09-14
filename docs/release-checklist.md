@@ -46,6 +46,14 @@ py -3 tools\smoke_package.py dist-smoke-engine --require-engine
 
 py -3 tools\package.py --archive-format tar.gz --target-platform linux-x86_64 --output-dir dist-smoke-tar
 py -3 tools\smoke_package.py dist-smoke-tar
+```
+
+The browser suite finds the bundled Chromium on its own, so `pytest` runs it with no
+environment set. Confirm it reports passes rather than skips - a skipped browser suite reads
+as a passing one, and it carries the SYN-versus-Connect regression fixture.
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q tests\test_dashboard_browser.py
 
 .\.venv\Scripts\python.exe -m pip install -e ".[desktop-build]"
 .\.venv\Scripts\python.exe tools\build_desktop.py --prepare-only
@@ -74,7 +82,7 @@ The final desktop command requires Node.js/npm, the Rust MSVC toolchain, and Vis
 - Create an HTTP OAST session, call its `/oast/<token>` URL locally, and confirm the interaction is stored.
 - Confirm packet sending diagnostics report `packet_driver`, `packet_driver_available`, `elevated`, `raw_socket_privileged`, and a useful Windows Npcap or macOS/Linux privilege note.
 - Install the desktop bundle on a clean Windows VM without Python, Node.js, or Rust; verify startup, an authorized loopback scan, database persistence after restart, and backend termination after the window closes.
-- For a normal SYN-enabled bundle, start with a VM that has no Npcap. Confirm Netroach installs but SYN stays unavailable with actionable official-install guidance while TCP Connect remains usable. Install official Npcap directly with administrator-only access unchecked, verify Npcap 1.88+ and `AdminOnly=0`, restart Netroach, then compare a bounded authorized LAN SYN scan with the connect scan.
+- For a normal SYN-enabled bundle, start with a VM that has no Npcap. Confirm Netroach installs but SYN stays unavailable with actionable official-install guidance while TCP Connect remains usable. Install official Npcap directly with administrator-only access unchecked, verify Npcap 1.88+ and `AdminOnly=0`, restart Netroach, then compare a bounded authorized LAN SYN scan with the connect scan. Run one of the two VM passes with **Install Npcap in WinPcap API-compatible Mode** unchecked: that install leaves `wpcap.dll` only in `System32\Npcap`, which the loader does not search, and it is the case the engine's own directory lookup exists for.
 - Uninstall Netroach and confirm the shared Npcap driver remains installed.
 - On the clean offline VM, enable evidence capture against an authorized local HTTP service and confirm a `web_screenshot` PNG is stored without downloading Chromium.
 

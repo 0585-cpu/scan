@@ -13,7 +13,9 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Instant};
-use windows_sys::Win32::System::LibraryLoader::LoadLibraryA;
+use windows_sys::Win32::System::LibraryLoader::{
+    LoadLibraryA, LoadLibraryExW, LOAD_WITH_ALTERED_SEARCH_PATH,
+};
 
 use crate::netlink::{self, pcap_device_for_interface, resolve_route, Route};
 use crate::syn_sweep::{
@@ -238,24 +240,62 @@ fn library_loadable(name: &std::ffi::CStr) -> bool {
     !unsafe { LoadLibraryA(name.as_ptr().cast()) }.is_null()
 }
 
-/// Fail with something the operator can act on when Npcap is not installed.
-///
-/// wpcap is delay-loaded, so the engine starts and scans by connect without the
-/// driver - see build.rs. The cost of that is where the absence now shows up:
-/// an unresolved delay-load raises a Win32 exception at the first pcap call
-/// rather than returning an error, and nothing here would catch it, so the
-/// process would end mid-scan with no message. Asking the loader first turns
-/// that into an ordinary failed scan carrying its reason.
-fn ensure_npcap_present() -> Result<()> {
-    if !library_loadable(c"wpcap.dll") {
-        return Err(anyhow!(
-            "Npcap is not installed on this machine, so the SYN sweep has no driver to send \
-             through. Install Npcap from its official installer and leave \"Restrict Npcap \
-             driver's access to Administrators only\" unchecked, or run this scan with TCP \
-             connect scanning, which needs no driver."
-        ));
+/// Where Npcap puts its libraries, which is not a directory the loader searches.
+fn npcap_directory() -> std::path::PathBuf {
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+    std::path::PathBuf::from(root).join("System32").join("Npcap")
+}
+
+/// Load a library by its full path, letting its own directory satisfy what it
+/// depends on in turn - wpcap needs Packet.dll from beside it.
+fn load_library_from(path: &std::path::Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: a null-terminated wide path, and the handle is only tested.
+    !unsafe {
+        LoadLibraryExW(
+            wide.as_ptr(),
+            std::ptr::null_mut(),
+            LOAD_WITH_ALTERED_SEARCH_PATH,
+        )
     }
-    Ok(())
+    .is_null()
+}
+
+/// Put Npcap's library in this process, or say why the sweep cannot run.
+///
+/// Two things make this necessary. wpcap is delay-loaded so the engine starts
+/// and scans by connect without the driver - see build.rs - and an unresolved
+/// delay-load raises a Win32 exception at the first pcap call rather than
+/// returning, which would end the process mid-scan with nothing said.
+///
+/// And the loader does not find Npcap on its own. Npcap installs its libraries
+/// into System32\Npcap, which is not on the default search path; only its
+/// optional "Install Npcap in WinPcap API-compatible Mode" also drops a copy in
+/// System32 where a plain load finds it. Left to the default search, an install
+/// without that option reads as no install at all - a machine that can sweep
+/// being told to go and install what it already has. So the directory is tried
+/// by name too.
+///
+/// Loading it here is what makes the delay-load work afterwards: a later
+/// resolution of "wpcap.dll" finds the module already in the process rather
+/// than searching for it again.
+fn ensure_npcap_present() -> Result<()> {
+    if library_loadable(c"wpcap.dll") || load_library_from(&npcap_directory().join("wpcap.dll")) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "Npcap was not found on this machine, so the SYN sweep has no driver to send through. \
+         Install it from the official Npcap installer, leaving \"Restrict Npcap driver's access \
+         to Administrators only\" unchecked, and start Netroach again - or run this scan with TCP \
+         connect scanning, which needs no driver. Looked for wpcap.dll on the library search \
+         path and in {}.",
+        npcap_directory().display()
+    ))
 }
 
 fn ensure_remote_target(target: Ipv4Addr, source_ip: Ipv4Addr) -> Result<()> {
@@ -957,6 +997,29 @@ mod tests {
     use crate::syn_sweep::{LinkLayer, SynAnswer};
 
     use super::*;
+
+    #[test]
+    fn npcap_is_looked_for_in_its_own_directory_too() {
+        // Npcap installs into System32\Npcap, which the loader does not search.
+        // Only its optional WinPcap-compatible mode also drops a copy where a
+        // plain load finds it, so without this an ordinary install reads as no
+        // install and the operator is told to go and get what they have.
+        let directory = npcap_directory();
+
+        assert!(directory.ends_with(std::path::Path::new("System32").join("Npcap")));
+        // The mechanism that reaches it: a full path resolves, a wrong one does
+        // not. Checked against a library every Windows machine has, so the
+        // answer does not depend on what is installed here.
+        assert!(load_library_from(
+            &npcap_directory()
+                .parent()
+                .expect("System32")
+                .join("kernel32.dll")
+        ));
+        assert!(!load_library_from(std::path::Path::new(
+            r"C:\netroach-no-such-directory\wpcap.dll"
+        )));
+    }
 
     #[test]
     fn a_missing_driver_is_told_apart_from_a_present_one() {
