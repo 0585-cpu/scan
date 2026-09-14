@@ -1126,7 +1126,9 @@ async fn scan_udp_one(
         }
     };
     if let Err(err) = socket.connect(addr).await {
-        return udp_error_event(scan_id, host, port, start, err, "socket connect error");
+        // This is where an unreachable address surfaces - the send never
+        // happens - so it is the path that has to make the judgement.
+        return udp_error_or_closed_event(scan_id, host, port, start, err, "socket connect error");
     }
     // Service detection off means the neutral probe: a single zero byte,
     // which no service can act on. The probes are real protocol requests -
@@ -1155,7 +1157,7 @@ async fn scan_udp_one(
         // seconds of latency on a service answering in two milliseconds.
         let sent = Instant::now();
         if let Err(err) = socket.send(&payload).await {
-            return udp_error_or_closed_event(scan_id, host, port, start, err);
+            return udp_error_or_closed_event(scan_id, host, port, start, err, "socket error");
         }
         let attempted = u16::from(attempt) + 1;
         match timeout(timeout_duration, socket.recv(&mut buf)).await {
@@ -1195,7 +1197,9 @@ async fn scan_udp_one(
                     ),
                 );
             }
-            Ok(Err(err)) => return udp_error_or_closed_event(scan_id, host, port, start, err),
+            Ok(Err(err)) => {
+                return udp_error_or_closed_event(scan_id, host, port, start, err, "socket error")
+            }
             Err(_) => {}
         }
         if attempt < retries {
@@ -1218,7 +1222,10 @@ async fn scan_udp_one(
             replies_seen,
             service_probe,
         )),
-        error: None,
+        // The same reason a filtered TCP row carries, and what lets the
+        // governor tell a probe that went missing from one that was answered
+        // by something it could not correlate.
+        error: (replies_seen == 0).then(|| "timeout".to_string()),
     }
 }
 
@@ -1269,33 +1276,53 @@ fn udp_no_answer_evidence(attempts: u16, replies_seen: u32, service_probe: bool)
     format!("no UDP response after {attempts} attempt(s) (open|filtered{mode})")
 }
 
+/// Map a failed UDP send or receive to a port state.
+///
+/// A refusal is the ICMP port unreachable the OS hands back - WSAECONNRESET on
+/// Windows, ECONNREFUSED elsewhere - so the port is closed. Past that this is
+/// the judgement the TCP path already makes and UDP never got: an unreachable
+/// answer comes from a router or a firewall on the path, which is filtering
+/// and is a finding, and calling it an error files it under the bucket the
+/// report describes as a local fault. Measured against one address, TCP called
+/// os error 10051 filtered while UDP called the same error an error.
+fn udp_error_state(kind: std::io::ErrorKind) -> &'static str {
+    match kind {
+        // TCP reaches this only mid-stream, where it is not a closed port; on
+        // a connected UDP socket it is how Windows delivers the unreachable.
+        std::io::ErrorKind::ConnectionReset => "closed",
+        other => tcp_error_state(other),
+    }
+}
+
 fn udp_error_or_closed_event(
     scan_id: &str,
     host: String,
     port: u16,
     start: Instant,
     err: std::io::Error,
+    local_fault: &str,
 ) -> PortEvent {
-    if matches!(
-        err.kind(),
-        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::ConnectionReset
-    ) {
-        PortEvent {
-            event: "port",
-            scan_id: scan_id.to_string(),
-            host,
-            port,
-            protocol: "udp",
-            state: "closed".to_string(),
-            latency_ms: Some(round2(start.elapsed().as_secs_f64() * 1000.0)),
-            service_name: None,
-            service_confidence: None,
-            banner: None,
-            evidence: Some("icmp port unreachable reported by OS".to_string()),
-            error: Some(err.to_string()),
-        }
-    } else {
-        udp_error_event(scan_id, host, port, start, err, "socket error")
+    let state = udp_error_state(err.kind());
+    if state == "error" {
+        return udp_error_event(scan_id, host, port, start, err, local_fault);
+    }
+    PortEvent {
+        event: "port",
+        scan_id: scan_id.to_string(),
+        host,
+        port,
+        protocol: "udp",
+        state: state.to_string(),
+        latency_ms: Some(round2(start.elapsed().as_secs_f64() * 1000.0)),
+        service_name: None,
+        service_confidence: None,
+        banner: None,
+        evidence: Some(if state == "closed" {
+            "icmp port unreachable reported by OS".to_string()
+        } else {
+            "unreachable reported by OS on the path to the host".to_string()
+        }),
+        error: Some(err.to_string()),
     }
 }
 
@@ -2262,8 +2289,17 @@ impl Governor {
             .expect("the governor semaphore is never closed")
     }
 
+    /// A probe that went out and drew nothing at all.
+    ///
+    /// This used to read only `filtered`, which a UDP scan never produces, so
+    /// the backoff was inert on the one protocol whose stack does not
+    /// retransmit and where loss is the ordinary failure. A UDP port that drew
+    /// no reply is `open|filtered` and carries the same timeout reason; one
+    /// that drew a reply it could not correlate does not, because something
+    /// answered and nothing was lost.
     fn timed_out(event: &PortEvent) -> bool {
-        event.state == "filtered" && event.error.as_deref() == Some("timeout")
+        matches!(event.state.as_str(), "filtered" | "open|filtered")
+            && event.error.as_deref() == Some("timeout")
     }
 
     /// True when this timeout is the one in `GOVERNOR_SAMPLE_EVERY` to retry.
@@ -4112,6 +4148,80 @@ mod tests {
     }
 
     #[test]
+    fn udp_calls_an_unreachable_answer_filtering_the_way_tcp_does() {
+        // Measured on one address before this: TCP reported os error 10051 as
+        // filtered and UDP reported the same error as an error, which files a
+        // real finding under the bucket the report calls a local fault.
+        use std::io::ErrorKind;
+        for kind in [ErrorKind::HostUnreachable, ErrorKind::NetworkUnreachable] {
+            assert_eq!(udp_error_state(kind), "filtered", "{kind:?}");
+            assert_eq!(udp_error_state(kind), tcp_error_state(kind), "{kind:?}");
+        }
+        // A refusal is still a closed port, and on a connected UDP socket
+        // Windows delivers the port unreachable as a reset - which mid-stream
+        // TCP would not treat as closed at all.
+        assert_eq!(udp_error_state(ErrorKind::ConnectionRefused), "closed");
+        assert_eq!(udp_error_state(ErrorKind::ConnectionReset), "closed");
+        assert_eq!(tcp_error_state(ErrorKind::ConnectionReset), "error");
+        // And a local fault is still ours.
+        assert_eq!(udp_error_state(ErrorKind::AddrInUse), "error");
+
+        // The judgement has to be made where the failure actually surfaces.
+        // An unreachable address fails at connect, before a datagram is sent,
+        // and that path had an event of its own that skipped the mapping - so
+        // the first fix changed nothing a scan could see.
+        let unreachable = udp_error_or_closed_event(
+            "s",
+            "240.0.0.1".to_string(),
+            161,
+            Instant::now(),
+            std::io::Error::from(ErrorKind::NetworkUnreachable),
+            "socket connect error",
+        );
+        assert_eq!(unreachable.state, "filtered");
+        let local = udp_error_or_closed_event(
+            "s",
+            "240.0.0.1".to_string(),
+            161,
+            Instant::now(),
+            std::io::Error::from(ErrorKind::AddrInUse),
+            "socket connect error",
+        );
+        assert_eq!(local.state, "error");
+        assert_eq!(local.evidence.as_deref(), Some("socket connect error"));
+    }
+
+    #[test]
+    fn the_governor_can_see_a_udp_probe_go_missing() {
+        // The backoff halves concurrency when sampled retries start answering,
+        // which means packets are being lost. It read only `filtered`, which a
+        // UDP scan never produces, so the protection was off on the protocol
+        // whose stack does not retransmit.
+        let row = |state: &str, error: Option<&str>| PortEvent {
+            event: "port",
+            scan_id: "s".to_string(),
+            host: "10.0.0.1".to_string(),
+            port: 161,
+            protocol: "udp",
+            state: state.to_string(),
+            latency_ms: None,
+            service_name: None,
+            service_confidence: None,
+            banner: None,
+            evidence: None,
+            error: error.map(str::to_string),
+        };
+
+        assert!(Governor::timed_out(&row("open|filtered", Some("timeout"))));
+        assert!(Governor::timed_out(&row("filtered", Some("timeout"))));
+        // A reply that could not be correlated is not a lost packet: something
+        // answered, so that row carries no timeout and must not be sampled.
+        assert!(!Governor::timed_out(&row("open|filtered", None)));
+        assert!(!Governor::timed_out(&row("open", None)));
+        assert!(!Governor::timed_out(&row("closed", Some("whatever"))));
+    }
+
+    #[test]
     fn a_reply_too_long_to_read_is_still_a_service_answering() {
         // Windows fails an oversized receive rather than truncating it, and
         // the failure was filed as a socket error: measured, a 4000 byte
@@ -4315,6 +4425,7 @@ mod tests {
             9,
             Instant::now(),
             std::io::Error::from(std::io::ErrorKind::ConnectionReset),
+            "socket error",
         );
         assert_eq!(event.state, "closed");
         assert_eq!(
