@@ -1640,9 +1640,9 @@
                     </div>
                     <div class="field full">
                       <div class="scan-help-option">
-                        <label class="check-row" for="scanUdpServiceProbe"><input id="scanUdpServiceProbe" name="udp_service_probe" type="checkbox"><span>UDP 서비스 탐지</span></label>
+                        <label class="check-row" for="scanUdpServiceProbe"><input id="scanUdpServiceProbe" name="udp_service_probe" type="checkbox" checked><span>UDP 서비스 탐지</span></label>
                         <button class="help-trigger" id="scanUdpServiceProbeHelpTrigger" type="button" aria-label="UDP 서비스 탐지 설명" aria-describedby="scanUdpServiceProbeHelp">(?)</button>
-                        <span class="help-tooltip" id="scanUdpServiceProbeHelp" role="tooltip">UDP 스캔에만 적용됩니다. 끄면 0 바이트 하나만 보내 닫힌 포트만 가려냅니다. 켜면 포트별 실제 요청(SNMP GetRequest, RIP 라우팅 테이블 요청, SIP OPTIONS 등)을 보내 열린 포트를 확정하지만, 대상 로그와 알람에 남습니다.</span>
+                        <span class="help-tooltip" id="scanUdpServiceProbeHelp" role="tooltip">UDP 스캔에만 적용됩니다. 기본값은 켬입니다. 끄면 0 바이트 하나만 보내, ICMP 도달 불가가 돌아오는 닫힌 포트만 가려냅니다 — 열려 있는 서비스는 그 한 바이트에 응답하지 않으므로 전부 open|filtered로 남습니다. 켜면 포트별 실제 요청(SNMP GetRequest, RIP 라우팅 테이블 요청, SIP OPTIONS 등)을 보내 열린 포트를 확정하지만, 대상 로그와 알람에 남습니다.</span>
                       </div>
                     </div>
                     <div class="field full authorization-box">
@@ -2247,7 +2247,7 @@
       // too, so this goes out slowly on purpose.
       {id: 'builtin-udp', name: 'UDP 주요 포트', builtin: true, values: {
         ports: '53,69,111,123,137,161,162,500,520,1434,1900,3702,5060,5353,5683,11211',
-        protocol: 'udp', udp_service_probe: false, udp_retries: 2, timeout_ms: 3000,
+        protocol: 'udp', udp_service_probe: true, udp_retries: 2, timeout_ms: 3000,
         concurrency: 32, rate_limit_per_sec: 200}}
     ];
 

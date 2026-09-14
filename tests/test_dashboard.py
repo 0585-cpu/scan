@@ -804,24 +804,27 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("rate_limit_per_sec: 200", preset)
         self.assertIn("rate_limit_per_sec", html.split("const PRESET_FIELDS", 1)[1].split(";", 1)[0])
 
-    def test_udp_service_detection_is_its_own_tick_and_starts_off(self):
-        """On UDP the tick decides what packet leaves the machine, not merely
-        whether a reply is named: a router asked for its whole routing table is
-        not the same scan as one zero byte. So the quiet scan is what a UDP
-        scan does unless the operator asks for the probes."""
+    def test_udp_service_detection_is_its_own_tick_and_starts_on(self):
+        """On UDP the tick decides what packet leaves the machine, and the
+        quiet packet asks nothing: a listening service does not answer one zero
+        byte, so unticked the scan can report closed - which the OS's ICMP
+        unreachable settles - and nothing else. Every open port reads
+        open|filtered, measured against a portmapper that was plainly there.
+        The probes are what lets a UDP scan say open at all, so they are what
+        it does by default. Unticking stays available for a scope that forbids
+        protocol traffic, and the tooltip says which probes those are.
+        """
         html = dashboard_html()
 
         box = html.split('id="scanUdpServiceProbe"', 1)[1].split("</div>", 1)[0]
-        # Unticked: `checked` would fall inside this slice if it were there.
-        self.assertNotIn("checked", box)
+        self.assertIn("checked", box)
         self.assertIn('aria-describedby="scanUdpServiceProbeHelp"', box)
         self.assertIn("RIP", box)
         # A scan is one protocol, so one of the two ticks answers for it.
         self.assertIn("service_probe: tcp ? tcpServiceProbe", html)
         self.assertIn("form.get('udp_service_probe') === 'on'", html)
-        # And the preset does not turn the probes on behind the operator.
         preset = html.split("id: 'builtin-udp'", 1)[1].split("}}", 1)[0]
-        self.assertIn("udp_service_probe: false", preset)
+        self.assertIn("udp_service_probe: true", preset)
 
     def test_the_stop_is_its_own_button_not_the_start_one_relabelled(self):
         """One control that swaps between two opposite actions meant a second

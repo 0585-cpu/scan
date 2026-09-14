@@ -202,6 +202,7 @@ class DashboardBrowserTests(unittest.TestCase):
         cases = [("tcp", False, False, True, False, False),
                  ("tcp", False, True, True, True, True),
                  ("tcp", True, True, False, True, True),
+                 ("udp", False, True, False, True, False),
                  ("udp", False, False, False, False, False)]
         for protocol, connect, probe, want_syn, want_probe, want_evidence in cases:
             with self.subTest(protocol=protocol, connect=connect, probe=probe):
@@ -209,6 +210,8 @@ class DashboardBrowserTests(unittest.TestCase):
                 if protocol == "tcp":
                     self.page.locator("#scanConnectOnly").set_checked(connect)
                     self.page.locator('[name="service_probe"]').set_checked(probe)
+                else:
+                    self.page.locator('[name="udp_service_probe"]').set_checked(probe)
                 self.page.locator("#scanAuthorized").check()
                 with self.page.expect_response(lambda r: r.request.method == "POST"):
                     self.page.locator("#scanSubmit").click()
