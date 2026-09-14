@@ -2,6 +2,13 @@
 
 All notable Netroach changes are tracked here.
 
+## 0.2.6 - 2026-09-14
+
+- Start the SYN-enabled engine on a machine that has no Npcap. Linking Npcap's import library made `wpcap.dll` a load-time dependency, so the one binary that also carries connect and UDP scanning could not start at all without the driver - and said nothing, because the launcher sees a missing DLL rather than a message. The library is delay-loaded now, and the sweep asks for it before its first call so a forced SYN scan fails with a sentence naming Npcap instead of ending the process.
+- Find Npcap where it actually installs. `System32\Npcap` is not on the loader's search path; only Npcap's optional WinPcap API-compatible mode also leaves a copy where a plain load finds it. That directory is tried by name too, so an ordinary install is no longer read as no install at all.
+- Offer SYN only when the driver is present as well as the feature, and say which of the two is missing. The form told every operator that a build including Npcap was needed - true while the SYN build carried an installer, and exactly wrong for the fresh install that is now the ordinary case.
+- Run the Chromium dashboard suite under the plain `pytest` the project documents. It skipped without an environment variable, and a skipped suite reads as a passing one - while carrying the fixture for the SYN-versus-Connect regression that reached users in 0.2.4.
+
 ## 0.2.5 - 2026-09-13
 
 - Applied the scoped ControlDeck 2001 dashboard theme: Windows 2000-style title bars, raised controls, sunken inputs, charcoal readouts, grid tables, visible focus, forced-colors support, and compact mobile navigation without changing existing IDs or authorization states.
