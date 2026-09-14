@@ -220,7 +220,7 @@ impl RuntimePluginCatalog {
             .map(|rule| ServiceFingerprint {
                 name: Some(rule.service.clone()),
                 confidence: Some(rule.confidence),
-                banner: Some(clean_banner(&String::from_utf8_lossy(data))),
+                banner: Some(banner_from_bytes(data)),
             })
     }
 }
@@ -1450,7 +1450,9 @@ fn classify_passive_bytes(bytes: &[u8], known: Option<&str>) -> Option<ServiceFi
             banner: Some(tls),
         });
     }
-    let banner = String::from_utf8_lossy(bytes).to_string();
+    // Negotiation removed first: a telnet server sends it before any text,
+    // and every check below reads this as if it were the service's greeting.
+    let banner = String::from_utf8_lossy(&strip_telnet_negotiation(bytes)).to_string();
     let lower = banner.to_ascii_lowercase();
     if lower.starts_with("ssh-") {
         return Some(ServiceFingerprint {
@@ -2444,7 +2446,7 @@ fn classify_udp_response_with_catalog(
         return ServiceFingerprint {
             name: Some("ssdp".to_string()),
             confidence: Some(0.90),
-            banner: Some(clean_banner(&String::from_utf8_lossy(bytes))),
+            banner: Some(banner_from_bytes(bytes)),
         };
     }
     if port == 3702
@@ -2454,7 +2456,7 @@ fn classify_udp_response_with_catalog(
         return ServiceFingerprint {
             name: Some("ws-discovery".to_string()),
             confidence: Some(0.90),
-            banner: Some(clean_banner(&String::from_utf8_lossy(bytes))),
+            banner: Some(banner_from_bytes(bytes)),
         };
     }
     if port == 5060
@@ -2465,7 +2467,7 @@ fn classify_udp_response_with_catalog(
         return ServiceFingerprint {
             name: Some("sip".to_string()),
             confidence: Some(0.92),
-            banner: Some(clean_banner(&String::from_utf8_lossy(bytes))),
+            banner: Some(banner_from_bytes(bytes)),
         };
     }
     if let Some(name) = effective_known_udp_service(port, plugin_catalog) {
@@ -2817,11 +2819,73 @@ fn tls_service_name_for(known: Option<&str>) -> &'static str {
     }
 }
 
+/// Telnet option negotiation, removed before the rest is read as text.
+///
+/// A telnet server opens with it, ahead of anything a person would see: IAC
+/// (255) and then a command, usually with an option byte after it. Decoded as
+/// text those bytes become nothing readable - 255 is not valid UTF-8 at all and
+/// arrives as a replacement character, while option bytes like 32, 35 and 39
+/// are a space, a hash and an apostrophe, so the banner opens with a run of
+/// noise that looks like it might be content. Measured against a switch, what
+/// it hid was the one line worth reporting: the model name.
+fn strip_telnet_negotiation(bytes: &[u8]) -> Vec<u8> {
+    const IAC: u8 = 255;
+    const SUBNEGOTIATION: u8 = 250;
+    const SUBNEGOTIATION_END: u8 = 240;
+    const WITH_OPTION: std::ops::RangeInclusive<u8> = 251..=254;
+
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] != IAC {
+            out.push(bytes[at]);
+            at += 1;
+            continue;
+        }
+        match bytes.get(at + 1) {
+            // Truncated: the rest was going to be a command, not text.
+            None => break,
+            // Doubled, which is how the protocol carries a literal 255.
+            Some(&IAC) => {
+                out.push(IAC);
+                at += 2;
+            }
+            Some(&SUBNEGOTIATION) => {
+                let mut end = at + 2;
+                while end + 1 < bytes.len()
+                    && !(bytes[end] == IAC && bytes[end + 1] == SUBNEGOTIATION_END)
+                {
+                    end += 1;
+                }
+                at = (end + 2).min(bytes.len());
+            }
+            Some(command) if WITH_OPTION.contains(command) => at += 3,
+            Some(_) => at += 2,
+        }
+    }
+    out
+}
+
+/// A banner as it came off the wire, made safe to read and to store.
+fn banner_from_bytes(bytes: &[u8]) -> String {
+    clean_banner(&String::from_utf8_lossy(&strip_telnet_negotiation(bytes)))
+}
+
 fn clean_banner(value: &str) -> String {
     value
+        .trim()
         .replace('\r', "\\r")
         .replace('\n', "\\n")
         .chars()
+        // Whatever is left after those two escapes is not text: control codes
+        // the wire carried, and the replacement character that lossy decoding
+        // leaves wherever a byte was not UTF-8 at all. Neither says anything,
+        // both render as noise, and the control codes are rejected outright by
+        // the spreadsheet the results are exported into - which the export had
+        // to strip them for on its own.
+        .filter(|character| {
+            !character.is_control() && *character != char::REPLACEMENT_CHARACTER
+        })
         .take(512)
         .collect()
 }
@@ -3154,6 +3218,50 @@ mod tests {
         assert_eq!(event.latency_ms, None);
         assert_eq!(event.service_name, None);
         assert_eq!(event.banner, None);
+    }
+
+    #[test]
+    fn a_telnet_greeting_is_read_past_its_negotiation() {
+        // What a switch actually sends: IAC DO TERMINAL-TYPE, IAC DO NAWS,
+        // IAC WILL ECHO, then three more, and only then the text.
+        let wire = [
+            &[255, 253, 24, 255, 253, 31, 255, 251, 1][..],
+            &[255, 253, 32, 255, 253, 35, 255, 253, 39][..],
+            b"\r\nDGS-1210-28 Gigabit Ethernet Switch\r\nUser Name:",
+        ]
+        .concat();
+
+        let banner = banner_from_bytes(&wire);
+
+        // The model is the line worth reporting, and it was behind twelve
+        // replacement characters and three raw control codes.
+        assert_eq!(
+            banner,
+            "DGS-1210-28 Gigabit Ethernet Switch\\r\\nUser Name:"
+        );
+        assert!(!banner.contains(char::REPLACEMENT_CHARACTER));
+        assert!(!banner.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn negotiation_stripping_keeps_the_data_a_banner_is_made_of() {
+        // A doubled IAC is how the protocol carries a literal 255 in data, and
+        // a subnegotiation runs to IAC SE rather than a fixed width. Losing
+        // either would eat the text that follows it.
+        assert_eq!(strip_telnet_negotiation(b"plain text"), b"plain text");
+        assert_eq!(strip_telnet_negotiation(&[255, 255, b'A']), vec![255, b'A']);
+        assert_eq!(
+            strip_telnet_negotiation(&[255, 250, 24, 0, b'x', b'y', 255, 240, b'O', b'K']),
+            b"OK".to_vec()
+        );
+        // A command cut off by the end of the read is not text either.
+        assert_eq!(strip_telnet_negotiation(&[b'A', 255]), b"A".to_vec());
+    }
+
+    #[test]
+    fn a_banner_that_is_only_noise_comes_back_empty() {
+        // Rather than a row of replacement characters that reads like content.
+        assert_eq!(banner_from_bytes(&[255, 253, 24, 255, 251, 1]), "");
     }
 
     #[cfg(all(windows, feature = "syn-sweep"))]
@@ -3497,8 +3605,12 @@ mod tests {
             fallback_known_service(Some("ssh")).banner.as_deref(),
             Some("inferred from port mapping")
         );
+        // The line terminator a greeting ends with is not part of it, and
+        // keeping it put a trailing "\n" in every banner a report shows. Line
+        // breaks inside a banner are still escaped and kept - see the telnet
+        // case, where the second line is the login prompt.
         let vnc = classify_passive_bytes(b"RFB 003.008\n", Some("vnc")).unwrap();
-        assert_eq!(vnc.banner.as_deref(), Some("RFB 003.008\\n"));
+        assert_eq!(vnc.banner.as_deref(), Some("RFB 003.008"));
         let pop3 = classify_passive_bytes(b"+OK POP3 ready\r\n", Some("pop3")).unwrap();
         assert_eq!(pop3.banner.as_deref(), Some("POP3 greeting=+OK POP3 ready"));
 
