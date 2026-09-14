@@ -1439,6 +1439,21 @@ async fn probe_tls(
     )
 }
 
+/// How sure a greeting makes us, given whether the port agrees.
+///
+/// These greetings are distinctive enough to name a service on any port, which
+/// is the point of reading them - a mail service moved off its own port is
+/// exactly the arrangement worth reporting, and requiring the port to agree
+/// meant it was never recognised. But they are short, and a short string can
+/// collide, so a greeting the port does not vouch for is reported with less
+/// confidence rather than with none.
+fn greeting_confidence(known: Option<&str>, expected: &[&str]) -> Option<f64> {
+    Some(match known {
+        Some(name) if expected.contains(&name) => 0.90,
+        _ => 0.75,
+    })
+}
+
 fn classify_passive_bytes(bytes: &[u8], known: Option<&str>) -> Option<ServiceFingerprint> {
     if bytes.is_empty() {
         return None;
@@ -1454,6 +1469,18 @@ fn classify_passive_bytes(bytes: &[u8], known: Option<&str>) -> Option<ServiceFi
     // and every check below reads this as if it were the service's greeting.
     let banner = String::from_utf8_lossy(&strip_telnet_negotiation(bytes)).to_string();
     let lower = banner.to_ascii_lowercase();
+    // Before the text checks, because the negotiation is the identification:
+    // no other protocol opens with it, and whatever follows is this device's
+    // own greeting rather than something that names the protocol. Without it a
+    // telnet service was only ever named by its port, so one moved off 23 - the
+    // arrangement worth reporting - was the one that went unrecognised.
+    if opens_with_telnet_negotiation(bytes) {
+        return Some(ServiceFingerprint {
+            name: Some("telnet".to_string()),
+            confidence: Some(0.95),
+            banner: Some(normalize_service_banner("telnet", &banner)),
+        });
+    }
     if lower.starts_with("ssh-") {
         return Some(ServiceFingerprint {
             name: Some("ssh".to_string()),
@@ -1468,12 +1495,17 @@ fn classify_passive_bytes(bytes: &[u8], known: Option<&str>) -> Option<ServiceFi
             banner: Some(normalize_service_banner("ftp", &banner)),
         });
     }
-    if lower.contains("smtp")
-        || (lower.starts_with("220 ") && matches!(known, Some("smtp" | "submission" | "smtps")))
+    // A greeting, not a mention. Matching "smtp" anywhere in the text took any
+    // banner that happened to name the protocol - an FTP server advertising a
+    // mail gateway, a device listing its services - and called it a mail
+    // server. The reply code is what a mail server actually opens with, and
+    // FTP's own 220 has already been taken above.
+    if lower.starts_with("220")
+        && (lower.contains("smtp") || matches!(known, Some("smtp" | "submission" | "smtps")))
     {
         return Some(ServiceFingerprint {
             name: Some("smtp".to_string()),
-            confidence: Some(0.78),
+            confidence: if lower.contains("smtp") { Some(0.88) } else { Some(0.78) },
             banner: Some(normalize_service_banner("smtp", &banner)),
         });
     }
@@ -1507,17 +1539,17 @@ fn classify_passive_bytes(bytes: &[u8], known: Option<&str>) -> Option<ServiceFi
             )),
         });
     }
-    if lower.starts_with("+ok") && matches!(known, Some("pop3" | "pop3s")) {
+    if lower.starts_with("+ok") {
         return Some(ServiceFingerprint {
             name: Some("pop3".to_string()),
-            confidence: Some(0.90),
+            confidence: greeting_confidence(known, &["pop3", "pop3s"]),
             banner: Some(normalize_service_banner("pop3", &banner)),
         });
     }
-    if lower.starts_with("* ok") && matches!(known, Some("imap" | "imaps")) {
+    if lower.starts_with("* ok") {
         return Some(ServiceFingerprint {
             name: Some("imap".to_string()),
-            confidence: Some(0.90),
+            confidence: greeting_confidence(known, &["imap", "imaps"]),
             banner: Some(clean_banner(&banner)),
         });
     }
@@ -1528,10 +1560,10 @@ fn classify_passive_bytes(bytes: &[u8], known: Option<&str>) -> Option<ServiceFi
             banner: Some(clean_banner(&banner)),
         });
     }
-    if lower.starts_with("version ") && known == Some("memcached") {
+    if lower.starts_with("version ") {
         return Some(ServiceFingerprint {
             name: Some("memcached".to_string()),
-            confidence: Some(0.85),
+            confidence: greeting_confidence(known, &["memcached"]),
             banner: Some(clean_banner(&banner)),
         });
     }
@@ -1781,7 +1813,15 @@ fn http_request(host: &str, port: u16) -> String {
 }
 
 fn normalize_service_banner(service: &str, value: &str) -> String {
-    let first_line = value.lines().next().unwrap_or(value).trim();
+    // The first line that says something. A device console commonly opens with
+    // a blank line - the switch this was measured against does - and taking
+    // the literal first line left the greeting empty and the model name out of
+    // the banner entirely.
+    let first_line = value
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("");
     if service == "ssh" {
         if let Some(remainder) = first_line.strip_prefix("SSH-") {
             if let Some((protocol, software_and_platform)) = remainder.split_once('-') {
@@ -1809,15 +1849,77 @@ fn normalize_service_banner(service: &str, value: &str) -> String {
         "smtp" => Some("SMTP greeting"),
         "pop3" => Some("POP3 greeting"),
         "imap" => Some("IMAP greeting"),
+        "telnet" => Some("Telnet greeting"),
         _ => None,
     };
     match label {
-        Some(label) => clean_banner(&format!(
-            "{label}={}",
-            first_line.split_whitespace().collect::<Vec<_>>().join(" ")
-        )),
+        Some(label) => {
+            let greeting = first_line.split_whitespace().collect::<Vec<_>>().join(" ");
+            let mut parts = vec![format!("{label}={greeting}")];
+            // The product and its version, when the greeting names them
+            // plainly. Kept beside the greeting rather than replacing it: the
+            // greeting is what the server said, and the split is a reading of
+            // it. A reader who doubts the reading still has the original.
+            if let Some((product, version)) = product_and_version(first_line) {
+                parts.push(format!("product={product}"));
+                parts.push(format!("version={version}"));
+            }
+            clean_banner(&parts.join("; "))
+        }
         None => clean_banner(value),
     }
+}
+
+/// A product and its version, when a greeting states them next to each other.
+///
+/// Deliberately narrow. A version in an assessment report is acted on - it is
+/// what a reader checks an advisory against - so a wrong one is worse than
+/// none at all. Only an adjacent pair counts, where the second half looks like
+/// a version and the first like a name: "ProFTPD 1.3.5", "(vsFTPd 3.0.3)".
+/// Anything less obvious is left in the greeting for a person to read.
+fn product_and_version(greeting: &str) -> Option<(String, String)> {
+    const TRIM: &[char] = &['(', ')', '[', ']', '<', '>', ',', ';', ':', '"', '\''];
+    let tokens: Vec<&str> = greeting
+        .split_whitespace()
+        .map(|token| token.trim_matches(TRIM))
+        .filter(|token| !token.is_empty())
+        .collect();
+    for (at, token) in tokens.iter().enumerate().skip(1) {
+        if !looks_like_version(token) {
+            continue;
+        }
+        let product = tokens[at - 1];
+        // A name, not a status word and not another number. Two letters is
+        // never a product here but is every other word a greeting opens with -
+        // "* OK 1.2.3 server" read as the product OK at version 1.2.3.
+        if GREETING_STATUS_WORDS.contains(&product.to_ascii_uppercase().as_str())
+            || product.len() < 3
+            || !product.starts_with(|character: char| character.is_ascii_alphabetic())
+            || product.chars().any(|character| !character.is_ascii_alphanumeric() && character != '-' && character != '_' && character != '.')
+        {
+            continue;
+        }
+        return Some((product.to_string(), token.to_string()));
+    }
+    None
+}
+
+/// Words a greeting opens with that are never the name of a product.
+const GREETING_STATUS_WORDS: &[&str] = &[
+    "OK", "ERR", "READY", "SERVER", "SERVICE", "VERSION", "WELCOME", "HELLO", "ESMTP", "SMTP",
+    "FTP", "POP3", "IMAP", "TELNET", "LOGIN", "USER", "AND", "THE", "FOR",
+];
+
+/// "1.3.5", "3.0.3", "9.6p1" - a dotted number, optionally with a suffix.
+fn looks_like_version(token: &str) -> bool {
+    let digits_and_dots = token
+        .chars()
+        .take_while(|character| character.is_ascii_digit() || *character == '.');
+    let head: String = digits_and_dots.collect();
+    head.contains('.')
+        && head.starts_with(|character: char| character.is_ascii_digit())
+        && head.split('.').filter(|part| !part.is_empty()).count() >= 2
+        && head.split('.').all(|part| part.chars().all(|c| c.is_ascii_digit()))
 }
 
 fn x509_certificate_summary(der: &[u8]) -> Option<String> {
@@ -2866,6 +2968,21 @@ fn strip_telnet_negotiation(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Whether the first thing on the wire was telnet option negotiation.
+///
+/// IAC (255) followed by a command in its own range is the opening of a telnet
+/// session and of nothing else, so it names the service on any port. A lone
+/// 255 is not enough: it is also an ordinary byte in binary protocols, and in
+/// text that is not UTF-8.
+fn opens_with_telnet_negotiation(bytes: &[u8]) -> bool {
+    const IAC: u8 = 255;
+    const FIRST_COMMAND: u8 = 240;
+    matches!(
+        (bytes.first(), bytes.get(1)),
+        (Some(&IAC), Some(&command)) if command >= FIRST_COMMAND
+    )
+}
+
 /// A banner as it came off the wire, made safe to read and to store.
 fn banner_from_bytes(bytes: &[u8]) -> String {
     clean_banner(&String::from_utf8_lossy(&strip_telnet_negotiation(bytes)))
@@ -3218,6 +3335,92 @@ mod tests {
         assert_eq!(event.latency_ms, None);
         assert_eq!(event.service_name, None);
         assert_eq!(event.banner, None);
+    }
+
+    #[test]
+    fn a_telnet_service_is_named_by_its_negotiation_on_any_port() {
+        // The negotiation is the identification: nothing else opens with it.
+        // Without this a telnet service was named by its port alone, so one
+        // moved off 23 - the arrangement worth reporting - went unrecognised.
+        let wire = [
+            &[255, 253, 24, 255, 251, 1][..],
+            b"\r\nDGS-1210-28 Gigabit Ethernet Switch\r\nUser Name:",
+        ]
+        .concat();
+
+        let found = classify_passive_bytes(&wire, None).expect("a telnet service");
+
+        assert_eq!(found.name.as_deref(), Some("telnet"));
+        assert!(found.confidence.unwrap() > 0.9);
+        assert!(found.banner.as_deref().unwrap().contains("DGS-1210-28"));
+    }
+
+    #[test]
+    fn a_lone_255_is_not_a_telnet_service() {
+        // It is an ordinary byte in a binary protocol and in text that is not
+        // UTF-8, so the command that follows has to be one too.
+        assert!(!opens_with_telnet_negotiation(&[255, b'A', b'B']));
+        assert!(!opens_with_telnet_negotiation(&[255]));
+        assert!(!opens_with_telnet_negotiation(b"SSH-2.0-OpenSSH"));
+        assert!(opens_with_telnet_negotiation(&[255, 253, 24]));
+    }
+
+    #[test]
+    fn a_greeting_names_its_service_off_its_own_port() {
+        // The port only decides how sure we are. Requiring it to agree meant a
+        // mail service moved off its port was never recognised at all.
+        let on_its_port = classify_passive_bytes(b"+OK Dovecot ready.\r\n", Some("pop3"));
+        let moved = classify_passive_bytes(b"+OK Dovecot ready.\r\n", None);
+
+        assert_eq!(on_its_port.as_ref().unwrap().name.as_deref(), Some("pop3"));
+        assert_eq!(moved.as_ref().unwrap().name.as_deref(), Some("pop3"));
+        assert!(
+            moved.unwrap().confidence < on_its_port.unwrap().confidence,
+            "a port that does not vouch for the greeting lowers the confidence"
+        );
+    }
+
+    #[test]
+    fn a_banner_that_merely_mentions_smtp_is_not_a_mail_server() {
+        // Matching the word anywhere took any banner that named the protocol -
+        // a device listing its services, a gateway advertising one - and
+        // called it a mail server.
+        let mention = classify_passive_bytes(b"NETGEAR router; smtp relay available\r\n", None);
+        assert_ne!(mention.and_then(|found| found.name).as_deref(), Some("smtp"));
+
+        let greeting = classify_passive_bytes(b"220 mail.example.com ESMTP Postfix\r\n", None)
+            .expect("a mail server");
+        assert_eq!(greeting.name.as_deref(), Some("smtp"));
+    }
+
+    #[test]
+    fn a_version_is_read_only_where_the_greeting_states_one_plainly() {
+        // What real servers send. A version in a report is checked against an
+        // advisory, so a wrong one is worse than none.
+        assert_eq!(
+            product_and_version("220 ProFTPD 1.3.5 Server (Debian) ready"),
+            Some(("ProFTPD".to_string(), "1.3.5".to_string()))
+        );
+        assert_eq!(
+            product_and_version("220 (vsFTPd 3.0.3)"),
+            Some(("vsFTPd".to_string(), "3.0.3".to_string()))
+        );
+
+        // Nothing stated plainly: no guess is offered.
+        assert_eq!(product_and_version("+OK Dovecot (Ubuntu) ready."), None);
+        assert_eq!(product_and_version("220 mail.example.com ESMTP Postfix"), None);
+        // A hostname is not a product and a reply code is not a version.
+        assert_eq!(product_and_version("220 host.example.com ready"), None);
+        assert_eq!(product_and_version("* OK 1.2.3 server"), None);
+    }
+
+    #[test]
+    fn a_parsed_version_travels_beside_the_greeting_it_came_from() {
+        let banner = normalize_service_banner("ftp", "220 ProFTPD 1.3.5 Server (Debian) ready");
+
+        assert!(banner.contains("FTP greeting=220 ProFTPD 1.3.5 Server"));
+        assert!(banner.contains("product=ProFTPD"));
+        assert!(banner.contains("version=1.3.5"));
     }
 
     #[test]
