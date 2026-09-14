@@ -531,6 +531,91 @@ def _slow_for_8080(host, port, **_kwargs):
     return b"png-bytes"
 
 
+class EvidenceHonestyTests(unittest.TestCase):
+    """Evidence may show what a target said and what we sent. Nothing else.
+
+    The transcript prints the server's own replies under a label, and a reader
+    takes every unlabelled line beside them for more of the same. Three lines
+    were not: "login as:" is PuTTY's wording and SSH never sends a prompt in
+    the clear at all, "USER:" is the command a client would send rather than
+    anything POP3 replied, and "User (<host>):" imitated what the Windows ftp
+    client prints - with the real host name in it, which is what made it look
+    like a reply. A capture that writes the target's side of the conversation
+    is not evidence of anything.
+    """
+
+    def _script(self) -> str:
+        from netroach.evidence import _POWERSHELL_DIAGNOSTIC_SCRIPT
+
+        return _POWERSHELL_DIAGNOSTIC_SCRIPT
+
+    def test_no_prompt_is_written_on_the_targets_behalf(self):
+        script = self._script()
+
+        for invention in ("'login as:'", "'USER:'", '"User (" + $ComputerName'):
+            self.assertNotIn(invention, script, invention)
+
+    def test_nothing_is_claimed_about_a_browser_that_was_never_opened(self):
+        """The 401 transcript records the header the server sent. What a
+        browser would do with it was not observed, so it is not stated."""
+        script = self._script()
+
+        self.assertNotIn("browser shows a login box", script)
+        self.assertIn("Authentication scheme offered by the server", script)
+
+    def test_what_the_server_said_is_labelled_as_such(self):
+        script = self._script()
+
+        for label in (
+            "Server pre-authentication response:",
+            "HTTP response head:",
+            "POP3 CAPA response:",
+            "FTP FEAT response:",
+        ):
+            self.assertIn(label, script, label)
+
+
+class BrowserWindowCaptureTests(unittest.TestCase):
+    """The window carries what the page cannot: the address arrived at, and the
+    browser's judgement beside it."""
+
+    def test_a_window_is_only_claimed_when_exactly_one_appeared(self):
+        """Its title cannot identify it. The title is the page's, and an
+        assessment meets the same device on host after host - two switches of
+        one model produce two windows named identically, measured. What can be
+        said is which window was not there a moment ago, and that only holds
+        while one thing at a time opens one."""
+        from netroach.console_capture import window_opened_since
+
+        user32 = SimpleNamespace()
+        with patch("netroach.console_capture.visible_window_handles") as visible:
+            visible.return_value = {1, 2, 9}
+            self.assertEqual(window_opened_since(user32, {1, 2}), 9)
+
+            # Nothing new: there is nothing of ours to photograph.
+            visible.return_value = {1, 2}
+            self.assertIsNone(window_opened_since(user32, {1, 2}))
+
+            # Two at once, so ours cannot be told from whatever else opened.
+            # A picture of the operator's own window is worse than none.
+            visible.return_value = {1, 2, 9, 10}
+            self.assertIsNone(window_opened_since(user32, {1, 2}))
+
+    def test_the_page_is_the_fallback_not_the_goal(self):
+        from netroach.evidence import _capture_browser_window
+
+        # No desktop to draw on, so nothing was noted before the page opened.
+        self.assertIsNone(_capture_browser_window(object(), None))
+
+    def test_only_the_full_browser_is_asked_for(self):
+        """Playwright picks the headless shell for a headless launch and fails
+        outright when it is absent, and the shell is deliberately not bundled -
+        it is the one build that cannot be shown with its own window."""
+        from netroach.evidence import BROWSER_CHANNEL
+
+        self.assertEqual(BROWSER_CHANNEL, "chromium")
+
+
 class SshCaptureTests(unittest.TestCase):
     """The SSH pane must reach a login prompt and never get past one."""
 

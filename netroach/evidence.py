@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import io
 import logging
 import os
@@ -8,14 +9,25 @@ import shutil
 import socket
 import subprocess
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Container, Iterable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .console_capture import capture_console_session
+from .console_capture import (
+    OFFSCREEN_POSITION,
+    SWP_NOACTIVATE,
+    SWP_NOSIZE,
+    SWP_NOZORDER,
+    capture_console_session,
+    capture_window_png,
+    console_capture_supported,
+    has_content,
+    visible_window_handles,
+    window_opened_since,
+)
 
 MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
 DEFAULT_SCREENSHOT_TIMEOUT_MS = 8_000
@@ -62,6 +74,18 @@ SCREENSHOT_HEIGHT = 600
 # height leaves the page enough room to be worth looking at.
 WEB_SCREENSHOT_WIDTH = 1150
 WEB_SCREENSHOT_HEIGHT = 430
+# The full browser rather than the headless shell, named explicitly because
+# Playwright picks the shell for a headless launch and fails outright when it
+# is absent. Only one of the two is bundled - the full one, because it is the
+# only build that can be shown with its own window, and a shell beside it would
+# be another 271MB for a second way to do what this one already does.
+BROWSER_CHANNEL = "chromium"
+# The browser window is given a moment off screen before it is
+# photographed, so the move itself is not what the picture catches.
+BROWSER_WINDOW_SETTLE_S = 0.6
+# Tall enough that a device page's footer - where a firmware version
+# usually sits - is inside the window rather than below it.
+BROWSER_WINDOW_SIZE = (1180, 820)
 
 _IMAGE_EXTENSIONS = {
     "image/png": ".png",
@@ -330,6 +354,50 @@ def host_route_filter(allowed_host: str) -> Callable[[Any], None]:
     return route_request
 
 
+def _capture_browser_window(page: Any, opened_before: Container[int] | None) -> bytes | None:
+    """Photograph the browser's own window, or fall back to the page.
+
+    The window is found by being the one that was not on the desktop a moment
+    ago, because its title cannot identify it: the title is the page's, and an
+    assessment meets the same device on host after host - two switches of one
+    model produce two windows named identically. Captures run one at a time,
+    so "new since we looked" is unambiguous where the title is not.
+
+    Moved off the visible desktop before it is photographed, the way a console
+    capture is, so a run does not take the operator's screen for as long as it
+    lasts. `PrintWindow` renders it there regardless.
+    """
+    if opened_before is None:
+        return None
+    user32 = getattr(ctypes, "windll").user32  # noqa: B009 - platform-specific export.
+    hwnd = window_opened_since(user32, opened_before)
+    if hwnd is None:
+        return None
+    user32.SetWindowPos(
+        hwnd, 0, *OFFSCREEN_POSITION, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+    )
+    time.sleep(BROWSER_WINDOW_SETTLE_S)
+    shot = capture_window_png(hwnd)
+    if shot is None or not has_content(shot):
+        return None
+    return shot
+
+
+def show_browser_window() -> bool:
+    """Whether to photograph the browser's own window rather than the page.
+
+    The window carries what the page cannot: the address actually arrived at,
+    and the judgement the browser puts beside it - the padlock, the "not
+    secure" on a plaintext management page, the warning on a certificate that
+    does not match. A page screenshot is the document alone and says none of
+    it, and cannot even say which host it came from.
+
+    It needs a desktop to draw on, the same as a console capture, and it costs
+    a browser window per port instead of a headless render.
+    """
+    return console_capture_supported()
+
+
 def capture_web_screenshots(
     results: Iterable[Mapping[str, Any]],
     *,
@@ -363,7 +431,14 @@ def capture_web_screenshots(
     errors: list[str] = []
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
+            windowed = show_browser_window()
+            browser = playwright.chromium.launch(
+                headless=not windowed,
+                channel=BROWSER_CHANNEL,
+                args=[f"--window-size={BROWSER_WINDOW_SIZE[0]},{BROWSER_WINDOW_SIZE[1]}"]
+                if windowed
+                else [],
+            )
             # Recorded with every screenshot: a pinned browser only buys
             # reproducible evidence if the evidence says which one rendered it.
             capture_agent = f"chromium {browser.version} {WEB_SCREENSHOT_WIDTH}x{WEB_SCREENSHOT_HEIGHT}"
@@ -386,7 +461,11 @@ def capture_web_screenshots(
                     logger.debug("evidence: web %s", url)
                     context = browser.new_context(
                         ignore_https_errors=True,
-                        viewport={"width": WEB_SCREENSHOT_WIDTH, "height": WEB_SCREENSHOT_HEIGHT},
+                        # A window sizes its own viewport; forcing one here would
+                        # leave the page rendered smaller than the frame around it.
+                        viewport=None
+                        if windowed
+                        else {"width": WEB_SCREENSHOT_WIDTH, "height": WEB_SCREENSHOT_HEIGHT},
                         # What this pass is for is a picture of the page. A
                         # navigation that turns into a download already fails
                         # here, but a page can start one after it has loaded,
@@ -410,12 +489,26 @@ def capture_web_screenshots(
                     context.set_default_timeout(timeout_ms)
                     try:
                         context.route("**/*", host_route_filter(host))
+                        # Taken before the page exists, so the window it opens is
+                        # the only one that can be new when it is looked for.
+                        opened_before = (
+                            visible_window_handles(getattr(ctypes, "windll").user32)  # noqa: B009
+                            if windowed
+                            else None
+                        )
                         page = context.new_page()
                         page.goto(url, wait_until="domcontentloaded", timeout=min(timeout_ms, left_ms()) or 1)
                         page.set_default_timeout(left_ms() or 1)
                         _still_the_animations(page)
                         page.set_default_timeout(left_ms() or 1)
-                        image = _screenshot_with_one_retry(page, left_ms)
+                        # The window carries what the page cannot: the address
+                        # arrived at, and the browser's own judgement beside it -
+                        # the padlock, the "not secure" on a plaintext management
+                        # page, the warning on a certificate that does not match.
+                        # The page alone is the fallback, not the goal.
+                        image = _capture_browser_window(page, opened_before)
+                        if image is None:
+                            image = _screenshot_with_one_retry(page, left_ms)
                         filename_host = re.sub(r"[^A-Za-z0-9_.-]+", "_", host)
                         store(result, image, f"{filename_host}_{result['port']}.png", page.url, capture_agent)
                         captured += 1
@@ -921,6 +1014,7 @@ def _load_card_font(font_module: Any, size: int, *, bold: bool = False, monospac
 
 _PREAUTH_PORT_MODES = {
     21: "ftp",
+    80: "http",
     22: "ssh",
     23: "telnet",
     25: "smtp",
@@ -939,6 +1033,10 @@ _PREAUTH_PORT_MODES = {
 }
 _PREAUTH_SERVICE_MODES = (
     ("ssh", "ssh"),
+    # A web port whose screenshot failed - a 401 fails the navigation outright
+    # - would otherwise fall to "none" and record only that the port answered.
+    ("http", "http"),
+    ("http-alt", "http"),
     ("telnet", "telnet"),
     ("ftp", "ftp"),
     ("smtp", "smtp"),
@@ -1026,19 +1124,37 @@ function Read-NetroachPreAuthPrompt {
 
     switch ($baseMode) {
         'ssh' {
-            Write-Output 'Client authentication prompt (capture boundary):'
-            Write-Output 'login as:'
+            Write-Output 'SSH negotiates authentication inside its transport, so no'
+            Write-Output 'prompt is readable here. The banner above is what the'
+            Write-Output 'server sent before that point.'
             Write-Output '[stopped before sending an SSH username, key, or password]'
         }
         'telnet' {
             if (-not $initial) { Write-Output 'No Telnet login prompt arrived before the read timeout.' }
             Write-Output '[stopped before sending Telnet input]'
         }
+        'http' {
+            # One request, no credentials. What a browser would not show is in
+            # the response itself: the status, and on a management page behind
+            # a login box the WWW-Authenticate line naming the scheme and the
+            # realm. The page screenshot cannot carry any of it - a browser
+            # driven by the capture never renders a 401 at all, it fails the
+            # navigation - so this is the only place the finding is recorded.
+            $request = "GET / HTTP/1.1`r`nHost: " + $ComputerName +
+                "`r`nUser-Agent: netroach-evidence`r`nConnection: close`r`n`r`n"
+            Send-NetroachPreAuthCommand -Stream $Stream -Text $request
+            $response = Read-NetroachResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
+            $head = ($response -split "`r`n`r`n", 2)[0]
+            Show-NetroachResponse -Label 'HTTP response head:' -Text $head
+            if ($head -match '(?im)^WWW-Authenticate:\s*(\S+)') {
+                Write-Output ("Authentication scheme offered by the server: " + $Matches[1])
+            }
+            Write-Output '[stopped before sending HTTP credentials]'
+        }
         'ftp' {
             Send-NetroachPreAuthCommand -Stream $Stream -Text "FEAT`r`n"
             $response = Read-NetroachResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
             Show-NetroachResponse -Label 'FTP FEAT response:' -Text $response
-            Write-Output ("User (" + $ComputerName + "):")
             Write-Output '[stopped before sending FTP USER or PASS]'
         }
         'smtp' {
@@ -1051,7 +1167,6 @@ function Read-NetroachPreAuthPrompt {
             Send-NetroachPreAuthCommand -Stream $Stream -Text "CAPA`r`n"
             $response = Read-NetroachResponse -Stream $Stream -TimeoutMs $ReadTimeoutMs
             Show-NetroachResponse -Label 'POP3 CAPA response:' -Text $response
-            Write-Output 'USER:'
             Write-Output '[stopped before sending POP3 USER or PASS]'
         }
         'imap' {

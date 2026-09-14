@@ -176,7 +176,7 @@ def _find_window_by_title(
     return matches[0][0]
 
 
-def _capture_window_png(hwnd: int) -> bytes | None:
+def capture_window_png(hwnd: int) -> bytes | None:
     try:
         from PIL import Image
     except ImportError:
@@ -344,6 +344,33 @@ def compose_side_by_side(panes: list[bytes]) -> bytes | None:
     return output.getvalue()
 
 
+def visible_window_handles(user32: ctypes.CDLL) -> set[int]:
+    """Every window on this desktop that has a title and is on screen."""
+    return {
+        hwnd
+        for hwnd, title in _find_windows_by_title(user32, "")
+        if title.strip() and user32.IsWindowVisible(hwnd)
+    }
+
+
+def window_opened_since(user32: ctypes.CDLL, before: Container[int]) -> int | None:
+    """The window that appeared after `before` was taken, if exactly one did.
+
+    A browser window cannot be found by its title. The title is the page's, and
+    an assessment meets the same device on host after host - two switches of
+    one model produce two windows named identically, measured - so a title
+    search cannot say which port it is looking at. What it can say is which
+    window was not there a moment ago, which is enough because captures run one
+    at a time.
+
+    Exactly one, or none: if two appeared, something else on the desktop opened
+    a window at the same moment and there is no way to tell which is ours. A
+    capture of the operator's own window would be worse than no capture.
+    """
+    fresh = [hwnd for hwnd in visible_window_handles(user32) if hwnd not in before]
+    return fresh[0] if len(fresh) == 1 else None
+
+
 def _terminate_tree(process: subprocess.Popen) -> None:
     """End the console and whatever it started.
 
@@ -478,11 +505,11 @@ def _capture_when_settled(hwnd: int, *, deadline: float) -> bytes | None:
     twice: a target eight seconds from its banner was photographed at under
     four, showing a title bar and nothing else.
     """
-    empty = _capture_window_png(hwnd)
+    empty = capture_window_png(hwnd)
     previous: bytes | None = None
     while time.monotonic() < deadline:
         time.sleep(SSH_PROMPT_POLL_S)
-        current = _capture_window_png(hwnd)
+        current = capture_window_png(hwnd)
         if current is None:
             # The window went before it settled; whatever was last read is all
             # there is, and it is better than nothing.
@@ -671,7 +698,7 @@ def _capture_telnet_window(
         if hwnd is None:
             return None
         time.sleep(CAPTURE_SETTLE_S)
-        return _capture_window_png(hwnd)
+        return capture_window_png(hwnd)
     finally:
         process.terminate()
         try:
@@ -792,7 +819,7 @@ def capture_console_session(
             if require_connection and not Path(f"{done_path}.ok").exists():
                 return None
             time.sleep(CAPTURE_SETTLE_S)
-            console_pane = _capture_window_png(hwnd)
+            console_pane = capture_window_png(hwnd)
             if console_pane is not None and not has_content(console_pane):
                 # Blank, so there is nothing to prove. The caller falls back.
                 return None
