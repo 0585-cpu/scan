@@ -753,6 +753,64 @@ class ConsoleCaptureTests(unittest.TestCase):
 
         self.assertEqual(composed, left)
 
+    def test_the_telnet_client_is_given_a_window_that_starts_empty(self):
+        """The settling the pane uses rests on a baseline of nothing yet.
+
+        It decides the banner has arrived by comparing the window against how
+        it first found it, so that first picture has to be of an empty window.
+        The client was launched directly, which gave it no such moment:
+        measured against a service on this machine, the window was found with
+        the banner already drawn, every later picture matched it to within the
+        cursor blink - 19 pixels - and the pane came back empty. The SSH pane
+        has held its window this way since it shipped and says so in its own
+        script; the telnet pane was given the settling without the thing it
+        rests on.
+        """
+        from netroach.console_capture import (
+            SSH_TITLE_SETTLE_MS,
+            build_telnet_capture_script,
+        )
+
+        script = build_telnet_capture_script("10.0.0.5", 23, title="Netroach telnet token")
+
+        # Titled first, so the window can be found while it is still empty.
+        self.assertLess(
+            script.index("WindowTitle"),
+            script.index(f"Start-Sleep -Milliseconds {SSH_TITLE_SETTLE_MS}"),
+        )
+        # And held empty before the client is allowed to write into it.
+        self.assertLess(
+            script.index(f"Start-Sleep -Milliseconds {SSH_TITLE_SETTLE_MS}"),
+            script.lower().index("telnet.exe"),
+        )
+        self.assertIn("10.0.0.5", script)
+        self.assertIn("'23'", script)
+
+    def test_a_single_line_prompt_counts_as_the_client_having_written(self):
+        """Plenty of devices answer with one short line and nothing else.
+
+        The threshold came from the SSH pane, whose client writes several lines,
+        and it sat above a one-line prompt. Measured on a window of this size:
+        the telnet client's own chrome moves about 994 pixels before the target
+        says anything, a single line of prompt takes it to 1328-1418, and the
+        cursor blink is 19. The floor has to fall between the chrome and the
+        prompt, which the SSH one does not.
+        """
+        from netroach.console_capture import (
+            SSH_PROMPT_STILL_PIXELS,
+            SSH_PROMPT_WRITTEN_PIXELS,
+            TELNET_PROMPT_WRITTEN_PIXELS,
+        )
+
+        chrome_alone, shortest_prompt, blink = 994, 1328, 19
+
+        self.assertGreater(TELNET_PROMPT_WRITTEN_PIXELS, chrome_alone)
+        self.assertLess(TELNET_PROMPT_WRITTEN_PIXELS, shortest_prompt)
+        self.assertGreater(TELNET_PROMPT_WRITTEN_PIXELS, SSH_PROMPT_STILL_PIXELS)
+        self.assertGreater(TELNET_PROMPT_WRITTEN_PIXELS, blink)
+        # The SSH floor is the one that was too high for this.
+        self.assertGreater(SSH_PROMPT_WRITTEN_PIXELS, shortest_prompt)
+
     def test_neither_pane_is_resized_to_make_room_for_the_other(self):
         """Squeezing one pane makes its text unreadable beside the other.
 

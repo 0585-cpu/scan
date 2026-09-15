@@ -59,6 +59,13 @@ SSH_TITLE_SETTLE_MS = 700
 # client wrote something" and "it has stopped writing" both survive the blink.
 SSH_PROMPT_WRITTEN_PIXELS = 1_500
 SSH_PROMPT_STILL_PIXELS = 400
+# The telnet client draws chrome of its own before the target says anything, so
+# its floor sits higher than the blink but lower than the SSH one. Measured on
+# a window of CONSOLE_WINDOW_SIZE: the client alone changes about 994 pixels, a
+# single line of prompt takes it to 1328-1418, and the cursor blink is 19. The
+# margin either side is a few hundred pixels, which is why the test that holds
+# this carries the measurements rather than the number alone.
+TELNET_PROMPT_WRITTEN_PIXELS = 1_150
 # Hosts reach the SSH pane inside a command string, so only what an address
 # can contain is allowed through: anything else would be command text rather
 # than a target.
@@ -491,7 +498,9 @@ def build_ssh_capture_script(
     )
 
 
-def _capture_when_settled(hwnd: int, *, deadline: float) -> bytes | None:
+def _capture_when_settled(
+    hwnd: int, *, deadline: float, written_pixels: int = SSH_PROMPT_WRITTEN_PIXELS
+) -> bytes | None:
     """Photograph the window once it stops changing, or when time runs out.
 
     A fixed wait cannot serve both ends of this. The prompt is several round
@@ -520,13 +529,13 @@ def _capture_when_settled(hwnd: int, *, deadline: float) -> bytes | None:
             # The window went before it settled; whatever was last read is all
             # there is, and it is better than nothing.
             break
-        written = _changed_pixels(current, empty) > SSH_PROMPT_WRITTEN_PIXELS
+        written = _changed_pixels(current, empty) > written_pixels
         if written and _changed_pixels(current, previous) <= SSH_PROMPT_STILL_PIXELS:
             return current
         previous = current
     # Out of time, or the window closed. Return what was last seen rather than
     # nothing: a client that refused outright has already written its reason.
-    if previous is None or _changed_pixels(previous, empty) <= SSH_PROMPT_WRITTEN_PIXELS:
+    if previous is None or _changed_pixels(previous, empty) <= written_pixels:
         return None
     return previous
 
@@ -601,6 +610,36 @@ def _capture_ssh_window(
             _terminate_tree(process)
 
 
+def build_telnet_capture_script(host: str, port: int, *, title: str) -> str:
+    """A session that titles its window, waits, and only then opens telnet.
+
+    The wait is the point. The capture decides the banner has arrived by
+    comparing the window against how it first found it, so that first picture
+    has to be of nothing yet. Launching the client directly gave it no such
+    moment: measured against a service on this machine, the window was found
+    with the banner already drawn, every later picture matched it to within the
+    cursor blink - 19 pixels - and the pane came back empty. The SSH pane has
+    always held its window this way and says so; the telnet pane was given the
+    same settling without the thing it rests on.
+
+    The client retitles the window as soon as it connects, which is why the
+    window is found by this token rather than by the client's own title: two
+    scans of one host would otherwise share a title, and one could photograph
+    the other's window.
+    """
+    safe_host = host.replace("'", "''")
+    safe_title = title.replace("'", "''")
+    executable = telnet_executable()
+    if executable is None:  # pragma: no cover - guarded by the caller.
+        raise RuntimeError("no telnet client")
+    return (
+        f"$Host.UI.RawUI.WindowTitle = '{safe_title}'; "
+        f"Start-Sleep -Milliseconds {SSH_TITLE_SETTLE_MS}; "
+        f"& '{executable}' '{safe_host}' '{int(port)}'; "
+        f"Start-Sleep -Seconds {SSH_HOLD_S}"
+    )
+
+
 def _capture_telnet_window(
     user32: ctypes.CDLL, host: str, port: int, *, size: tuple[int, int] | None = None
 ) -> bytes | None:
@@ -612,25 +651,22 @@ def _capture_telnet_window(
     taken. Windows ships the client disabled, so its absence is ordinary and
     the console pane stands alone.
     """
-    executable = telnet_executable()
-    if executable is None:
+    if telnet_executable() is None:
         return None
-    # Whatever already carries this title is not ours and never becomes ours.
-    standing = {hwnd for hwnd, _ in _find_windows_by_title(user32, f"Telnet {host}")}
+    token = f"Netroach telnet {host}:{port} {uuid.uuid4().hex[:8]}"
+    script = build_telnet_capture_script(host, port, title=token)
     try:
-        process = subprocess.Popen(  # noqa: S603 - fixed executable, target passed as arguments.
-            [executable, host, str(port)],
+        process = subprocess.Popen(  # noqa: S603 - fixed executable, target passed as data.
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
             creationflags=CREATE_NEW_CONSOLE,
         )
     except OSError:
         return None
     try:
-        # The client titles its window after the host it dialled.
-        token = f"Telnet {host}"
         hwnd = None
         deadline = time.monotonic() + TELNET_READY_TIMEOUT_S
         while time.monotonic() < deadline:
-            hwnd = _find_window_by_title(user32, token, exclude=standing, exact=token)
+            hwnd = _find_window_by_title(user32, token, exact=token)
             if hwnd is not None:
                 # Sized down as it goes off screen. A terminal opens at the
                 # width the user set for their own work, and two of those side
@@ -659,7 +695,9 @@ def _capture_telnet_window(
         # content rather than for a duration - which is what the SSH pane
         # beside it has always done.
         return _capture_when_settled(
-            hwnd, deadline=time.monotonic() + TELNET_PROMPT_TIMEOUT_S
+            hwnd,
+            deadline=time.monotonic() + TELNET_PROMPT_TIMEOUT_S,
+            written_pixels=TELNET_PROMPT_WRITTEN_PIXELS,
         )
     finally:
         process.terminate()
