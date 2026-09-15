@@ -42,6 +42,9 @@ CAPTURE_POLL_INTERVAL_S = 0.2
 CAPTURE_SETTLE_S = 0.35
 # The client either paints quickly or is not installed at all.
 TELNET_READY_TIMEOUT_S = 6.0
+# How long to wait for the client to have something in it. A telnet banner is
+# an option negotiation and then a round trip, so it arrives after the window.
+TELNET_PROMPT_TIMEOUT_S = 8.0
 # How long to keep waiting for the SSH window to stop changing, and how often
 # to look. The prompt is several round trips away rather than a local redraw,
 # so the picture is taken when the client stops writing rather than after a
@@ -60,15 +63,10 @@ SSH_PROMPT_STILL_PIXELS = 400
 # can contain is allowed through: anything else would be command text rather
 # than a target.
 _SAFE_HOST = re.compile(r"[A-Za-z0-9._:-]{1,253}")
-# The client pane beside the console, as a share of the console's width.
-TELNET_PANE_WIDTH_RATIO = 0.36
 # Wide enough for a netstat line and the command above it, and no wider.
 # Sized so the console and the client together stay inside the report's
 # evidence cell, where anything wider is scaled down.
 CONSOLE_WINDOW_SIZE = (770, 300)
-# The evidence cell of the report the capture is pasted into. Anything wider
-# is scaled down there, and the console text is what the scaling costs.
-COMPOSED_TARGET_WIDTH = 1150
 # Rows of background left under the last line of output before cropping.
 CONTENT_MARGIN_PX = 12
 # A real capture carries two command lines and a netstat row; a window that
@@ -318,6 +316,14 @@ def compose_side_by_side(panes: list[bytes]) -> bytes | None:
     The console proving the connection and the client sitting on it are two
     windows in the same moment, and separating them into two evidence files
     loses that they belong together.
+
+    Both panes keep the scale they were captured at, and nothing here is
+    resized. Fitting the client pane on its own to whatever the console left
+    over was what made it unreadable: the console kept its full size and the
+    client was squeezed to a third of the width, so its glyphs came out half
+    the size of the ones beside them, and the report then shrank the whole
+    thing into a cell. Both windows are opened at the same size instead, which
+    bounds the composition without either pane paying for the other.
     """
     try:
         from PIL import Image
@@ -595,58 +601,6 @@ def _capture_ssh_window(
             _terminate_tree(process)
 
 
-def _remaining_width(console_pane: bytes) -> int:
-    """What is left of the evidence cell once the console has its share."""
-    try:
-        from PIL import Image
-    except ImportError:
-        return COMPOSED_TARGET_WIDTH // 3
-    try:
-        console = Image.open(io.BytesIO(console_pane))
-    except Exception:  # noqa: BLE001 - a pane we cannot measure gets a default.
-        return COMPOSED_TARGET_WIDTH // 3
-    return max(140, COMPOSED_TARGET_WIDTH - console.width - COMPOSED_PANE_GAP)
-
-
-def _fit_pane_width(pane: bytes, maximum: int) -> bytes:
-    """Scale a pane down to fit, keeping its proportions.
-
-    The terminal will not open below a few hundred pixels however small a size
-    it is asked for, so the client window arrives wider than there is room for.
-    Scaling the picture is honest - it is the same window, smaller - where
-    letting it run over is not: the report would shrink both panes to fit, and
-    the console text would pay for the client's chrome.
-    """
-    try:
-        from PIL import Image
-    except ImportError:
-        return pane
-    try:
-        image = Image.open(io.BytesIO(pane))
-    except Exception:  # noqa: BLE001 - an unreadable pane is returned untouched.
-        return pane
-    if image.width <= maximum:
-        return pane
-    height = max(1, round(image.height * maximum / image.width))
-    resized = image.convert("RGB").resize((maximum, height), Image.LANCZOS)
-    output = io.BytesIO()
-    resized.save(output, format="PNG", optimize=True)
-    return output.getvalue()
-
-
-def _telnet_pane_size(console_pane: bytes) -> tuple[int, int] | None:
-    """Keep the client narrow beside the console, and no taller than it."""
-    try:
-        from PIL import Image
-    except ImportError:
-        return None
-    try:
-        console = Image.open(io.BytesIO(console_pane))
-    except Exception:  # noqa: BLE001 - a pane we cannot measure gets no resize.
-        return None
-    return (max(320, round(console.width * TELNET_PANE_WIDTH_RATIO)), console.height)
-
-
 def _capture_telnet_window(
     user32: ctypes.CDLL, host: str, port: int, *, size: tuple[int, int] | None = None
 ) -> bytes | None:
@@ -697,8 +651,16 @@ def _capture_telnet_window(
             time.sleep(CAPTURE_POLL_INTERVAL_S)
         if hwnd is None:
             return None
-        time.sleep(CAPTURE_SETTLE_S)
-        return capture_window_png(hwnd)
+        # A fixed 0.35s wait photographed the window before the target had
+        # written into it: measured against a switch, the pane came back
+        # holding its title bar and nothing else, where the banner and
+        # "User Name:" were the evidence. The client negotiates its options
+        # first and the banner is a round trip behind that, so the wait is for
+        # content rather than for a duration - which is what the SSH pane
+        # beside it has always done.
+        return _capture_when_settled(
+            hwnd, deadline=time.monotonic() + TELNET_PROMPT_TIMEOUT_S
+        )
     finally:
         process.terminate()
         try:
@@ -835,18 +797,24 @@ def capture_console_session(
             if console_pane is None or not with_telnet:
                 return console_pane
             kind = client_pane_kind(port, service)
-            pane_size = _telnet_pane_size(console_pane)
+            # The same window size as the console beside it, so both panes
+            # render at the same font size and the composition needs no
+            # scaling that falls on one of them. A third of the console's
+            # width - what this asked for before - is about forty-five
+            # columns: the banner wrapped, and what was left was then scaled
+            # to half the height of the text next to it.
             if kind == "ssh":
-                client_pane = _capture_ssh_window(user32, host, port, size=pane_size)
+                client_pane = _capture_ssh_window(
+                    user32, host, port, size=CONSOLE_WINDOW_SIZE
+                )
             elif kind == "telnet":
-                client_pane = _capture_telnet_window(user32, host, port, size=pane_size)
+                client_pane = _capture_telnet_window(
+                    user32, host, port, size=CONSOLE_WINDOW_SIZE
+                )
             else:
                 client_pane = None
             if client_pane is not None:
                 client_pane = crop_to_content(client_pane)
-                client_pane = _fit_pane_width(
-                    client_pane, _remaining_width(console_pane)
-                )
             return compose_side_by_side([console_pane, client_pane or b""])
         finally:
             process.terminate()

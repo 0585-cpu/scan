@@ -753,25 +753,33 @@ class ConsoleCaptureTests(unittest.TestCase):
 
         self.assertEqual(composed, left)
 
-    def test_a_client_window_too_wide_for_the_cell_is_scaled_down(self):
-        """The terminal will not open below a few hundred pixels, so the client
-        arrives wider than there is room for beside the console."""
-        from netroach.console_capture import _fit_pane_width
+    def test_neither_pane_is_resized_to_make_room_for_the_other(self):
+        """Squeezing one pane makes its text unreadable beside the other.
 
-        wide = self._png_bytes((480, 300), (20, 20, 20))
+        The client pane used to be scaled to whatever width the console left
+        over - about a third - so its glyphs came out half the size of the ones
+        next to them, and the report then shrank the whole picture into a cell.
+        Reported from a real assessment: the console was readable and the
+        client was not. Both windows are opened at the same size instead, so
+        the composition needs no scaling that falls on one of them.
+        """
+        from netroach.console_capture import COMPOSED_PANE_GAP, compose_side_by_side
 
-        fitted = Image.open(io.BytesIO(_fit_pane_width(wide, 190)))
+        console = self._png_bytes((770, 300), (12, 12, 12))
+        client = self._png_bytes((770, 300), (20, 20, 20))
 
-        self.assertEqual(fitted.width, 190)
-        # Scaled, not cropped: it is the same window, smaller.
-        self.assertAlmostEqual(fitted.width / fitted.height, 480 / 300, places=1)
+        composed = Image.open(io.BytesIO(compose_side_by_side([console, client])))
 
-    def test_a_pane_that_already_fits_is_left_alone(self):
-        from netroach.console_capture import _fit_pane_width
+        # Both panes at their captured size, side by side, nothing scaled.
+        self.assertEqual(composed.height, 300)
+        self.assertEqual(composed.width, 770 + 770 + COMPOSED_PANE_GAP)
 
-        narrow = self._png_bytes((150, 90), (20, 20, 20))
+    def test_the_client_window_is_asked_for_the_console_s_own_size(self):
+        """A third of the console's width is about forty-five columns, which
+        wrapped the banner the pane exists to photograph."""
+        from netroach.console_capture import CONSOLE_WINDOW_SIZE
 
-        self.assertEqual(_fit_pane_width(narrow, 190), narrow)
+        self.assertEqual(CONSOLE_WINDOW_SIZE, (770, 300))
 
     def test_nothing_captured_composes_to_nothing(self):
         from netroach.console_capture import compose_side_by_side
