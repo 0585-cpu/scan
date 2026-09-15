@@ -1531,6 +1531,22 @@ async fn identify_service(
         return fallback_known_service(known);
     }
 
+    // These say nothing until they are asked, so the passive read below would
+    // spend the whole timeout on a silent socket and then name the port from a
+    // table. Each has a first message that is a negotiation rather than a login.
+    if matches!(known, Some("smb" | "netbios-ssn")) {
+        if let Some(fingerprint) = probe_smb(stream, known, timeout_duration).await {
+            return fingerprint;
+        }
+        return fallback_known_service(known);
+    }
+    if known == Some("msrpc") {
+        if let Some(fingerprint) = probe_msrpc(stream, timeout_duration).await {
+            return fingerprint;
+        }
+        return fallback_known_service(known);
+    }
+
     if matches!(known, Some("http" | "http-alt")) {
         if let Some(fingerprint) =
             probe_http(stream, host, port, timeout_duration, known, plugin_catalog).await
@@ -2239,6 +2255,241 @@ fn x509_certificate_summary(der: &[u8]) -> Option<String> {
     } else {
         Some(clean_banner(&parts.join("; ")))
     }
+}
+
+/// Ask an SMB port which dialect it speaks, and how it treats signing.
+///
+/// The negotiation is the first thing any SMB client sends and it carries no
+/// credentials; this stops there, before the session setup where authentication
+/// would begin. What comes back is the finding: whether SMBv1 is still enabled,
+/// and whether the server requires message signing.
+///
+/// The dialect list offers SMB1 alongside the SMB2 wildcards on purpose. A
+/// server with SMBv1 switched off answers an SMB1 request with an SMB2 header;
+/// one that answers in SMB1 has it switched on, which is the thing worth
+/// reporting and cannot be read from the port number.
+async fn probe_smb(
+    stream: &mut TcpStream,
+    known: Option<&str>,
+    timeout_duration: Duration,
+) -> Option<ServiceFingerprint> {
+    // Which framing to use follows the service rather than the port it was
+    // found on, the way every other choice here does: NetBIOS session service
+    // moved off 139 still needs its session opened first, and 445 found
+    // somewhere else still must not have one sent to it.
+    if known == Some("netbios-ssn") && !netbios_session_opened(stream, timeout_duration).await {
+        return None;
+    }
+    if stream.write_all(&smb_negotiate_request()).await.is_err() {
+        return None;
+    }
+    let bytes = read_bounded(stream, timeout_duration, 4_096).await;
+    classify_smb_response(&bytes)
+}
+
+/// Over 139 the SMB session rides on a NetBIOS one, which has to be opened
+/// first. `*SMBSERVER` is the wildcard name a server accepts without the
+/// caller knowing what it calls itself.
+async fn netbios_session_opened(stream: &mut TcpStream, timeout_duration: Duration) -> bool {
+    let mut request = vec![0x81, 0x00, 0x00, 0x44];
+    request.extend_from_slice(&netbios_encoded_name(b"*SMBSERVER"));
+    request.extend_from_slice(&netbios_encoded_name(b"NETROACH"));
+    if stream.write_all(&request).await.is_err() {
+        return false;
+    }
+    let reply = read_bounded(stream, timeout_duration, 64).await;
+    // 0x82 is a positive session response; 0x83 names why it refused.
+    reply.first() == Some(&0x82)
+}
+
+/// A NetBIOS name in its first-level encoding: padded to sixteen bytes, then
+/// each nibble carried as a letter from A.
+fn netbios_encoded_name(name: &[u8]) -> Vec<u8> {
+    let mut padded = [b' '; 16];
+    let length = name.len().min(15);
+    padded[..length].copy_from_slice(&name[..length]);
+    padded[15] = 0x20;
+    let mut encoded = Vec::with_capacity(34);
+    encoded.push(32);
+    for byte in padded {
+        encoded.push(b'A' + (byte >> 4));
+        encoded.push(b'A' + (byte & 0x0f));
+    }
+    encoded.push(0);
+    encoded
+}
+
+fn smb_negotiate_request() -> Vec<u8> {
+    let mut message = vec![0xff, b'S', b'M', b'B', 0x72];
+    message.extend_from_slice(&[0x00; 4]); // NT status
+    message.push(0x18); // flags
+    message.extend_from_slice(&[0x53, 0xc8]); // flags2
+    message.extend_from_slice(&[0x00; 2]); // PID high
+    message.extend_from_slice(&[0x00; 8]); // signature
+    message.extend_from_slice(&[0x00; 2]); // reserved
+    message.extend_from_slice(&[0x00; 2]); // tree id
+    message.extend_from_slice(&[0xfe, 0xff]); // process id
+    message.extend_from_slice(&[0x00; 2]); // user id
+    message.extend_from_slice(&[0x00; 2]); // multiplex id
+    message.push(0x00); // word count
+
+    let mut dialects = Vec::new();
+    for dialect in [b"NT LM 0.12".as_slice(), b"SMB 2.002", b"SMB 2.???"] {
+        dialects.push(0x02);
+        dialects.extend_from_slice(dialect);
+        dialects.push(0x00);
+    }
+    message.extend_from_slice(&(dialects.len() as u16).to_le_bytes());
+    message.extend_from_slice(&dialects);
+
+    // The four byte session header SMB carries on both ports.
+    let mut request = vec![0x00];
+    request.extend_from_slice(&(message.len() as u32).to_be_bytes()[1..]);
+    request.extend_from_slice(&message);
+    request
+}
+
+fn smb_dialect_name(revision: u16) -> String {
+    match revision {
+        0x0202 => "2.0.2".to_string(),
+        0x0210 => "2.1".to_string(),
+        0x0300 => "3.0".to_string(),
+        0x0302 => "3.0.2".to_string(),
+        0x0311 => "3.1.1".to_string(),
+        // What a server returns when an SMB1 request offered "SMB 2.???": it
+        // speaks SMB2 or better and wants the exchange restarted there. The
+        // exact dialect would take a second negotiate, and the two findings
+        // this probe is for are already answered.
+        0x02ff => "2 or later".to_string(),
+        other => format!("0x{other:04x}"),
+    }
+}
+
+/// Signing is reported as the server stated it: offered, or insisted upon.
+fn smb_signing(mode: u16) -> &'static str {
+    match (mode & 0x0002 != 0, mode & 0x0001 != 0) {
+        (true, _) => "required",
+        (false, true) => "enabled",
+        (false, false) => "disabled",
+    }
+}
+
+fn classify_smb_response(bytes: &[u8]) -> Option<ServiceFingerprint> {
+    let body = bytes.get(4..)?;
+    if body.starts_with(&[0xfe, b'S', b'M', b'B']) {
+        // SMB2 negotiate response: the header is 64 bytes, then structure
+        // size, security mode and the dialect the server settled on.
+        let mode = u16::from_le_bytes([*body.get(66)?, *body.get(67)?]);
+        let dialect = u16::from_le_bytes([*body.get(68)?, *body.get(69)?]);
+        return Some(ServiceFingerprint {
+            name: Some("smb".to_string()),
+            confidence: Some(0.97),
+            banner: Some(format!(
+                "smb dialect={} signing={} smbv1=disabled",
+                smb_dialect_name(dialect),
+                smb_signing(mode)
+            )),
+        });
+    }
+    if body.starts_with(&[0xff, b'S', b'M', b'B']) {
+        // An SMB1 answer to a request that offered SMB2 means SMB1 is still
+        // switched on, which is the finding. Word count 17 is the NT LM 0.12
+        // form, whose security mode byte carries the signing bits.
+        let words = *body.get(32)?;
+        let selected = u16::from_le_bytes([*body.get(33)?, *body.get(34)?]);
+        if selected == 0xffff {
+            return Some(ServiceFingerprint {
+                name: Some("smb".to_string()),
+                confidence: Some(0.90),
+                banner: Some("smb refused every offered dialect".to_string()),
+            });
+        }
+        let signing = if words >= 17 {
+            let mode = u16::from(*body.get(35)?);
+            // SMB1 puts the signing bits two places higher than SMB2 does.
+            smb_signing(mode >> 2)
+        } else {
+            "unknown"
+        };
+        return Some(ServiceFingerprint {
+            name: Some("smb".to_string()),
+            confidence: Some(0.97),
+            banner: Some(format!(
+                "smb dialect=NT LM 0.12 signing={signing} smbv1=enabled"
+            )),
+        });
+    }
+    None
+}
+
+/// Ask the endpoint mapper to bind. A bind carries no credentials and opens no
+/// interface; what it settles is that something speaking DCERPC is there,
+/// rather than a port number that is usually it.
+async fn probe_msrpc(
+    stream: &mut TcpStream,
+    timeout_duration: Duration,
+) -> Option<ServiceFingerprint> {
+    if stream.write_all(&dcerpc_bind_request()).await.is_err() {
+        return None;
+    }
+    let bytes = read_bounded(stream, timeout_duration, 1_024).await;
+    classify_dcerpc_response(&bytes)
+}
+
+fn dcerpc_bind_request() -> Vec<u8> {
+    // The endpoint mapper's own interface, which every Windows host exports.
+    const EPT_UUID: [u8; 16] = [
+        0x08, 0x83, 0xaf, 0xe1, 0x1f, 0x5d, 0xc9, 0x11, 0x91, 0xa4, 0x08, 0x00, 0x2b, 0x14, 0xa0,
+        0xfa,
+    ];
+    // The transfer syntax every DCERPC caller offers.
+    const NDR_UUID: [u8; 16] = [
+        0x04, 0x5d, 0x88, 0x8a, 0xeb, 0x1c, 0xc9, 0x11, 0x9f, 0xe8, 0x08, 0x00, 0x2b, 0x10, 0x48,
+        0x60,
+    ];
+    let mut request = vec![
+        0x05, 0x00, // version 5.0
+        0x0b, // bind
+        0x03, // first and last fragment
+        0x10, 0x00, 0x00, 0x00, // little endian, ascii, ieee
+    ];
+    request.extend_from_slice(&72_u16.to_le_bytes()); // fragment length
+    request.extend_from_slice(&0_u16.to_le_bytes()); // auth length
+    request.extend_from_slice(&1_u32.to_le_bytes()); // call id
+    request.extend_from_slice(&5840_u16.to_le_bytes()); // max transmit
+    request.extend_from_slice(&5840_u16.to_le_bytes()); // max receive
+    request.extend_from_slice(&0_u32.to_le_bytes()); // association group
+    request.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // one context in the list
+    request.extend_from_slice(&0_u16.to_le_bytes()); // context id
+    request.push(0x01); // one transfer syntax offered for it
+    request.push(0x00); // reserved
+    request.extend_from_slice(&EPT_UUID);
+    request.extend_from_slice(&3_u16.to_le_bytes()); // interface version
+    request.extend_from_slice(&0_u16.to_le_bytes());
+    request.extend_from_slice(&NDR_UUID);
+    request.extend_from_slice(&2_u32.to_le_bytes()); // syntax version
+    request
+}
+
+fn classify_dcerpc_response(bytes: &[u8]) -> Option<ServiceFingerprint> {
+    if bytes.len() < 16 || bytes[0] != 0x05 {
+        return None;
+    }
+    let (outcome, confidence) = match bytes[2] {
+        0x0c => ("bind accepted", 0.97),
+        0x0d => ("bind refused", 0.95),
+        0x03 => ("fault", 0.90),
+        _ => return None,
+    };
+    let transmit = u16::from_le_bytes([*bytes.get(18)?, *bytes.get(19)?]);
+    Some(ServiceFingerprint {
+        name: Some("msrpc".to_string()),
+        confidence: Some(confidence),
+        banner: Some(format!(
+            "dcerpc v{}.{} endpoint mapper {outcome}, max transmit {transmit}",
+            bytes[0], bytes[1]
+        )),
+    })
 }
 
 fn tls_client_hello() -> &'static [u8] {
@@ -4233,6 +4484,109 @@ mod tests {
             .and_then(|fingerprint| fingerprint.banner)
             .unwrap_or_default();
         assert!(!mdns.contains("recursion"), "{mdns}");
+    }
+
+    #[test]
+    fn smb_reports_the_two_things_the_port_number_cannot_say() {
+        // 445 open is not a finding. Whether SMBv1 is still switched on, and
+        // whether the server insists on signing, are - and neither can be read
+        // from the port. The negotiation carries no credentials and stops
+        // before the session setup where authentication would start.
+        let request = smb_negotiate_request();
+        assert_eq!(request[0], 0x00, "the session header SMB carries");
+        assert_eq!(
+            u32::from_be_bytes([0, request[1], request[2], request[3]]) as usize,
+            request.len() - 4,
+            "the declared length is the message length"
+        );
+        let text = String::from_utf8_lossy(&request);
+        // SMB1 is offered beside SMB2 on purpose: a server that answers in
+        // SMB1 has it enabled, which is the thing being asked.
+        assert!(text.contains("NT LM 0.12"), "{text}");
+        assert!(text.contains("SMB 2.???"), "{text}");
+        assert!(!text.contains("Session Setup"));
+
+        let smb1 = |security_mode: u8| {
+            let mut reply = vec![0x00, 0x00, 0x00, 0x00];
+            reply.extend_from_slice(&[0xff, b'S', b'M', b'B', 0x72]);
+            reply.extend_from_slice(&[0x00; 27]); // the rest of the header
+            reply.push(17); // word count: the NT LM 0.12 form
+            reply.extend_from_slice(&0_u16.to_le_bytes()); // dialect index
+            reply.push(security_mode);
+            reply.extend_from_slice(&[0x00; 31]);
+            classify_smb_response(&reply)
+                .and_then(|fingerprint| fingerprint.banner)
+                .unwrap_or_default()
+        };
+        // Measured against a server answering this way: signing offered, and
+        // signing insisted upon, are different findings.
+        assert_eq!(
+            smb1(0x07),
+            "smb dialect=NT LM 0.12 signing=enabled smbv1=enabled"
+        );
+        assert_eq!(
+            smb1(0x0f),
+            "smb dialect=NT LM 0.12 signing=required smbv1=enabled"
+        );
+
+        // An SMB2 header in answer to that request means SMB1 is off.
+        let mut smb2 = vec![0x00, 0x00, 0x00, 0x00];
+        smb2.extend_from_slice(&[0xfe, b'S', b'M', b'B']);
+        smb2.extend_from_slice(&[0x00; 60]); // the rest of the 64 byte header
+        smb2.extend_from_slice(&65_u16.to_le_bytes()); // structure size
+        smb2.extend_from_slice(&0x0003_u16.to_le_bytes()); // signing required
+        smb2.extend_from_slice(&0x0311_u16.to_le_bytes()); // dialect 3.1.1
+        assert_eq!(
+            classify_smb_response(&smb2)
+                .and_then(|f| f.banner)
+                .as_deref(),
+            Some("smb dialect=3.1.1 signing=required smbv1=disabled")
+        );
+
+        // Nothing that is not SMB is read as SMB.
+        assert!(classify_smb_response(b"\x00\x00\x00\x10HTTP/1.1 400").is_none());
+    }
+
+    #[test]
+    fn a_netbios_name_is_encoded_the_way_a_session_request_carries_it() {
+        // Over 139 the SMB session rides on a NetBIOS one, and the wildcard
+        // name is how a caller opens it without knowing what the server calls
+        // itself. Measured against a server expecting the session first: 72
+        // bytes, type 0x81, and the negotiation went through after it.
+        let encoded = netbios_encoded_name(b"*SMBSERVER");
+
+        assert_eq!(encoded.len(), 34);
+        assert_eq!(encoded[0], 32, "the length of the encoded name");
+        assert_eq!(*encoded.last().unwrap(), 0, "and its terminator");
+        // Each byte becomes two letters counting from A: '*' is 0x2A.
+        assert_eq!(&encoded[1..3], b"CK");
+        // The padding is spaces, 0x20, with the type byte last.
+        assert_eq!(&encoded[31..33], b"CA");
+    }
+
+    #[test]
+    fn a_dcerpc_bind_is_the_length_it_declares() {
+        // The first attempt declared 72 and sent 68 - the context header was
+        // missing - and the endpoint mapper on this machine answered nothing.
+        let request = dcerpc_bind_request();
+
+        assert_eq!(request.len(), 72);
+        assert_eq!(
+            u16::from_le_bytes([request[8], request[9]]) as usize,
+            request.len()
+        );
+        assert_eq!(request[2], 0x0b, "bind");
+
+        let mut accepted = vec![0x05, 0x00, 0x0c, 0x03];
+        accepted.extend_from_slice(&[0x00; 14]);
+        accepted.extend_from_slice(&5840_u16.to_le_bytes());
+        assert_eq!(
+            classify_dcerpc_response(&accepted)
+                .and_then(|f| f.banner)
+                .as_deref(),
+            Some("dcerpc v5.0 endpoint mapper bind accepted, max transmit 5840")
+        );
+        assert!(classify_dcerpc_response(b"not dcerpc at all").is_none());
     }
 
     #[test]
