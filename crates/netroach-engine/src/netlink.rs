@@ -290,6 +290,9 @@ pub enum OnLinkAddress {
     /// The segment's broadcast address, which resolves to every host at once
     /// rather than to one. A probe sent here is delivered to all of them.
     Broadcast,
+    /// A multicast group, which is not one host either: a probe sent to it
+    /// reaches every member.
+    Multicast,
 }
 
 /// What an address on our own segment answers ARP as.
@@ -303,6 +306,19 @@ pub enum OnLinkAddress {
 /// delivered to an on-link IPv4 address without its MAC, so an address that
 /// answers no ARP has nothing on it to probe.
 pub fn on_link_address_answers(dest: Ipv4Addr) -> Option<OnLinkAddress> {
+    // Decided from the address rather than from what ARP says about it. A
+    // multicast group resolves to a MAC derived from the group rather than to
+    // a neighbour, so a live-looking answer comes back for an address no host
+    // owns - measured, 239.255.255.250 sitting in the neighbour cache with the
+    // MAC every SSDP listener on the segment receives. It was being skipped
+    // only because the resolve happened to fail, and where it succeeds the
+    // scan would have sent an M-SEARCH to every UPnP device in range.
+    if dest.is_multicast() {
+        return Some(OnLinkAddress::Multicast);
+    }
+    if dest.is_broadcast() {
+        return Some(OnLinkAddress::Broadcast);
+    }
     let route = best_route(dest)?;
     if !route.on_link {
         return None;

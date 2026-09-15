@@ -934,6 +934,11 @@ const HOST_DID_NOT_ANSWER_ARP: &str = "host did not answer ARP; no probe was sen
 /// a socket error rather than as something never worth probing.
 const ADDRESS_IS_A_BROADCAST: &str = "broadcast address, not a host; no probe was sent";
 
+/// A multicast group is not one host either, and a probe sent to it reaches
+/// every member - an SSDP M-SEARCH aimed at 239.255.255.250 goes to every UPnP
+/// device on the segment.
+const ADDRESS_IS_A_MULTICAST_GROUP: &str = "multicast group, not a host; no probe was sent";
+
 /// How many neighbour resolutions run at once. Each blocks for about three
 /// seconds on an address that never answers, so a /24 serially is a quarter of
 /// an hour; ARP is a broadcast, so this stays well short of flooding a segment
@@ -1012,6 +1017,9 @@ async fn absent_on_link_hosts(targets: &[IpAddr]) -> Vec<(IpAddr, &'static str)>
                 }
                 Some(netlink::OnLinkAddress::Broadcast) => {
                     Some((IpAddr::V4(address), ADDRESS_IS_A_BROADCAST))
+                }
+                Some(netlink::OnLinkAddress::Multicast) => {
+                    Some((IpAddr::V4(address), ADDRESS_IS_A_MULTICAST_GROUP))
                 }
                 _ => None,
             }
@@ -4706,6 +4714,21 @@ mod tests {
         assert_eq!(broadcast.state, "filtered");
         assert_eq!(broadcast.error.as_deref(), Some(ADDRESS_IS_A_BROADCAST));
         assert_ne!(broadcast.error, event.error, "two findings, two readings");
+
+        // A multicast group is the same kind of thing and was being skipped
+        // only because resolving it happened to fail. Measured: the neighbour
+        // cache held 239.255.255.250 with the MAC every SSDP listener on the
+        // segment receives, so where the resolve succeeds the scan would have
+        // sent an M-SEARCH to every UPnP device in range.
+        let multicast = absent_host_event(
+            "scan",
+            "239.255.255.250".parse().unwrap(),
+            1900,
+            Protocol::Udp,
+            ADDRESS_IS_A_MULTICAST_GROUP,
+        );
+        assert_eq!(multicast.state, "filtered");
+        assert_ne!(multicast.error, broadcast.error);
         // The wording is the sweep's, which has reported this case since it
         // shipped; two spellings of one finding would read as two findings.
         assert_eq!(
