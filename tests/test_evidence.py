@@ -677,6 +677,37 @@ class SshCaptureTests(unittest.TestCase):
         self.assertEqual(client_pane_kind(22, None), "ssh")
         self.assertEqual(client_pane_kind(23, "telnet"), "telnet")
 
+    def test_a_port_the_scan_could_not_name_still_gets_the_telnet_client(self):
+        """Telnet beside the console is what this did for every port to begin
+        with, and the fallback exists to keep that where nothing was
+        identified. The engine reports a port it read and could not name as
+        "unknown", which the fallback took for an identification: with service
+        detection on - the ordinary setting, and the one that also turns the
+        capture on - a controller answering "ACME Controller v2.1 / Enter PIN:"
+        got the console pane alone, measured, while the engine had the banner
+        in its hand. With detection off the same port reported nothing, took
+        the fallback, and was photographed the other way, so one port had two
+        answers depending on a tick that is not about this.
+
+        A service that was identified and does not speak in lines still gets
+        no client pane. That judgement is unchanged: telnet pointed at TLS or
+        at a binary protocol photographs mojibake.
+        """
+        from netroach.console_capture import client_pane_kind
+
+        for service in (None, "", "unknown", "UNKNOWN", "  unknown  "):
+            with self.subTest(service=service):
+                self.assertEqual(client_pane_kind(4701, service), "telnet")
+        # The ports that already had an answer without a name keep it.
+        self.assertEqual(client_pane_kind(22, "unknown"), "ssh")
+        self.assertEqual(client_pane_kind(23, "unknown"), "telnet")
+        # Identified and binary: still no client pane.
+        for service in ("http", "https", "smb", "msrpc", "rdp", "mysql"):
+            with self.subTest(service=service):
+                self.assertIsNone(client_pane_kind(4701, service))
+        # And a raw print port is never opened, named or not.
+        self.assertIsNone(client_pane_kind(9100, "unknown"))
+
     def test_a_service_that_speaks_in_lines_keeps_its_telnet_client(self):
         """The telnet client is how these are checked by hand, and the picture
         it makes is the exchange itself - the greeting, the capabilities, the

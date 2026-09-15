@@ -738,6 +738,15 @@ _LINE_PROTOCOL_SERVICES = frozenset({
 # Ports to fall back on when nothing was identified, so the common cases still
 # get the right client without a service name to go by.
 _CLIENT_PANE_PORTS = {22: "ssh", 23: "telnet"}
+# What the engine reports when it read the port and could not name it. That is
+# the absence of an identification, not an identification of something: a
+# controller answering "ACME Controller v2.1 / Enter PIN:" is named this, and
+# treating the word as a service name meant the port fell through the fallback
+# and got no client pane at all - measured, with detection on, which is the
+# ordinary setting. Detection off reports nothing and did take the fallback,
+# so the same port was photographed two different ways depending on a tick
+# that is not about this.
+_UNIDENTIFIED = {"", "unknown"}
 # Where opening a client has a physical effect rather than a logged one. A raw
 # print port takes what arrives as the job to print, and telnet opens by
 # sending its option negotiation, so the fallback that points telnet at
@@ -763,9 +772,12 @@ def client_pane_kind(port: int, service: str | None) -> str | None:
     if port in _WRITE_UNSAFE_PORTS:
         return None
     named = (service or "").strip().lower()
-    if not named:
+    if named in _UNIDENTIFIED:
         # Nothing identified: try telnet, which is what this did for every
-        # service before any of them were told apart.
+        # service before any of them were told apart, and what an operator
+        # does by hand with a port they do not recognise. A service that was
+        # identified and does not speak in lines still gets no client pane -
+        # that is the judgement below, and it is unchanged.
         return _CLIENT_PANE_PORTS.get(port, "telnet")
     if named == "ssh":
         return "ssh"
