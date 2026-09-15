@@ -1,6 +1,6 @@
 {
   "name": "netroach-desktop",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "private": true,
   "description": "Desktop wrapper for the Netroach local dashboard.",
   "scripts": {
