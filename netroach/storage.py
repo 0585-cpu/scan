@@ -788,8 +788,31 @@ class SQLiteRepository:
                 (json.dumps(summary), scan_id),
             )
 
-    # Every table a scan's rows live in, children before the job itself.
-    SCAN_CHILD_TABLES = ("port_results", "scan_state_counts", "result_evidence_files")
+    def _scan_child_tables(self, conn: sqlite3.Connection) -> list[tuple[str, str]]:
+        """Every table in this database that points at a scan, and by which column.
+
+        Asked of the database rather than listed here. A database this
+        application opens may carry tables it has never heard of: a bundle
+        exported by the results manager declares five references to scan_jobs,
+        two of them its own - manager_endpoint_metadata and
+        manager_observation_order - and a fixed list of the three this schema
+        knows leaves those rows behind to block the delete, measured.
+        """
+        tables = [
+            str(row["name"])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        ]
+        children: list[tuple[str, str]] = []
+        for table in tables:
+            if table == "scan_jobs":
+                continue
+            for key in conn.execute(f"PRAGMA foreign_key_list({table})"):  # noqa: S608 - name from sqlite_master
+                if str(key["table"]) == "scan_jobs":
+                    children.append((table, str(key["from"])))
+                    break
+        return children
 
     def delete_scan(self, scan_id: str) -> bool:
         """Remove a scan and everything filed under it.
@@ -808,10 +831,16 @@ class SQLiteRepository:
         an ordinary assessment once the allowance was fixed to count the scan
         rather than each host, so a database that had always been missing the
         clause had nothing in it to trip over until then.
+
+        Which children there are is asked of the database. The bundle the
+        results manager exports is exactly such a database, and it carries two
+        tables of its own that point at a scan - a list of the three this
+        schema knows left their rows behind and the delete failed anyway,
+        measured on a bundle built from the manager's own definition.
         """
         with self.session() as conn:
-            for table in self.SCAN_CHILD_TABLES:
-                conn.execute(f"DELETE FROM {table} WHERE scan_id=?", (scan_id,))  # noqa: S608 - fixed names
+            for table, column in self._scan_child_tables(conn):
+                conn.execute(f"DELETE FROM {table} WHERE {column}=?", (scan_id,))  # noqa: S608 - names from the schema
             cursor = conn.execute("DELETE FROM scan_jobs WHERE id=?", (scan_id,))
         deleted = cursor.rowcount > 0
         if deleted:

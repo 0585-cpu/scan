@@ -1020,6 +1020,72 @@ class CollapsedStateTests(unittest.TestCase):
                 )
             conn.close()
 
+    def test_a_scan_deletes_from_a_database_carrying_tables_we_never_made(self):
+        """Which children there are is asked of the database, not listed here.
+
+        The bundle the results manager exports is a database this application
+        opens and did not write. It declares five references to a scan and none
+        of them cascade, two being tables of its own - so a list of the three
+        this schema knows deleted those three and failed on the rest, measured
+        against a bundle built from the manager's own definition.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "bundle.db"
+            conn = sqlite3.connect(db)
+            conn.executescript(
+                """
+                CREATE TABLE scan_jobs(
+                    id TEXT PRIMARY KEY, status TEXT NOT NULL, targets TEXT NOT NULL,
+                    ports TEXT NOT NULL, scope_json TEXT NOT NULL, params_json TEXT NOT NULL,
+                    created_at TEXT, started_at TEXT, completed_at TEXT, summary_json TEXT,
+                    worker_token TEXT, heartbeat_at TEXT);
+                CREATE TABLE port_results(
+                    id INTEGER PRIMARY KEY, scan_id TEXT NOT NULL REFERENCES scan_jobs(id),
+                    host TEXT NOT NULL, port INTEGER NOT NULL, protocol TEXT NOT NULL,
+                    state TEXT NOT NULL, latency_ms REAL, service_name TEXT,
+                    service_confidence REAL, banner TEXT, evidence TEXT, error TEXT,
+                    tags_json TEXT, note TEXT, created_at TEXT);
+                CREATE TABLE scan_state_counts(
+                    scan_id TEXT NOT NULL REFERENCES scan_jobs(id), host TEXT NOT NULL,
+                    protocol TEXT NOT NULL, state TEXT NOT NULL, collapsed INTEGER NOT NULL,
+                    ports TEXT DEFAULT '', PRIMARY KEY(scan_id, host, protocol, state));
+                CREATE TABLE result_evidence_files(
+                    id TEXT PRIMARY KEY, scan_id TEXT NOT NULL REFERENCES scan_jobs(id),
+                    host TEXT NOT NULL, port INTEGER NOT NULL, protocol TEXT NOT NULL,
+                    stored_path TEXT NOT NULL, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL);
+                -- The two the manager adds, which this schema has never heard of.
+                CREATE TABLE manager_endpoint_metadata(
+                    scan_id TEXT REFERENCES scan_jobs(id), host TEXT, protocol TEXT,
+                    port INTEGER, context_json TEXT,
+                    PRIMARY KEY(scan_id, host, protocol, port));
+                CREATE TABLE manager_observation_order(
+                    ordinal INTEGER PRIMARY KEY, scan_id TEXT REFERENCES scan_jobs(id),
+                    host TEXT, protocol TEXT, port INTEGER);
+                INSERT INTO scan_jobs VALUES
+                    ('s1','completed','10.0.0.1','80','[]','{}','t','t','t','{}',NULL,NULL);
+                INSERT INTO port_results VALUES
+                    (1,'s1','10.0.0.1',80,'tcp','open',1.0,'http',0.9,'x',NULL,NULL,'[]',NULL,'t');
+                INSERT INTO scan_state_counts VALUES('s1','10.0.0.1','tcp','filtered',49,'1-79');
+                INSERT INTO result_evidence_files VALUES('e1','s1','10.0.0.1',80,'tcp','p',1,'h');
+                INSERT INTO manager_endpoint_metadata VALUES('s1','10.0.0.1','tcp',80,'{}');
+                INSERT INTO manager_observation_order VALUES(1,'s1','10.0.0.1','tcp',80);
+                """
+            )
+            conn.commit()
+            conn.close()
+
+            self.assertTrue(SQLiteRepository(db).delete_scan("s1"))
+
+            conn = sqlite3.connect(db)
+            for table in (
+                "scan_jobs", "port_results", "scan_state_counts", "result_evidence_files",
+                "manager_endpoint_metadata", "manager_observation_order",
+            ):
+                self.assertEqual(
+                    conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0, table
+                )
+            conn.close()
+
     def test_a_port_list_stored_spelled_out_is_rewritten_as_ranges(self):
         """The job list sends this string on every dashboard poll.
 
