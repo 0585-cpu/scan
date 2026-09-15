@@ -77,7 +77,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--no-host-discovery",
         action="store_true",
-        help="probe every address, including ones on this segment that answer no ARP",
+        help=(
+            "probe every address, including ones on this segment that answer no"
+            " ARP; connect and UDP scans only, a SYN sweep has no MAC to send to"
+        ),
     )
     scan.add_argument(
         "--capture-evidence",

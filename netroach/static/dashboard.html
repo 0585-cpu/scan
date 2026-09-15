@@ -1649,7 +1649,7 @@
                       <div class="scan-help-option">
                         <label class="check-row" for="scanHostDiscovery"><input id="scanHostDiscovery" name="host_discovery" type="checkbox" checked><span>호스트 탐색</span></label>
                         <button class="help-trigger" id="scanHostDiscoveryHelpTrigger" type="button" aria-label="호스트 탐색 설명" aria-describedby="scanHostDiscoveryHelp">(?)</button>
-                        <span class="help-tooltip" id="scanHostDiscoveryHelp" role="tooltip">같은 네트워크 대역의 주소 중 ARP에 응답하지 않는 곳에는 프로브를 보내지 않습니다. 이더넷에서는 MAC 없이 패킷을 전달할 수 없으므로, ARP에 답하지 않는 주소에는 점검할 대상이 없습니다. 해당 포트는 결과표에 남고 "프로브를 보내지 않음" 사유가 붙습니다. 라우팅을 거치는 대역에는 적용되지 않습니다 — 그쪽 ARP는 라우터가 대신 답하므로 대상의 생존 여부를 말해주지 않습니다. ARP에 응답하지 않는 장비가 있는 대역에서만 끄십시오.</span>
+                        <span class="help-tooltip" id="scanHostDiscoveryHelp" role="tooltip">같은 네트워크 대역의 주소 중 ARP에 응답하지 않는 곳에는 프로브를 보내지 않습니다. 이더넷에서는 MAC 없이 패킷을 전달할 수 없으므로, ARP에 답하지 않는 주소에는 점검할 대상이 없습니다. 해당 포트는 결과표에 남고 "프로브를 보내지 않음" 사유가 붙습니다. 라우팅을 거치는 대역에는 적용되지 않습니다 — 그쪽 ARP는 라우터가 대신 답하므로 대상의 생존 여부를 말해주지 않습니다. ARP에 응답하지 않는 장비가 있는 대역에서만 끄십시오. SYN 스캔에는 적용되지 않습니다 — SYN은 프레임을 직접 만들어 MAC이 필요하므로, ARP에 답하지 않는 주소에는 어느 설정에서도 보낼 수 없습니다.</span>
                       </div>
                     </div>
                     <div class="field full authorization-box">

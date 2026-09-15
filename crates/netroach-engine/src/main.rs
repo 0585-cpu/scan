@@ -109,6 +109,8 @@ struct ScanArgs {
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(0..=3))]
     udp_retries: u8,
     /// Probe every address, including ones on this segment that answer no ARP.
+    /// Connect and UDP scans only: a SYN sweep writes its own frames and has
+    /// no MAC to send to, so it skips an unanswered address regardless.
     #[arg(long)]
     no_host_discovery: bool,
     #[arg(long, value_enum, default_value = "tcp")]
@@ -344,7 +346,6 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
         ));
     }
     let timeout_duration = Duration::from_millis(args.timeout_ms.max(1));
-    let rate_limiter = RateLimiter::new(probe_rate(args.rate_limit_per_sec, targets.len()));
     let scan_id: Arc<str> = Arc::from(args.scan_id);
     let protocol = args.protocol;
     let service_probe = args.service_probe;
@@ -410,6 +411,13 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
         .filter(|target| !absent.contains(target))
         .collect();
     let planned_attempts = targets.len() * ports.len();
+
+    // The rate is shared out over the hosts that will actually be probed, so
+    // it has to be decided after discovery rather than before it. Deciding it
+    // first put the whole configured rate on whatever survived: 5000/s spread
+    // over a /24 is 20 a host, and spread over the five that answered is a
+    // thousand each - ten times the per-host budget this exists to keep.
+    let rate_limiter = RateLimiter::new(probe_rate(args.rate_limit_per_sec, targets.len()));
 
     let governor = Arc::new(Governor::new(concurrency));
     let scan_jobs = (0..planned_attempts).map(move |index| scan_job_at(index, &targets, &ports));
@@ -4104,6 +4112,15 @@ mod tests {
         // hosts, each one is inside the per-host budget.
         assert_eq!(probe_rate(5_000, 1), PROBE_RATE_FLOOR_PER_SEC);
         assert_eq!(probe_rate(5_000, 50), 5_000);
+
+        // Which count is passed decides whether the budget holds. Host
+        // discovery removes addresses before any probe goes out, so the rate
+        // has to be shared over what is left: the same 5000 over a /24 is
+        // twenty a host, and over the five that answered it is a thousand
+        // each unless the floor is taken from the surviving count.
+        assert_eq!(probe_rate(5_000, 254), 5_000);
+        assert_eq!(probe_rate(5_000, 5), PROBE_RATE_FLOOR_PER_SEC);
+        assert!(probe_rate(5_000, 5) < probe_rate(5_000, 254));
         assert_eq!(probe_rate(5_000, 2_540), 5_000);
         assert!(probe_rate(5_000, 2_540) / 2_540 <= PROBE_PER_HOST_RATE_PER_SEC);
 
