@@ -2,6 +2,10 @@
 
 All notable Netroach changes are tracked here.
 
+## 0.2.11 - 2026-09-15
+
+- Photograph the telnet client beside the console on a port the scan could not name. That is what this did for every port to begin with, and the fallback added when services started being told apart exists to keep it where nothing was identified - but it tested for an empty service name, and the engine reports a port it read and could not name as "unknown", which the fallback took for an identification and skipped. With service detection on, which is the ordinary setting and the same tick that turns the capture on, such a port got the console pane alone: measured against a controller answering "ACME Controller v2.1 / Enter PIN:", the engine had that banner in its hand and the evidence came back 770x250 with no client in it. With detection off the same port took the fallback and was photographed at 1552x300 with the prompt beside the netstat line - one port, two answers, decided by a tick that is not about this. A service that was identified and does not speak in lines still gets no client pane; telnet pointed at TLS or at a binary protocol photographs mojibake.
+
 ## 0.2.10 - 2026-09-15
 
 - Photograph the client pane, and at the size of the one beside it. Reported from a real assessment: the telnet pane was missing, and where it was there its text could not be read. The pane was captured 0.35 seconds after its window appeared, but a telnet client negotiates its options first and the banner is a round trip behind that - what the capture got was a title bar and nothing else, where a switch's model name and "User Name:" were the evidence. The SSH pane had waited for content since it shipped, for this reason and with a comment saying so; the telnet pane now does the same. It was also squeezed: the console kept its captured width and the client was scaled to what was left of the cell, so its glyphs came out half the size of the ones next to them - and asking the window for a third of the console's width made it about forty-five columns, which wrapped the banner before it could be photographed at all. Both windows are opened at the console's size now.
