@@ -1435,6 +1435,11 @@ fn udp_error_or_closed_event(
     if state == "error" {
         return udp_error_event(scan_id, host, port, start, err, local_fault);
     }
+    let reason = if state == "closed" {
+        "icmp port unreachable reported by OS"
+    } else {
+        "unreachable reported by OS on the path to the host"
+    };
     PortEvent {
         event: "port",
         scan_id: scan_id.to_string(),
@@ -1446,12 +1451,13 @@ fn udp_error_or_closed_event(
         service_name: None,
         service_confidence: None,
         banner: None,
-        evidence: Some(if state == "closed" {
-            "icmp port unreachable reported by OS".to_string()
-        } else {
-            "unreachable reported by OS on the path to the host".to_string()
-        }),
-        error: Some(err.to_string()),
+        // The reason rides in `error`, where the TCP side puts its own and
+        // where storage can fold the row. Evidence is what a row carries
+        // beyond its state, and a line every closed UDP port repeats verbatim
+        // is not that - it kept a hundred rows per host out of the fold, so a
+        // UDP sweep filled the results table with the ports that said nothing.
+        evidence: None,
+        error: Some(format!("{reason}: {err}")),
     }
 }
 
@@ -4962,9 +4968,16 @@ mod tests {
             "socket error",
         );
         assert_eq!(event.state, "closed");
-        assert_eq!(
-            event.evidence.as_deref(),
-            Some("icmp port unreachable reported by OS")
+        // The reason rides in `error`, not in `evidence`. Storage folds a run
+        // of uninformative rows into a count and skips any row carrying
+        // evidence, so a line every closed UDP port repeats verbatim kept a
+        // hundred rows per host out of the fold: measured, a hundred closed
+        // ports stored as a hundred rows where TCP stored none.
+        assert!(event.evidence.is_none(), "{:?}", event.evidence);
+        let reason = event.error.unwrap_or_default();
+        assert!(
+            reason.starts_with("icmp port unreachable reported by OS"),
+            "{reason}"
         );
     }
 

@@ -97,6 +97,14 @@ COLLAPSE_THRESHOLD = 25
 # The ranges are kept either way, so the detail is still there; what changes is
 # whether it is carried as rows.
 COLLAPSE_DETAIL_HOST_LIMIT = 100
+# And above this many uninformative rows in the scan, whatever they are spread
+# over. The allowance was counted per host and nowhere else, so a scan of a
+# hundred hosts with fifteen quiet ports each kept fifteen hundred rows - each
+# host under its own allowance, the table past anything a person reads. One
+# more host crossed the host limit and the same fifteen hundred folded away,
+# which is a cliff rather than a rule. Ten hosts at the full per-host allowance
+# is the most this keeps.
+COLLAPSE_TOTAL_ROW_LIMIT = COLLAPSE_THRESHOLD * 10
 COLLAPSIBLE_STATES = ("closed", "filtered")
 # What `open_only` selects. A UDP port that did not refuse is open as far as a
 # scan can tell, which is why the evidence pass and the re-scan both count it.
@@ -994,10 +1002,24 @@ class SQLiteRepository:
         whichever probes happened to land last.
         """
         # The batch spans every host the scan is working on, so its own size
-        # says how wide the scan is without asking the database.
-        threshold = COLLAPSE_THRESHOLD if len(hosts) <= COLLAPSE_DETAIL_HOST_LIMIT else 0
+        # says how wide the scan is without asking the database. How many rows
+        # are already sitting in the table does have to be asked, because a
+        # scan can be narrow per host and still large.
+        states_sql = ",".join("?" * len(COLLAPSIBLE_STATES))
+        standing = int(
+            conn.execute(
+                f"""
+                SELECT COUNT(*) FROM port_results
+                WHERE scan_id=? AND state IN ({states_sql})
+                  AND banner IS NULL AND evidence IS NULL
+                """,
+                (scan_id, *COLLAPSIBLE_STATES),
+            ).fetchone()[0]
+        )
+        wide = len(hosts) > COLLAPSE_DETAIL_HOST_LIMIT or standing > COLLAPSE_TOTAL_ROW_LIMIT
+        threshold = 0 if wide else COLLAPSE_THRESHOLD
         placeholders = ",".join("?" * len(hosts))
-        states = ",".join("?" * len(COLLAPSIBLE_STATES))
+        states = states_sql
         groups = conn.execute(
             f"""
             SELECT host, protocol, state, COUNT(*) AS count

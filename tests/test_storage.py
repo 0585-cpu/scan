@@ -915,6 +915,43 @@ class CollapsedStateTests(unittest.TestCase):
                 stored = conn.execute("SELECT count(*) FROM port_results").fetchone()[0]
             self.assertEqual(stored, 0)
 
+    def test_a_scan_narrow_per_host_and_wide_overall_still_folds(self):
+        """The allowance was counted per host and nowhere else.
+
+        A hundred hosts with fifteen quiet ports each left fifteen hundred rows
+        in the table - every host inside its own allowance, the table past what
+        anyone reads - and one more host crossed the host limit and folded the
+        same fifteen hundred away. That is a cliff rather than a rule, and the
+        wrong side of it is the ordinary shape of an assessment: a host list
+        with a short port list.
+
+        A genuinely small scan still keeps its rows, because a handful of
+        closed ports does read better as ports than as a range.
+        """
+        def stored(hosts, ports):
+            with tempfile.TemporaryDirectory() as tmp:
+                repo = SQLiteRepository(Path(tmp) / "netroach.db")
+                scan_id = repo.create_scan_job(
+                    targets="10.0.0.0/24", ports="1-100", scope=[], params={}
+                )
+                repo.add_port_results([
+                    PortResult(
+                        scan_id=scan_id, host=f"10.0.{host // 256}.{host % 256}",
+                        port=1000 + port, protocol="tcp", state="filtered",
+                        latency_ms=None, error="timeout",
+                    )
+                    for host in range(hosts) for port in range(ports)
+                ])
+                return len(repo.get_results(scan_id))
+
+        # Small enough to read: kept, as before.
+        self.assertEqual(stored(10, 15), 150)
+        # Past what anyone reads, however it is spread: folded.
+        self.assertEqual(stored(50, 15), 0)
+        self.assertEqual(stored(100, 15), 0)
+        # One host with more than its own allowance folds, as before.
+        self.assertEqual(stored(1, 100), 0)
+
     def test_open_ports_are_never_collapsed(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo, scan_id = self._repo(tmp)
