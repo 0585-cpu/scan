@@ -5,7 +5,7 @@ from collections import Counter
 from pathlib import Path
 
 from netroach.models import PortResult, ScanSummary, SendResult
-from netroach.storage import SQLiteRepository, spans_cover
+from netroach.storage import SQLiteRepository, parse_port_ranges, spans_cover
 
 
 class StorageTests(unittest.TestCase):
@@ -951,6 +951,116 @@ class CollapsedStateTests(unittest.TestCase):
         self.assertEqual(stored(100, 15), 0)
         # One host with more than its own allowance folds, as before.
         self.assertEqual(stored(1, 100), 0)
+
+    def _without_cascade(self, db: Path) -> None:
+        """Rebuild scan_state_counts the way a build without the clause made it.
+
+        `CREATE TABLE IF NOT EXISTS` never alters a table that exists, so a
+        database created by such a build keeps that definition for good.
+        """
+        conn = sqlite3.connect(db)
+        conn.executescript(
+            """
+            PRAGMA foreign_keys = OFF;
+            ALTER TABLE scan_state_counts RENAME TO old_counts;
+            CREATE TABLE scan_state_counts (
+                scan_id TEXT NOT NULL, host TEXT NOT NULL, protocol TEXT NOT NULL,
+                state TEXT NOT NULL, collapsed INTEGER NOT NULL,
+                ports TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY(scan_id, host, protocol, state),
+                FOREIGN KEY(scan_id) REFERENCES scan_jobs(id)
+            );
+            INSERT INTO scan_state_counts SELECT * FROM old_counts;
+            DROP TABLE old_counts;
+            """
+        )
+        conn.commit()
+        conn.close()
+
+    def test_a_scan_deletes_from_a_database_written_without_the_cascade(self):
+        """Deleting relied on ON DELETE CASCADE being in the database it got.
+
+        It is in this schema and has been from the first release, but a
+        database this application opens may have been written by another build
+        on another machine - loading someone else's results is a feature - and
+        one created without the clause keeps its definition. The delete then
+        raised FOREIGN KEY constraint failed and removed nothing, which is what
+        a user reported. Reproduced with a single folded row.
+
+        It also stopped being rare when it did: folding only began filling that
+        table on an ordinary assessment once its allowance counted the scan
+        rather than each host, so a database that had always been missing the
+        clause had nothing in it to trip over until then.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db)
+            scan_id = repo.create_scan_job(
+                targets="10.0.0.1", ports="1-50", scope=[], params={}
+            )
+            repo.add_port_results([
+                PortResult(
+                    scan_id=scan_id, host="10.0.0.1", port=port, protocol="tcp",
+                    state="filtered", latency_ms=None, error="timeout",
+                )
+                for port in range(1, 51)
+            ])
+            self._without_cascade(db)
+            conn = sqlite3.connect(db)
+            folded = conn.execute("SELECT COUNT(*) FROM scan_state_counts").fetchone()[0]
+            conn.close()
+            self.assertGreater(folded, 0, "the row that used to block the delete")
+
+            self.assertTrue(repo.delete_scan(scan_id))
+
+            conn = sqlite3.connect(db)
+            for table in ("scan_jobs", "port_results", "scan_state_counts"):
+                self.assertEqual(
+                    conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0, table
+                )
+            conn.close()
+
+    def test_a_port_list_stored_spelled_out_is_rewritten_as_ranges(self):
+        """The job list sends this string on every dashboard poll.
+
+        A build old enough wrote it port by port. Measured on a real history: a
+        single 65,535-port job holds 382KB, thirty-nine jobs hold 2.0MB, and
+        the list shipped all of it every 700 milliseconds while a scan ran.
+        New jobs are stored as ranges; the rows already written kept what they
+        had, and a database handed over from another machine brings them along.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "netroach.db"
+            repo = SQLiteRepository(db)
+            scan_id = repo.create_scan_job(
+                targets="10.0.0.1", ports="1-3", scope=[], params={}
+            )
+            short = repo.create_scan_job(
+                targets="10.0.0.1", ports="80,443", scope=[], params={}
+            )
+            spelled_out = ",".join(str(port) for port in range(1, 65536))
+            conn = sqlite3.connect(db)
+            conn.execute("UPDATE scan_jobs SET ports=? WHERE id=?", (spelled_out, scan_id))
+            conn.commit()
+            conn.close()
+            self.assertGreater(len(spelled_out), 380_000)
+
+            SQLiteRepository(db)  # opening it is what migrates
+
+            conn = sqlite3.connect(db)
+            rewritten = conn.execute(
+                "SELECT ports FROM scan_jobs WHERE id=?", (scan_id,)
+            ).fetchone()[0]
+            untouched = conn.execute(
+                "SELECT ports FROM scan_jobs WHERE id=?", (short,)
+            ).fetchone()[0]
+            conn.close()
+
+            self.assertEqual(rewritten, "1-65535")
+            # The same set of ports, written the short way.
+            self.assertEqual(parse_port_ranges(rewritten), [(1, 65535)])
+            # A list already short enough to read is left exactly as it was.
+            self.assertEqual(untouched, "80,443")
 
     def test_open_ports_are_never_collapsed(self):
         with tempfile.TemporaryDirectory() as tmp:

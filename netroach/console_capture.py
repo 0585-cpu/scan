@@ -499,7 +499,11 @@ def build_ssh_capture_script(
 
 
 def _capture_when_settled(
-    hwnd: int, *, deadline: float, written_pixels: int = SSH_PROMPT_WRITTEN_PIXELS
+    hwnd: int,
+    *,
+    deadline: float,
+    written_pixels: int = SSH_PROMPT_WRITTEN_PIXELS,
+    unwritten_is_evidence: bool = False,
 ) -> bytes | None:
     """Photograph the window once it stops changing, or when time runs out.
 
@@ -535,9 +539,21 @@ def _capture_when_settled(
         previous = current
     # Out of time, or the window closed. Return what was last seen rather than
     # nothing: a client that refused outright has already written its reason.
-    if previous is None or _changed_pixels(previous, empty) <= written_pixels:
+    last = previous if previous is not None else empty
+    if last is None:
         return None
-    return previous
+    if _changed_pixels(last, empty) <= written_pixels:
+        # The target wrote nothing in the time allowed. Two different things
+        # look like this and they must not share an outcome: a port that
+        # completes the handshake and then says nothing is a finding, and the
+        # window showing a client sitting connected to it is the evidence for
+        # it; a capture that simply did not work - no desktop, a console host
+        # that will not render - is not evidence of anything and must never be
+        # stored. `has_content` is what tells them apart.
+        if unwritten_is_evidence and has_content(last):
+            return last
+        return None
+    return last
 
 
 def _changed_pixels(current: bytes | None, other: bytes | None) -> int:
@@ -694,10 +710,14 @@ def _capture_telnet_window(
         # first and the banner is a round trip behind that, so the wait is for
         # content rather than for a duration - which is what the SSH pane
         # beside it has always done.
+        # A telnet port that answers the handshake and sends no banner is
+        # worth a picture: the client is shown connected to it with nothing
+        # coming back, which is what the operator would see by hand.
         return _capture_when_settled(
             hwnd,
             deadline=time.monotonic() + TELNET_PROMPT_TIMEOUT_S,
             written_pixels=TELNET_PROMPT_WRITTEN_PIXELS,
+            unwritten_is_evidence=True,
         )
     finally:
         process.terminate()
@@ -851,8 +871,13 @@ def capture_console_session(
                 )
             else:
                 client_pane = None
-            if client_pane is not None:
-                client_pane = crop_to_content(client_pane)
+            # The client pane is not cropped. Cropping it trims the empty
+            # terminal below its last line, and where the target sent nothing
+            # that emptiness is the whole content: a window showing a client
+            # sitting connected to a port that never spoke cropped down to its
+            # own title bar, 52 pixels against the console's 250, which reads
+            # as a broken picture rather than as a finding. Both windows are
+            # opened at one size, so the composition is bounded either way.
             return compose_side_by_side([console_pane, client_pane or b""])
         finally:
             process.terminate()

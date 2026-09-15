@@ -433,6 +433,38 @@ class SQLiteRepository:
             )
             self._migrate(conn)
 
+    # Past this, a port list written out port by port is certainly longer than
+    # the same set written as ranges, and short lists are left alone.
+    PORT_EXPRESSION_COMPACT_LIMIT = 200
+
+    def _compact_stored_port_expressions(self, conn: sqlite3.Connection) -> None:
+        """Rewrite port lists that were stored spelled out, as ranges.
+
+        A job's port list is sent on every dashboard poll, and a build old
+        enough wrote it out port by port: measured on a real history, one
+        65,535-port job holds 382KB and thirty-nine jobs hold 2.0MB, which the
+        job list shipped every 700 milliseconds while a scan ran. New jobs have
+        been stored as ranges for a while; the rows already written kept what
+        they had, because nothing rewrote them.
+
+        It matters more than it did. A database this application opens may have
+        been written on another machine and handed over, so the old rows arrive
+        from outside rather than only from this machine's own past.
+        """
+        rows = conn.execute(
+            "SELECT id, ports FROM scan_jobs WHERE LENGTH(ports) > ?",
+            (self.PORT_EXPRESSION_COMPACT_LIMIT,),
+        ).fetchall()
+        for row in rows:
+            stored = str(row["ports"])
+            compact = format_port_ranges(merge_spans(parse_port_ranges(stored)))
+            # Only ever shorter, and never at the cost of the set it names: a
+            # list this cannot parse is left exactly as it was found.
+            if compact and len(compact) < len(stored):
+                conn.execute(
+                    "UPDATE scan_jobs SET ports=? WHERE id=?", (compact, str(row["id"]))
+                )
+
     def _migrate(self, conn: sqlite3.Connection) -> None:
         job_columns = {row["name"] for row in conn.execute("PRAGMA table_info(scan_jobs)").fetchall()}
         if "worker_token" not in job_columns:
@@ -455,6 +487,7 @@ class SQLiteRepository:
             # Written by a build that stored only the count. Those rows keep
             # their totals; a scan resumed from one re-probes what it folded.
             conn.execute("ALTER TABLE scan_state_counts ADD COLUMN ports TEXT NOT NULL DEFAULT ''")
+        self._compact_stored_port_expressions(conn)
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(port_results)").fetchall()}
         if "evidence" not in columns:
             conn.execute("ALTER TABLE port_results ADD COLUMN evidence TEXT")
@@ -755,8 +788,30 @@ class SQLiteRepository:
                 (json.dumps(summary), scan_id),
             )
 
+    # Every table a scan's rows live in, children before the job itself.
+    SCAN_CHILD_TABLES = ("port_results", "scan_state_counts", "result_evidence_files")
+
     def delete_scan(self, scan_id: str) -> bool:
+        """Remove a scan and everything filed under it.
+
+        The children are deleted by name rather than left to ON DELETE CASCADE.
+        The cascade is in this schema and has been from the first release, but
+        a database this application is handed was written by whatever build ran
+        the scan - loading another machine's results is a feature - and
+        `CREATE TABLE IF NOT EXISTS` never alters a table that already exists,
+        so one created without the clause keeps its definition for good. The
+        delete then fails on the foreign key instead of doing anything, which
+        is what a user reported: reproduced with a single folded row in a
+        `scan_state_counts` whose on-delete action was NO ACTION.
+
+        It also stopped being rare. Folding only started filling that table on
+        an ordinary assessment once the allowance was fixed to count the scan
+        rather than each host, so a database that had always been missing the
+        clause had nothing in it to trip over until then.
+        """
         with self.session() as conn:
+            for table in self.SCAN_CHILD_TABLES:
+                conn.execute(f"DELETE FROM {table} WHERE scan_id=?", (scan_id,))  # noqa: S608 - fixed names
             cursor = conn.execute("DELETE FROM scan_jobs WHERE id=?", (scan_id,))
         deleted = cursor.rowcount > 0
         if deleted:
