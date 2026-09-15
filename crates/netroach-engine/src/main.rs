@@ -397,15 +397,16 @@ async fn run_scan(args: ScanArgs) -> Result<()> {
         absent_on_link_hosts(&targets).await
     };
     if !absent.is_empty() {
-        for &target in &absent {
+        for &(target, reason) in &absent {
             for &port in &ports {
-                let event = absent_host_event(&scan_id, target, port, protocol);
+                let event = absent_host_event(&scan_id, target, port, protocol, reason);
                 observe_summary(&mut summary, &event.state, 1);
                 emit(&event)?;
             }
         }
     }
-    let absent: std::collections::HashSet<IpAddr> = absent.into_iter().collect();
+    let absent: std::collections::HashSet<IpAddr> =
+        absent.into_iter().map(|(target, _)| target).collect();
     let targets: Vec<IpAddr> = targets
         .into_iter()
         .filter(|target| !absent.contains(target))
@@ -925,6 +926,14 @@ fn probe_rate(requested: u64, host_count: usize) -> u64 {
 /// already uses for the same situation.
 const HOST_DID_NOT_ANSWER_ARP: &str = "host did not answer ARP; no probe was sent";
 
+/// The segment's broadcast address is not a host and must not be probed as
+/// one. It resolves to every machine on the segment at once, so a UDP probe
+/// aimed at it is delivered to all of them - measured, an SNMP GetRequest sent
+/// to every device in range, each of which may log it and trap on it. Windows
+/// refuses the TCP connect outright, which had been filing the same address as
+/// a socket error rather than as something never worth probing.
+const ADDRESS_IS_A_BROADCAST: &str = "broadcast address, not a host; no probe was sent";
+
 /// How many neighbour resolutions run at once. Each blocks for about three
 /// seconds on an address that never answers, so a /24 serially is a quarter of
 /// an hour; ARP is a broadcast, so this stays well short of flooding a segment
@@ -937,7 +946,13 @@ const ARP_RESOLVE_CONCURRENCY: usize = 64;
 /// line per port in scope, and a port that quietly disappeared would read as
 /// one nobody thought to check. The reason travels with it so the row is not
 /// mistaken for a probe that timed out.
-fn absent_host_event(scan_id: &str, host: IpAddr, port: u16, protocol: Protocol) -> PortEvent {
+fn absent_host_event(
+    scan_id: &str,
+    host: IpAddr,
+    port: u16,
+    protocol: Protocol,
+    reason: &str,
+) -> PortEvent {
     PortEvent {
         event: "port",
         scan_id: scan_id.to_string(),
@@ -950,7 +965,7 @@ fn absent_host_event(scan_id: &str, host: IpAddr, port: u16, protocol: Protocol)
         service_confidence: None,
         banner: None,
         evidence: None,
-        error: Some(HOST_DID_NOT_ANSWER_ARP.to_string()),
+        error: Some(reason.to_string()),
     }
 }
 
@@ -966,7 +981,7 @@ fn absent_host_event(scan_id: &str, host: IpAddr, port: u16, protocol: Protocol)
 /// for them without a frame reaching the wire, and a scan of one's own subnet
 /// always includes them.
 #[cfg(windows)]
-async fn absent_on_link_hosts(targets: &[IpAddr]) -> Vec<IpAddr> {
+async fn absent_on_link_hosts(targets: &[IpAddr]) -> Vec<(IpAddr, &'static str)> {
     let local: std::collections::HashSet<IpAddr> = netlink::local_ipv4_addresses()
         .into_iter()
         .map(IpAddr::V4)
@@ -991,7 +1006,15 @@ async fn absent_on_link_hosts(targets: &[IpAddr]) -> Vec<IpAddr> {
         })
         .buffer_unordered(ARP_RESOLVE_CONCURRENCY)
         .filter_map(|(address, answered)| async move {
-            (answered == Some(false)).then_some(IpAddr::V4(address))
+            match answered {
+                Some(netlink::OnLinkAddress::Silent) => {
+                    Some((IpAddr::V4(address), HOST_DID_NOT_ANSWER_ARP))
+                }
+                Some(netlink::OnLinkAddress::Broadcast) => {
+                    Some((IpAddr::V4(address), ADDRESS_IS_A_BROADCAST))
+                }
+                _ => None,
+            }
         })
         .collect()
         .await
@@ -1000,7 +1023,7 @@ async fn absent_on_link_hosts(targets: &[IpAddr]) -> Vec<IpAddr> {
 /// Nothing to ask elsewhere: ARP is how an address on an Ethernet segment is
 /// found, and this is the only platform the packaged scanner ships for.
 #[cfg(not(windows))]
-async fn absent_on_link_hosts(_targets: &[IpAddr]) -> Vec<IpAddr> {
+async fn absent_on_link_hosts(_targets: &[IpAddr]) -> Vec<(IpAddr, &'static str)> {
     Vec::new()
 }
 
@@ -4651,7 +4674,13 @@ mod tests {
         // it reads as one nobody checked. Measured on a real segment: ten
         // addresses that answer no ARP still reported twenty ports each, and
         // not one packet went to them.
-        let event = absent_host_event("scan", "10.0.0.7".parse().unwrap(), 161, Protocol::Udp);
+        let event = absent_host_event(
+            "scan",
+            "10.0.0.7".parse().unwrap(),
+            161,
+            Protocol::Udp,
+            HOST_DID_NOT_ANSWER_ARP,
+        );
 
         assert_eq!(event.state, "filtered");
         assert_eq!(event.protocol, "udp");
@@ -4660,6 +4689,23 @@ mod tests {
         assert!(event.latency_ms.is_none());
         assert!(event.evidence.is_none());
         assert!(event.service_name.is_none());
+
+        // The broadcast address is not a host that stayed quiet: it answers
+        // ARP with all ones, every machine on the segment at once. Measured
+        // before this told them apart - a UDP probe aimed at it went out as a
+        // broadcast, so an SNMP GetRequest with the public community reached
+        // every device in range, and the TCP connect came back a socket error
+        // rather than as something never worth probing.
+        let broadcast = absent_host_event(
+            "scan",
+            "10.0.0.255".parse().unwrap(),
+            161,
+            Protocol::Udp,
+            ADDRESS_IS_A_BROADCAST,
+        );
+        assert_eq!(broadcast.state, "filtered");
+        assert_eq!(broadcast.error.as_deref(), Some(ADDRESS_IS_A_BROADCAST));
+        assert_ne!(broadcast.error, event.error, "two findings, two readings");
         // The wording is the sweep's, which has reported this case since it
         // shipped; two spellings of one finding would read as two findings.
         assert_eq!(

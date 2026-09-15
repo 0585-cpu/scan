@@ -194,6 +194,9 @@ fn neighbour_mac(interface_index: u32, ip: Ipv4Addr) -> Option<[u8; 6]> {
     }
     let mut mac = [0u8; 6];
     mac.copy_from_slice(&row.PhysicalAddress[..6]);
+    // The broadcast address resolves to all ones, which is not a host's MAC;
+    // the caller tells that case apart rather than treating it as a neighbour.
+    //
     // A neighbour that never answered leaves an incomplete entry whose address
     // is all zeroes. Sending to it is worse than useless: a switch has never
     // learned that address, so it floods the frame to every port on the segment
@@ -277,7 +280,19 @@ fn best_route(dest: Ipv4Addr) -> Option<BestRoute> {
     })
 }
 
-/// Whether an address on our own segment answers ARP.
+/// What an address on our own segment turned out to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnLinkAddress {
+    /// A neighbour answered with a MAC of its own.
+    Host,
+    /// Nothing answered, so there is nothing there to probe.
+    Silent,
+    /// The segment's broadcast address, which resolves to every host at once
+    /// rather than to one. A probe sent here is delivered to all of them.
+    Broadcast,
+}
+
+/// What an address on our own segment answers ARP as.
 ///
 /// `None` where the question does not apply: a target behind a router, or one
 /// the stack has no route to at all. ARP is answered by the router for those,
@@ -287,12 +302,16 @@ fn best_route(dest: Ipv4Addr) -> Option<BestRoute> {
 /// On our own segment it is decisive in the other direction. A frame cannot be
 /// delivered to an on-link IPv4 address without its MAC, so an address that
 /// answers no ARP has nothing on it to probe.
-pub fn on_link_address_answers(dest: Ipv4Addr) -> Option<bool> {
+pub fn on_link_address_answers(dest: Ipv4Addr) -> Option<OnLinkAddress> {
     let route = best_route(dest)?;
     if !route.on_link {
         return None;
     }
-    Some(neighbour_mac(route.interface_index, dest).is_some())
+    Some(match neighbour_mac(route.interface_index, dest) {
+        Some(mac) if mac == [0xff; 6] => OnLinkAddress::Broadcast,
+        Some(_) => OnLinkAddress::Host,
+        None => OnLinkAddress::Silent,
+    })
 }
 
 /// Everything the sweep needs to put a frame on the wire for one target.
