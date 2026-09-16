@@ -12,6 +12,8 @@ benchmark-results/
 benchmark*.json
 soak*.json
 desktop/src-tauri/resources/bin/*.exe
+# Staged from the installed PuTTY beside its executable, same as that binary.
+desktop/src-tauri/resources/bin/PUTTY-LICENCE.txt
 desktop/src-tauri/resources/playwright/*
 !desktop/src-tauri/resources/playwright/.gitkeep
 desktop/src-tauri/resources/installers/*
