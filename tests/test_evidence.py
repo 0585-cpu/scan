@@ -669,6 +669,184 @@ class SshCaptureTests(unittest.TestCase):
 
         self.assertIn(f"{SSH_CAPTURE_USER}@10.0.0.5", self._script())
 
+    def test_putty_reaches_a_login_prompt_without_operator_credentials(self):
+        from netroach.console_capture import build_putty_ssh_command
+
+        command = build_putty_ssh_command(
+            "C:/Program Files/PuTTY/putty.exe",
+            "10.0.0.5",
+            2222,
+            username="evidence-observer-a1b2c3d4",
+        )
+
+        self.assertEqual(command[0], "C:/Program Files/PuTTY/putty.exe")
+        self.assertEqual(command[-1], "10.0.0.5")
+        self.assertIn("-ssh", command)
+        self.assertIn("-P", command)
+        self.assertIn("2222", command)
+        self.assertIn("-l", command)
+        self.assertIn("evidence-observer-a1b2c3d4", command)
+        for safe_option in ("-noagent", "-a", "-x", "-t", "-noshare", "-no-trivial-auth"):
+            self.assertIn(safe_option, command)
+        self.assertEqual(command[command.index("-i") + 1], "")
+        for credential_or_batch_option in ("-pw", "-pwfile", "-load", "-batch"):
+            self.assertNotIn(credential_or_batch_option, command)
+
+    def test_packaged_putty_path_wins_over_a_machine_install(self):
+        import os
+        import tempfile
+
+        from netroach.console_capture import putty_executable
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundled = Path(tmp) / "resources" / "bin" / "putty.exe"
+            bundled.parent.mkdir(parents=True)
+            bundled.write_bytes(b"bundled putty")
+            with (
+                patch.dict(os.environ, {"NETROACH_PUTTY_PATH": str(bundled)}, clear=False),
+                patch("netroach.console_capture.shutil.which", return_value="C:/Program Files/PuTTY/putty.exe"),
+            ):
+                self.assertEqual(putty_executable(), str(bundled))
+
+    def test_putty_telnet_is_kept_for_every_plaintext_service(self):
+        from netroach.console_capture import build_putty_telnet_command, client_pane_kind
+
+        command = build_putty_telnet_command(
+            "C:/Program Files/PuTTY/putty.exe", "10.0.0.5", 2323
+        )
+
+        self.assertEqual(
+            command,
+            [
+                "C:/Program Files/PuTTY/putty.exe",
+                "-telnet",
+                "-P",
+                "2323",
+                "10.0.0.5",
+            ],
+        )
+        for service in ("telnet", "pop3", "imap", "smtp", "submission", "ftp", "nntp", "irc", "redis", "memcached"):
+            with self.subTest(service=service):
+                self.assertEqual(client_pane_kind(12345, service), "telnet")
+
+    def test_telnet_evidence_prefers_putty_and_keeps_the_legacy_fallback(self):
+        from netroach import console_capture
+
+        with (
+            patch.object(console_capture, "_capture_putty_telnet_window", return_value=b"putty"),
+            patch.object(console_capture, "_capture_telnet_window", return_value=b"legacy"),
+        ):
+            result = console_capture._capture_telnet_client_pane(
+                object(), "10.0.0.5", 23, size=(770, 300)
+            )
+        self.assertEqual(result, b"putty")
+
+        with (
+            patch.object(console_capture, "_capture_putty_telnet_window", return_value=None),
+            patch.object(console_capture, "_capture_telnet_window", return_value=b"legacy"),
+        ):
+            result = console_capture._capture_telnet_client_pane(
+                object(), "10.0.0.5", 23, size=(770, 300)
+            )
+        self.assertEqual(result, b"legacy")
+
+    def test_putty_approves_the_host_key_for_this_connection_only(self):
+        from netroach.console_capture import _click_putty_connect_once
+
+        class FakePuttyUser32:
+            labels = {101: "Accept", 102: "Connect Once", 103: "Cancel"}
+
+            def __init__(self):
+                self.clicked = []
+
+            def FindWindowExW(self, _parent, after, _kind, _title):
+                handles = list(self.labels)
+                if not after:
+                    return handles[0]
+                index = handles.index(after) + 1
+                return handles[index] if index < len(handles) else 0
+
+            def GetWindowTextW(self, hwnd, buffer, _length):
+                buffer.value = self.labels[hwnd]
+                return len(buffer.value)
+
+            def SendMessageW(self, hwnd, message, wparam, lparam):
+                self.clicked.append((hwnd, message, wparam, lparam))
+                return 1
+
+        user32 = FakePuttyUser32()
+
+        self.assertTrue(_click_putty_connect_once(user32, 77))
+        self.assertEqual([click[0] for click in user32.clicked], [102])
+
+        user32.labels = {101: "Accept", 103: "Cancel"}
+        user32.clicked.clear()
+        self.assertFalse(_click_putty_connect_once(user32, 77))
+        self.assertEqual(user32.clicked, [])
+
+    def test_putty_capture_approves_then_photographs_the_login_prompt(self):
+        from netroach import console_capture
+
+        class FakeProcess:
+            pid = 4321
+
+            def poll(self):
+                return None
+
+        class FakeUser32:
+            def __init__(self):
+                self.positions = []
+
+            def SetWindowPos(self, *args):
+                self.positions.append(args)
+
+        process = FakeProcess()
+        user32 = FakeUser32()
+        with (
+            patch.object(console_capture, "putty_executable", return_value="C:/PuTTY/putty.exe"),
+            patch.object(console_capture, "visible_window_handles", return_value={1, 2}),
+            patch.object(console_capture.subprocess, "Popen", return_value=process),
+            patch.object(console_capture, "_find_window_by_title", side_effect=[77, None]),
+            patch.object(console_capture, "_click_putty_connect_once", return_value=True) as approve,
+            patch.object(console_capture, "_find_putty_terminal_window", return_value=88),
+            patch.object(console_capture, "_capture_when_settled", return_value=b"login prompt") as capture,
+            patch.object(console_capture, "_terminate_tree") as terminate,
+            patch.object(console_capture.time, "sleep"),
+        ):
+            result = console_capture._capture_putty_ssh_window(
+                user32, "10.0.0.5", 22, size=(770, 300)
+            )
+
+        self.assertEqual(result, b"login prompt")
+        approve.assert_called_once_with(user32, 77)
+        capture.assert_called_once()
+        terminate.assert_called_once_with(process)
+        self.assertEqual(user32.positions[0][0], 88)
+
+    def test_ssh_evidence_prefers_putty_and_falls_back_to_openssh(self):
+        from netroach import console_capture
+
+        with (
+            patch.object(console_capture, "_capture_putty_ssh_window", return_value=b"putty") as putty,
+            patch.object(console_capture, "_capture_ssh_window", return_value=b"openssh") as openssh,
+        ):
+            result = console_capture._capture_ssh_client_pane(
+                object(), "10.0.0.5", 22, size=(770, 300)
+            )
+        self.assertEqual(result, b"putty")
+        putty.assert_called_once()
+        openssh.assert_not_called()
+
+        with (
+            patch.object(console_capture, "_capture_putty_ssh_window", return_value=None),
+            patch.object(console_capture, "_capture_ssh_window", return_value=b"openssh") as openssh,
+        ):
+            result = console_capture._capture_ssh_client_pane(
+                object(), "10.0.0.5", 22, size=(770, 300)
+            )
+        self.assertEqual(result, b"openssh")
+        openssh.assert_called_once()
+
     def test_the_client_beside_the_console_follows_the_service(self):
         from netroach.console_capture import client_pane_kind
 
@@ -676,6 +854,55 @@ class SshCaptureTests(unittest.TestCase):
         self.assertEqual(client_pane_kind(2222, "ssh"), "ssh")
         self.assertEqual(client_pane_kind(22, None), "ssh")
         self.assertEqual(client_pane_kind(23, "telnet"), "telnet")
+
+    def test_a_client_capture_ends_the_client_and_not_only_its_launcher(self):
+        """The client is a child of the script that opens the window.
+
+        `terminate` reaches the interpreter that owns the window and stops
+        there, so the client outlives the capture - holding a connection open
+        on the target, which is the one thing a capture must not leave behind,
+        and taking a console host with it. Measured after the telnet pane moved
+        to a launch script: one telnet process and one console host left behind
+        per capture, four growing to eight over five captures.
+
+        The SSH pane has killed the whole tree since it shipped and says why in
+        its own helper; this holds both panes to it.
+        """
+        import subprocess as sp
+        from unittest.mock import patch
+
+        from netroach import console_capture
+
+        class FakeProcess:
+            pid = 4321
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                raise AssertionError("terminate does not reach the client")
+
+            def kill(self):
+                raise AssertionError("kill does not reach the client")
+
+            def wait(self, timeout=None):
+                return 0
+
+        for capture, executable in (
+            (console_capture._capture_telnet_window, "telnet_executable"),
+            (console_capture._capture_ssh_window, "ssh_executable"),
+        ):
+            with self.subTest(capture=capture.__name__):
+                killed = []
+                with (
+                    patch.object(console_capture, executable, lambda: "C:/Windows/System32/x.exe"),
+                    patch.object(sp, "Popen", lambda *a, **k: FakeProcess()),
+                    patch.object(console_capture, "_find_window_by_title", lambda *a, **k: None),
+                    patch.object(console_capture, "_terminate_tree", killed.append),
+                ):
+                    capture(_FakeUser32(), "10.0.0.5", 23)
+                self.assertEqual(len(killed), 1, "the whole tree is ended, once")
+                self.assertEqual(killed[0].pid, FakeProcess.pid)
 
     def test_a_port_the_scan_could_not_name_still_gets_the_telnet_client(self):
         """Telnet beside the console is what this did for every port to begin
@@ -1297,3 +1524,10 @@ class ConsoleCaptureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _FakeUser32:
+    """Enough of user32 for a capture that never finds its window."""
+
+    def __getattr__(self, name):
+        return lambda *args, **kwargs: 0

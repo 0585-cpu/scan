@@ -33,6 +33,7 @@ CREATE_NEW_CONSOLE = 0x00000010
 SWP_NOSIZE = 0x0001
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
+BM_CLICK = 0x00F5
 # Far enough out that the window never appears on any monitor arrangement.
 OFFSCREEN_POSITION = (-32000, -32000)
 CAPTURE_READY_TIMEOUT_S = 12.0
@@ -59,6 +60,11 @@ SSH_TITLE_SETTLE_MS = 700
 # client wrote something" and "it has stopped writing" both survive the blink.
 SSH_PROMPT_WRITTEN_PIXELS = 1_500
 SSH_PROMPT_STILL_PIXELS = 400
+PUTTY_SECURITY_ALERT_TITLE = "PuTTY Security Alert"
+PUTTY_CONNECT_ONCE_LABEL = "Connect Once"
+# A PuTTY terminal can appear just before its first-use host-key prompt. Give
+# that dialog one polling window to arrive before treating a terminal as ready.
+PUTTY_ALERT_GRACE_S = 1.0
 # The telnet client draws chrome of its own before the target says anything, so
 # its floor sits higher than the blink but lower than the SSH one. Measured on
 # a window of CONSOLE_WINDOW_SIZE: the client alone changes about 994 pixels, a
@@ -426,14 +432,96 @@ def ssh_executable() -> str | None:
     return shutil.which("ssh")
 
 
+def putty_executable() -> str | None:
+    """The installed PuTTY GUI client, when the operator has one."""
+    bundled = os.environ.get("NETROACH_PUTTY_PATH")
+    if bundled:
+        return bundled if Path(bundled).is_file() else None
+    for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+        root = os.environ.get(variable)
+        if root:
+            candidate = Path(root) / "PuTTY" / "putty.exe"
+            if candidate.is_file():
+                return str(candidate)
+    return shutil.which("putty")
+
+
 # What the capture logs in as. A fixed name rather than the operator's, which
 # would otherwise be printed into every report; the server answers the same way
 # either way, because SSH does not say whether a user exists.
-SSH_CAPTURE_USER = "netroach-audit"
+SSH_CAPTURE_USER = "evidence-observer"
 SSH_READY_TIMEOUT_S = 12.0
 # Long enough for the prompt to be photographed, short enough that a server
 # which refuses outright still leaves its refusal on screen.
 SSH_HOLD_S = 30
+
+
+def build_putty_ssh_command(
+    executable: str, host: str, port: int, *, username: str
+) -> list[str]:
+    """Open a visible PuTTY login prompt without reusing operator credentials.
+
+    The username is supplied by the caller and is unique to the capture. PuTTY
+    therefore cannot inherit a saved auto-login name; Pageant, forwarding and
+    connection sharing are disabled. An empty `-i` also clears any private key
+    from PuTTY's Default Settings. The host remains a separate argument rather
+    than command text.
+    """
+    if not _SAFE_HOST.fullmatch(host):
+        raise ValueError("unsafe SSH host")
+    return [
+        executable,
+        "-ssh",
+        "-P",
+        str(int(port)),
+        "-l",
+        username,
+        "-i",
+        "",
+        "-noagent",
+        "-a",
+        "-x",
+        "-t",
+        "-noshare",
+        "-no-trivial-auth",
+        host,
+    ]
+
+
+def build_putty_telnet_command(executable: str, host: str, port: int) -> list[str]:
+    """Open the target with PuTTY's Telnet protocol, without sending input."""
+    if not _SAFE_HOST.fullmatch(host):
+        raise ValueError("unsafe Telnet host")
+    return [executable, "-telnet", "-P", str(int(port)), host]
+
+
+def _click_putty_connect_once(user32: ctypes.CDLL, alert_hwnd: int) -> bool:
+    """Approve only this PuTTY connection, never persist the host key."""
+    child = 0
+    while True:
+        child = user32.FindWindowExW(alert_hwnd, child, "Button", None)
+        if not child:
+            return False
+        buffer = ctypes.create_unicode_buffer(128)
+        user32.GetWindowTextW(child, buffer, 128)
+        if buffer.value.strip().casefold() == PUTTY_CONNECT_ONCE_LABEL.casefold():
+            user32.SendMessageW(child, BM_CLICK, 0, 0)
+            return True
+
+
+def _find_putty_terminal_window(
+    user32: ctypes.CDLL, *, exclude: Container[int]
+) -> int | None:
+    for hwnd, title in _find_windows_by_title(user32, "PuTTY"):
+        normalized = title.strip().casefold()
+        if hwnd in exclude or normalized in {
+            PUTTY_SECURITY_ALERT_TITLE.casefold(),
+            "putty fatal error",
+            "putty error",
+        }:
+            continue
+        return hwnd
+    return None
 
 
 def build_ssh_capture_script(
@@ -585,7 +673,7 @@ def _capture_ssh_window(
         return None
     if not _SAFE_HOST.fullmatch(host):
         return None
-    token = f"Netroach SSH {host}:{port} {uuid.uuid4().hex[:8]}"
+    token = f"SSH evidence {host}:{port} {uuid.uuid4().hex[:8]}"
     with tempfile.TemporaryDirectory(prefix="netroach-ssh-") as tmp:
         script = build_ssh_capture_script(
             host, port, title=token, known_hosts=Path(tmp) / "known_hosts"
@@ -624,6 +712,128 @@ def _capture_ssh_window(
             return _capture_when_settled(hwnd, deadline=time.monotonic() + SSH_PROMPT_TIMEOUT_S)
         finally:
             _terminate_tree(process)
+
+
+def _capture_putty_ssh_window(
+    user32: ctypes.CDLL, host: str, port: int, *, size: tuple[int, int] | None = None
+) -> bytes | None:
+    """Open PuTTY, choose session-only host-key trust, and capture its prompt."""
+    executable = putty_executable()
+    if executable is None or not _SAFE_HOST.fullmatch(host):
+        return None
+    standing = visible_window_handles(user32)
+    username = f"{SSH_CAPTURE_USER}-{uuid.uuid4().hex[:8]}"
+    command = build_putty_ssh_command(executable, host, port, username=username)
+    try:
+        process = subprocess.Popen(command)  # noqa: S603 - fixed client, validated target.
+    except OSError:
+        return None
+    try:
+        hwnd = None
+        appeared_at = None
+        approval_clicked = False
+        deadline = time.monotonic() + SSH_READY_TIMEOUT_S
+        while time.monotonic() < deadline:
+            alert = _find_window_by_title(
+                user32,
+                PUTTY_SECURITY_ALERT_TITLE,
+                exclude=standing,
+                exact=PUTTY_SECURITY_ALERT_TITLE,
+            )
+            if alert is not None and not approval_clicked:
+                if not _click_putty_connect_once(user32, alert):
+                    # Older or unexpected dialogs may offer only a persistent
+                    # approval. Never click that on the operator's behalf.
+                    return None
+                approval_clicked = True
+
+            if hwnd is None:
+                hwnd = _find_putty_terminal_window(user32, exclude=standing)
+                if hwnd is not None:
+                    appeared_at = time.monotonic()
+                    width, height = size or (0, 0)
+                    user32.SetWindowPos(
+                        hwnd,
+                        0,
+                        *OFFSCREEN_POSITION,
+                        width,
+                        height,
+                        (SWP_NOSIZE if not size else 0) | SWP_NOZORDER | SWP_NOACTIVATE,
+                    )
+
+            if (
+                hwnd is not None
+                and alert is None
+                and appeared_at is not None
+                and (approval_clicked or time.monotonic() - appeared_at >= PUTTY_ALERT_GRACE_S)
+            ):
+                break
+            if process.poll() is not None:
+                return None
+            time.sleep(CAPTURE_POLL_INTERVAL_S)
+
+        if hwnd is None:
+            return None
+        return _capture_when_settled(
+            hwnd,
+            deadline=time.monotonic() + SSH_PROMPT_TIMEOUT_S,
+            unwritten_is_evidence=True,
+        )
+    finally:
+        _terminate_tree(process)
+
+
+def _capture_ssh_client_pane(
+    user32: ctypes.CDLL, host: str, port: int, *, size: tuple[int, int] | None = None
+) -> bytes | None:
+    """Prefer PuTTY's login UI and retain the credential-safe OpenSSH fallback."""
+    return _capture_putty_ssh_window(user32, host, port, size=size) or _capture_ssh_window(
+        user32, host, port, size=size
+    )
+
+
+def _capture_putty_telnet_window(
+    user32: ctypes.CDLL, host: str, port: int, *, size: tuple[int, int] | None = None
+) -> bytes | None:
+    """Open bundled PuTTY in Telnet mode and photograph the visible exchange."""
+    executable = putty_executable()
+    if executable is None or not _SAFE_HOST.fullmatch(host):
+        return None
+    standing = visible_window_handles(user32)
+    command = build_putty_telnet_command(executable, host, port)
+    try:
+        process = subprocess.Popen(command)  # noqa: S603 - fixed client, validated target.
+    except OSError:
+        return None
+    try:
+        hwnd = None
+        deadline = time.monotonic() + TELNET_READY_TIMEOUT_S
+        while time.monotonic() < deadline:
+            hwnd = _find_putty_terminal_window(user32, exclude=standing)
+            if hwnd is not None:
+                width, height = size or (0, 0)
+                user32.SetWindowPos(
+                    hwnd,
+                    0,
+                    *OFFSCREEN_POSITION,
+                    width,
+                    height,
+                    (SWP_NOSIZE if not size else 0) | SWP_NOZORDER | SWP_NOACTIVATE,
+                )
+                break
+            if process.poll() is not None:
+                return None
+            time.sleep(CAPTURE_POLL_INTERVAL_S)
+        if hwnd is None:
+            return None
+        return _capture_when_settled(
+            hwnd,
+            deadline=time.monotonic() + TELNET_PROMPT_TIMEOUT_S,
+            written_pixels=TELNET_PROMPT_WRITTEN_PIXELS,
+            unwritten_is_evidence=True,
+        )
+    finally:
+        _terminate_tree(process)
 
 
 def build_telnet_capture_script(host: str, port: int, *, title: str) -> str:
@@ -720,11 +930,21 @@ def _capture_telnet_window(
             unwritten_is_evidence=True,
         )
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:  # pragma: no cover - the client ignored terminate.
-            process.kill()
+        # The whole tree, not the interpreter that owns the window: the client
+        # is its child now that the window is opened through a script, and
+        # terminate does not reach it. Measured, one telnet and one console
+        # host left behind per capture - and each of those holds a connection
+        # open on the target, which is the one thing a capture must not leave.
+        _terminate_tree(process)
+
+
+def _capture_telnet_client_pane(
+    user32: ctypes.CDLL, host: str, port: int, *, size: tuple[int, int] | None = None
+) -> bytes | None:
+    """Prefer bundled PuTTY Telnet and retain the Windows Telnet fallback."""
+    return _capture_putty_telnet_window(user32, host, port, size=size) or _capture_telnet_window(
+        user32, host, port, size=size
+    )
 
 
 # Services whose conversation is lines of text a person can read, so a telnet
@@ -874,11 +1094,11 @@ def capture_console_session(
             # columns: the banner wrapped, and what was left was then scaled
             # to half the height of the text next to it.
             if kind == "ssh":
-                client_pane = _capture_ssh_window(
+                client_pane = _capture_ssh_client_pane(
                     user32, host, port, size=CONSOLE_WINDOW_SIZE
                 )
             elif kind == "telnet":
-                client_pane = _capture_telnet_window(
+                client_pane = _capture_telnet_client_pane(
                     user32, host, port, size=CONSOLE_WINDOW_SIZE
                 )
             else:

@@ -21,6 +21,8 @@ RESOURCE_PLAYWRIGHT = TAURI / "resources" / "playwright"
 RESOURCE_RUNTIME = TAURI / "resources" / "runtime"
 RESOURCE_INSTALLERS = TAURI / "resources" / "installers"
 NPCAP_INSTALLER_RESOURCE = RESOURCE_INSTALLERS / "npcap-installer.exe"
+PUTTY_RESOURCE = RESOURCE_BIN / "putty.exe"
+PUTTY_LICENCE_RESOURCE = RESOURCE_BIN / "PUTTY-LICENCE.txt"
 BACKEND_BUILD = ROOT / "target" / "desktop-backend"
 PLAYWRIGHT_CACHE = ROOT / "target" / "desktop-playwright"
 # Staged into the installer. The headless shell is deliberately not here:
@@ -54,6 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--npcap-installer", type=Path, help="official Npcap installer to embed in the personal NSIS build")
     parser.add_argument("--engine-path", type=Path, help="use an existing netroach-engine binary")
     parser.add_argument("--backend-path", type=Path, help="use an existing frozen backend binary")
+    parser.add_argument("--putty-path", type=Path, help="installed official putty.exe to bundle on Windows")
     parser.add_argument("--skip-engine-build", action="store_true")
     parser.add_argument("--skip-backend-build", action="store_true")
     parser.add_argument("--skip-playwright-download", action="store_true")
@@ -185,36 +188,110 @@ def stage_npcap_installer(
     return digest
 
 
-def verify_npcap_installer_signature(installer: Path) -> None:
+def _authenticode_signature(path: Path, label: str) -> dict[str, object]:
     powershell = shutil.which("powershell") or shutil.which("pwsh")
     if powershell is None:
-        raise SystemExit("PowerShell is required to verify the Npcap installer Authenticode signature")
+        raise SystemExit(f"PowerShell is required to verify the {label} Authenticode signature")
     script = (
-        "& { param([string]$Path) "
+        "& { "
         "$ErrorActionPreference = 'Stop'; "
         "Import-Module (Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1') -Force; "
-        "$s = Get-AuthenticodeSignature -LiteralPath $Path; "
+        "$signaturePath = [Environment]::GetEnvironmentVariable('NETROACH_SIGNATURE_PATH', 'Process'); "
+        "$s = Get-AuthenticodeSignature -LiteralPath $signaturePath; "
         "$subject = if ($null -ne $s.SignerCertificate) { $s.SignerCertificate.Subject } else { $null }; "
         "$publisher = if ($null -ne $s.SignerCertificate) { "
         "$s.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) "
         "} else { $null }; "
         "[pscustomobject]@{ Status = [string]$s.Status; Subject = $subject; Publisher = $publisher } | ConvertTo-Json -Compress }"
     )
+    environment = os.environ.copy()
+    environment["NETROACH_SIGNATURE_PATH"] = os.fspath(path.resolve())
     try:
         completed = subprocess.run(
-            [powershell, "-NoProfile", "-NonInteractive", "-Command", script, os.fspath(installer.resolve())],
+            [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
             check=True,
             capture_output=True,
             text=True,
             encoding="utf-8",
+            env=environment,
         )
         signature = json.loads(completed.stdout)
     except (subprocess.SubprocessError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"Could not verify the Npcap installer Authenticode signature: {exc}") from exc
+        raise SystemExit(f"Could not verify the {label} Authenticode signature: {exc}") from exc
+    if not isinstance(signature, dict):
+        raise SystemExit(f"Could not verify the {label} Authenticode signature: invalid response")
+    return signature
+
+
+def verify_npcap_installer_signature(installer: Path) -> None:
+    signature = _authenticode_signature(installer, "Npcap installer")
     subject = str(signature.get("Subject") or "")
     if signature.get("Status") != "Valid" or signature.get("Publisher") != "Nmap Software LLC":
         raise SystemExit("Npcap installer Authenticode signature is not a valid Nmap Software LLC signature")
     print(f"verified Npcap installer Authenticode signer: {subject}", flush=True)
+
+
+def resolve_putty_runtime(
+    explicit: Path | None,
+    *,
+    system: str | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> tuple[Path, Path]:
+    """Find the official Windows PuTTY installation and its licence."""
+    if (system or platform.system()).lower() != "windows":
+        raise SystemExit("The bundled PuTTY runtime is supported only by Windows desktop builds")
+    values = environment if environment is not None else os.environ
+    candidates: list[Path] = []
+    if explicit is not None:
+        candidates.append(explicit)
+    else:
+        for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+            root = values.get(variable)
+            if root:
+                candidates.append(Path(root) / "PuTTY" / "putty.exe")
+        on_path = shutil.which("putty")
+        if on_path:
+            candidates.append(Path(on_path))
+    executable = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
+    if executable is None:
+        raise SystemExit("PuTTY was not found. Install it with: winget install --id PuTTY.PuTTY --exact")
+    licence = _require_file(executable.with_name("LICENCE"), "PuTTY licence")
+    return executable, licence
+
+
+def stage_putty_runtime(
+    executable: Path,
+    licence: Path,
+    *,
+    destination: Path = PUTTY_RESOURCE,
+    licence_destination: Path = PUTTY_LICENCE_RESOURCE,
+) -> str:
+    """Copy the verified PuTTY runtime and required MIT notice into the bundle."""
+    executable = _require_file(executable, "PuTTY executable")
+    licence = _require_file(licence, "PuTTY licence")
+    destination = destination.resolve()
+    licence_destination = licence_destination.resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    licence_destination.parent.mkdir(parents=True, exist_ok=True)
+    if executable != destination:
+        shutil.copy2(executable, destination)
+    if licence != licence_destination:
+        shutil.copy2(licence, licence_destination)
+    digest = file_sha256(destination)
+    try:
+        display = destination.relative_to(ROOT)
+    except ValueError:
+        display = destination
+    print(f"staged {display} with PuTTY licence (sha256 {digest})", flush=True)
+    return digest
+
+
+def verify_putty_signature(executable: Path) -> None:
+    signature = _authenticode_signature(executable, "PuTTY")
+    subject = str(signature.get("Subject") or "")
+    if signature.get("Status") != "Valid" or signature.get("Publisher") != "Simon Tatham":
+        raise SystemExit("PuTTY Authenticode signature is not a valid Simon Tatham signature")
+    print(f"verified PuTTY Authenticode signer: {subject}", flush=True)
 
 
 def unstage_npcap_installer(*, destination: Path = NPCAP_INSTALLER_RESOURCE) -> bool:
@@ -594,12 +671,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         npcap_digest = file_sha256(npcap_installer)
     else:
         unstage_npcap_installer()
+    putty_runtime: tuple[Path, Path] | None = None
+    putty_digest: str | None = None
+    if platform.system().lower() == "windows":
+        putty_runtime = resolve_putty_runtime(getattr(args, "putty_path", None))
+        verify_putty_signature(putty_runtime[0])
+        putty_digest = file_sha256(putty_runtime[0])
     try:
         engine = build_engine(args)
         browsers = build_playwright_browsers(args)
         backend = build_backend(args)
         _stage_binary(engine, "netroach-engine")
         _stage_binary(backend, "netroach-backend")
+        if putty_runtime is not None:
+            staged_putty_digest = stage_putty_runtime(*putty_runtime)
+            if staged_putty_digest != putty_digest:
+                raise SystemExit("PuTTY executable changed after its Authenticode verification")
+            verify_putty_signature(PUTTY_RESOURCE)
         _stage_playwright_browsers(browsers)
         if npcap_installer is not None:
             staged_digest = stage_npcap_installer(npcap_installer)

@@ -18,11 +18,14 @@ from tools.build_desktop import (
     playwright_install_command,
     playwright_smoke_command,
     pyinstaller_command,
+    resolve_putty_runtime,
     stage_npcap_installer,
+    stage_putty_runtime,
     standard_engine_build_args,
     unstage_npcap_installer,
     validate_personal_npcap_build,
     verify_npcap_installer_signature,
+    verify_putty_signature,
     windows_runtime_architecture,
     write_windows_installer_checksums,
 )
@@ -186,6 +189,85 @@ class DesktopBuildToolTests(unittest.TestCase):
             self.assertRaisesRegex(SystemExit, "Authenticode"),
         ):
             verify_npcap_installer_signature(Path("npcap.exe"))
+
+    def test_putty_runtime_is_discovered_and_staged_with_its_licence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            installation = root / "Program Files" / "PuTTY"
+            installation.mkdir(parents=True)
+            executable = installation / "putty.exe"
+            licence = installation / "LICENCE"
+            executable.write_bytes(b"official putty")
+            licence.write_text("PuTTY MIT licence", encoding="utf-8")
+
+            resolved = resolve_putty_runtime(
+                None,
+                system="Windows",
+                environment={"ProgramFiles": str(root / "Program Files")},
+            )
+            destination = root / "resources" / "bin" / "putty.exe"
+            licence_destination = root / "resources" / "bin" / "PUTTY-LICENCE.txt"
+            digest = stage_putty_runtime(
+                *resolved,
+                destination=destination,
+                licence_destination=licence_destination,
+            )
+
+            self.assertEqual(digest, "5769a4d3a4830e1b3975e2e605cadf719562bffdadd4085717c26d24c4b0de99")
+            self.assertEqual(destination.read_bytes(), b"official putty")
+            self.assertEqual(licence_destination.read_text(encoding="utf-8"), "PuTTY MIT licence")
+
+    def test_putty_runtime_requires_a_valid_simon_tatham_signature(self):
+        valid = SimpleNamespace(
+            stdout=(
+                '{"Status":"Valid","Subject":"CN=Simon Tatham, O=Simon Tatham, C=GB",'
+                '"Publisher":"Simon Tatham"}'
+            )
+        )
+        invalid = SimpleNamespace(stdout='{"Status":"NotSigned","Subject":null,"Publisher":null}')
+        deceptive = SimpleNamespace(
+            stdout=(
+                '{"Status":"Valid","Subject":"CN=Untrusted Publisher, OU=Simon Tatham",'
+                '"Publisher":"Untrusted Publisher"}'
+            )
+        )
+
+        with (
+            patch("tools.build_desktop.shutil.which", return_value="powershell.exe"),
+            patch("tools.build_desktop.subprocess.run", return_value=valid),
+        ):
+            verify_putty_signature(Path("putty.exe"))
+
+        for signature in (invalid, deceptive):
+            with (
+                patch("tools.build_desktop.shutil.which", return_value="powershell.exe"),
+                patch("tools.build_desktop.subprocess.run", return_value=signature),
+                self.assertRaisesRegex(SystemExit, "PuTTY Authenticode"),
+            ):
+                verify_putty_signature(Path("putty.exe"))
+
+    def test_authenticode_path_with_spaces_is_not_split_by_powershell(self):
+        signed = Path(r"C:\Program Files\PuTTY\putty.exe")
+        valid = SimpleNamespace(
+            stdout=(
+                '{"Status":"Valid","Subject":"CN=Simon Tatham, O=Simon Tatham, C=GB",'
+                '"Publisher":"Simon Tatham"}'
+            )
+        )
+
+        def run(command, **kwargs):
+            self.assertNotIn(str(signed.resolve()), command)
+            self.assertEqual(
+                kwargs["env"]["NETROACH_SIGNATURE_PATH"],
+                str(signed.resolve()),
+            )
+            return valid
+
+        with (
+            patch("tools.build_desktop.shutil.which", return_value="powershell.exe"),
+            patch("tools.build_desktop.subprocess.run", side_effect=run),
+        ):
+            verify_putty_signature(signed)
 
     def test_private_build_restores_a_standard_engine_configuration(self):
         private = argparse.Namespace(

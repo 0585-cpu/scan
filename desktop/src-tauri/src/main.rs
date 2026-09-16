@@ -158,6 +158,8 @@ fn roll_log_if_large(path: &std::path::Path) {
 fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, Box<dyn std::error::Error>> {
     let backend = runtime_binary_path(app, "NETROACH_BACKEND_PATH", "netroach-backend")?;
     let engine = runtime_binary_path(app, "NETROACH_ENGINE_PATH", "netroach-engine")?;
+    #[cfg(windows)]
+    let putty = runtime_binary_path(app, "NETROACH_PUTTY_PATH", "putty")?;
     let playwright_browsers =
         runtime_directory_path(app, "NETROACH_PLAYWRIGHT_BROWSERS_PATH", "playwright")?;
     let log_directory = app.path().app_log_dir()?;
@@ -198,6 +200,7 @@ fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, Box<dyn std::erro
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.env("NETROACH_PUTTY_PATH", putty);
         command.creation_flags(CREATE_NO_WINDOW);
     }
 

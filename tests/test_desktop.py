@@ -26,6 +26,18 @@ class DesktopTests(unittest.TestCase):
             "",
         )
 
+    def test_packaged_backend_receives_the_bundled_putty_path(self):
+        root = Path(__file__).resolve().parents[1] / "desktop" / "src-tauri"
+        config = json.loads((root / "tauri.conf.json").read_text(encoding="utf-8"))
+        launcher = (root / "src" / "main.rs").read_text(encoding="utf-8")
+
+        self.assertEqual(
+            config["bundle"]["resources"]["resources/bin/"],
+            "resources/bin/",
+        )
+        self.assertIn('runtime_binary_path(app, "NETROACH_PUTTY_PATH", "putty")', launcher)
+        self.assertIn('.env("NETROACH_PUTTY_PATH", putty)', launcher)
+
     def test_the_installer_clears_bundled_browsers_before_writing(self):
         """NSIS overlays an upgrade, so a superseded browser revision survives.
 
