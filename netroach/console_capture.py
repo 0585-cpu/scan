@@ -46,12 +46,29 @@ CAPTURE_SETTLE_S = 0.35
 TELNET_READY_TIMEOUT_S = 6.0
 # How long to wait for the client to have something in it. A telnet banner is
 # an option negotiation and then a round trip, so it arrives after the window.
-TELNET_PROMPT_TIMEOUT_S = 8.0
+#
+# This ceiling is only ever reached by a port that connects and then says
+# nothing, because anything the target writes is photographed as soon as it
+# stops. That silence is itself a finding and the connected client is its
+# evidence, so the wait has to be long enough to be sure of it - but every
+# second of it is spent on every such port in the scan. The deadline starts
+# once the window is up, and a banner landing inside it is kept whether or not
+# there was time left to watch it settle, so the reach is a little past the
+# number: measured, banners at 0.5, 2.0, 3.0, 3.5, 4.0 and 5.0 seconds were
+# all captured and 5.5 was not. A silent port costs 5.4 seconds here rather
+# than the 8.6 the old ceiling spent reaching the same conclusion.
+TELNET_PROMPT_TIMEOUT_S = 5.0
 # How long to keep waiting for the SSH window to stop changing, and how often
 # to look. The prompt is several round trips away rather than a local redraw,
 # so the picture is taken when the client stops writing rather than after a
 # fixed wait that a slow target would outlast.
-SSH_PROMPT_TIMEOUT_S = 12.0
+#
+# Higher than the telnet ceiling for that reason - banner, key exchange and
+# then the authentication methods, against a switch that does its own
+# cryptography - and reached only by a port that completes none of it. A
+# target that answers SSH and then stops was costing 13.5 seconds to conclude
+# nothing; this takes that to 9.5.
+SSH_PROMPT_TIMEOUT_S = 8.0
 SSH_PROMPT_POLL_S = 0.4
 # How long the window stays empty after it is titled, so the capture always
 # has a picture of "nothing yet" to compare against.
