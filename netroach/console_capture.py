@@ -22,8 +22,9 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Container
+from collections.abc import Callable, Container
 from ctypes import wintypes
+from functools import partial
 from pathlib import Path
 
 # PrintWindow renders the whole window even when another window covers it or it
@@ -60,7 +61,22 @@ SSH_TITLE_SETTLE_MS = 700
 # client wrote something" and "it has stopped writing" both survive the blink.
 SSH_PROMPT_WRITTEN_PIXELS = 1_500
 SSH_PROMPT_STILL_PIXELS = 400
+# What counts as the target having written into a PuTTY terminal, measured
+# inside the terminal itself rather than against an earlier picture of the
+# window. A connected session that has been told nothing holds a steady 128
+# pixels - the cursor block, one character cell - and the switch banner that
+# is the evidence holds 1,361. A single line of prompt sits around 400 above
+# the cursor, so the floor goes between them and nearer the cursor.
+PUTTY_TERMINAL_TEXT_PIXELS = 400
 PUTTY_SECURITY_ALERT_TITLE = "PuTTY Security Alert"
+# PuTTY says why it could not open a session in a dialog of its own and leaves
+# the empty terminal standing behind it. That terminal is indistinguishable
+# from a session that connected and was met with silence, which is a finding
+# and is photographed as one - so the dialog is the only thing that tells them
+# apart, and a capture that ignores it stores a picture of a client that never
+# connected. It costs time as well: with nothing ever written to the terminal,
+# the capture waits out its whole settling deadline before giving up.
+PUTTY_ERROR_TITLES = ("putty fatal error", "putty error")
 PUTTY_CONNECT_ONCE_LABEL = "Connect Once"
 # A PuTTY terminal can appear just before its first-use host-key prompt. Give
 # that dialog one polling window to arrive before treating a terminal as ready.
@@ -516,12 +532,74 @@ def _find_putty_terminal_window(
         normalized = title.strip().casefold()
         if hwnd in exclude or normalized in {
             PUTTY_SECURITY_ALERT_TITLE.casefold(),
-            "putty fatal error",
-            "putty error",
+            *PUTTY_ERROR_TITLES,
         }:
             continue
         return hwnd
     return None
+
+
+def _terminal_area(user32: ctypes.CDLL, hwnd: int) -> tuple[int, int, int, int] | None:
+    """Where the terminal itself sits inside a picture of its window.
+
+    `capture_window_png` sizes its bitmap from the window rectangle, so these
+    coordinates address the picture directly. PuTTY puts nothing but the
+    terminal in its client area - the scrollbar is a frame style and falls
+    outside it - which is what makes the crop worth taking.
+    """
+    window, client = wintypes.RECT(), wintypes.RECT()
+    origin = wintypes.POINT(0, 0)
+    if not user32.GetWindowRect(hwnd, ctypes.byref(window)):
+        return None
+    if not user32.GetClientRect(hwnd, ctypes.byref(client)):
+        return None
+    if not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
+        return None
+    left, top = origin.x - window.left, origin.y - window.top
+    box = (left, top, left + client.right, top + client.bottom)
+    if client.right <= 0 or client.bottom <= 0 or left < 0 or top < 0:
+        return None
+    return box
+
+
+def _terminal_was_written_to(png: bytes, box: tuple[int, int, int, int]) -> bool:
+    """Whether the target has put text on the terminal, judged on its own.
+
+    The alternative - comparing against a picture taken when the window was
+    found - cannot work here, because PuTTY has not drawn itself yet at that
+    moment. Measured: PuTTY painting its own window changes 8,980 pixels,
+    almost eight times the threshold that is meant to mean "the target said
+    something", while the banner being waited for changes 941. The capture
+    therefore settled on the first steady frame after PuTTY finished drawing -
+    about 0.6 seconds - whatever the target did. A target 1.5 seconds from its
+    banner was photographed blank every time, and that blank is stored as
+    evidence of a session that connected and was met with silence.
+
+    Inside the terminal there is no such confusion: silence is the cursor and
+    nothing else.
+    """
+    try:
+        from PIL import Image
+    except ImportError:  # pragma: no cover - Pillow ships with the backend.
+        return True
+    try:
+        terminal = Image.open(io.BytesIO(png)).convert("RGB").crop(box)
+    except Exception:  # noqa: BLE001 - an unreadable picture decides nothing.
+        return True
+    colours = terminal.getcolors(terminal.width * terminal.height)
+    if colours is None:
+        return True
+    background = max(colours)[1]
+    written = sum(count for count, colour in colours if _differs(colour, background))
+    return written > PUTTY_TERMINAL_TEXT_PIXELS
+
+
+def _putty_reported_a_failure(user32: ctypes.CDLL, *, exclude: Container[int]) -> bool:
+    """Whether PuTTY has put up a dialog saying this session will not happen."""
+    return any(
+        hwnd not in exclude and title.strip().casefold() in PUTTY_ERROR_TITLES
+        for hwnd, title in _find_windows_by_title(user32, "PuTTY")
+    )
 
 
 def build_ssh_capture_script(
@@ -592,6 +670,8 @@ def _capture_when_settled(
     deadline: float,
     written_pixels: int = SSH_PROMPT_WRITTEN_PIXELS,
     unwritten_is_evidence: bool = False,
+    abandoned: Callable[[], bool] | None = None,
+    wrote: Callable[[bytes], bool] | None = None,
 ) -> bytes | None:
     """Photograph the window once it stops changing, or when time runs out.
 
@@ -611,8 +691,24 @@ def _capture_when_settled(
     window look settled whenever the blink happened to land the same way
     twice: a target eight seconds from its banner was photographed at under
     four, showing a title bar and nothing else.
+
+    `abandoned` is the third outcome: the client itself says it will not get a
+    session. A still-blank window then means nothing and is not waited on.
+
+    `wrote` replaces the comparison against that first picture for a window
+    that is not drawn yet when it is found - see `_terminal_was_written_to`.
+    Settling is still decided frame against frame, which is what keeps a
+    window caught mid-paint from reading as settled.
     """
     empty = capture_window_png(hwnd)
+
+    def was_written(png: bytes | None) -> bool:
+        if png is None:
+            return False
+        if wrote is not None:
+            return wrote(png)
+        return _changed_pixels(png, empty) > written_pixels
+
     previous: bytes | None = None
     while time.monotonic() < deadline:
         time.sleep(SSH_PROMPT_POLL_S)
@@ -621,16 +717,23 @@ def _capture_when_settled(
             # The window went before it settled; whatever was last read is all
             # there is, and it is better than nothing.
             break
-        written = _changed_pixels(current, empty) > written_pixels
+        written = was_written(current)
         if written and _changed_pixels(current, previous) <= SSH_PROMPT_STILL_PIXELS:
             return current
+        if not written and abandoned is not None and abandoned():
+            # The client gave up before the target said anything. Waiting the
+            # rest of the deadline out would only produce the empty window,
+            # and that window is evidence of a connection that never happened.
+            # Asked only while the terminal is still blank: a target that
+            # answered and then dropped the session has already been recorded.
+            return None
         previous = current
     # Out of time, or the window closed. Return what was last seen rather than
     # nothing: a client that refused outright has already written its reason.
     last = previous if previous is not None else empty
     if last is None:
         return None
-    if _changed_pixels(last, empty) <= written_pixels:
+    if not was_written(last):
         # The target wrote nothing in the time allowed. Two different things
         # look like this and they must not share an outcome: a port that
         # completes the handshake and then says nothing is a finding, and the
@@ -768,16 +871,21 @@ def _capture_putty_ssh_window(
                 and (approval_clicked or time.monotonic() - appeared_at >= PUTTY_ALERT_GRACE_S)
             ):
                 break
-            if process.poll() is not None:
+            if process.poll() is not None or _putty_reported_a_failure(
+                user32, exclude=standing
+            ):
                 return None
             time.sleep(CAPTURE_POLL_INTERVAL_S)
 
         if hwnd is None:
             return None
+        terminal = _terminal_area(user32, hwnd)
         return _capture_when_settled(
             hwnd,
             deadline=time.monotonic() + SSH_PROMPT_TIMEOUT_S,
             unwritten_is_evidence=True,
+            abandoned=lambda: _putty_reported_a_failure(user32, exclude=standing),
+            wrote=None if terminal is None else partial(_terminal_was_written_to, box=terminal),
         )
     finally:
         _terminate_tree(process)
@@ -821,16 +929,21 @@ def _capture_putty_telnet_window(
                     (SWP_NOSIZE if not size else 0) | SWP_NOZORDER | SWP_NOACTIVATE,
                 )
                 break
-            if process.poll() is not None:
+            if process.poll() is not None or _putty_reported_a_failure(
+                user32, exclude=standing
+            ):
                 return None
             time.sleep(CAPTURE_POLL_INTERVAL_S)
         if hwnd is None:
             return None
+        terminal = _terminal_area(user32, hwnd)
         return _capture_when_settled(
             hwnd,
             deadline=time.monotonic() + TELNET_PROMPT_TIMEOUT_S,
             written_pixels=TELNET_PROMPT_WRITTEN_PIXELS,
             unwritten_is_evidence=True,
+            abandoned=lambda: _putty_reported_a_failure(user32, exclude=standing),
+            wrote=None if terminal is None else partial(_terminal_was_written_to, box=terminal),
         )
     finally:
         _terminate_tree(process)

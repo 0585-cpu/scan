@@ -750,6 +750,180 @@ class SshCaptureTests(unittest.TestCase):
             )
         self.assertEqual(result, b"legacy")
 
+    def test_a_putty_pane_waits_on_the_terminal_and_not_on_a_picture_of_the_frame(self):
+        """PuTTY has not drawn itself when its window is first found.
+
+        Settling compared each frame against a picture taken at that moment,
+        so PuTTY painting its own window read as "the target said something".
+        Measured on a window of this size: that paint changes 8,980 pixels,
+        almost eight times the 1,150 the telnet pane calls written, while the
+        switch banner being waited for changes 941 - under the threshold. The
+        pane therefore returned the first steady frame after PuTTY finished
+        drawing, about 0.6 seconds in, whatever the target did: a target 1.5
+        seconds from its banner came back blank four times out of four, and
+        that blank stores as evidence of a session that connected and was met
+        with silence, which is a finding that did not happen.
+
+        Inside the terminal the two do not look alike. A connected session
+        that has been told nothing holds 128 pixels - the cursor, one
+        character cell - and the banner holds 1,361.
+        """
+        from netroach.console_capture import (
+            PUTTY_TERMINAL_TEXT_PIXELS,
+            _terminal_was_written_to,
+        )
+
+        def terminal(text_pixels: int) -> bytes:
+            image = Image.new("RGB", (60, 40), (0, 0, 0))
+            for index in range(text_pixels):
+                image.putpixel((index % 50, 8 + index // 50), (255, 255, 255))
+            # A frame the crop must exclude: bright, and outside the box below.
+            for x in range(60):
+                image.putpixel((x, 0), (192, 192, 192))
+                image.putpixel((x, 39), (192, 192, 192))
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        box = (2, 2, 58, 38)
+        self.assertEqual(PUTTY_TERMINAL_TEXT_PIXELS, 400)
+        # The cursor of a connected session nobody answered.
+        self.assertFalse(_terminal_was_written_to(terminal(128), box))
+        # The banner that is the evidence.
+        self.assertTrue(_terminal_was_written_to(terminal(1_361), box))
+        # A single line of prompt, the smallest thing that must still count.
+        self.assertTrue(_terminal_was_written_to(terminal(128 + 400), box))
+
+    def test_the_frame_only_decides_settling_when_the_caller_gives_no_other_test(self):
+        """The panes that hold their window empty on purpose keep what they had.
+
+        The telnet and SSH consoles launch their client only after the window
+        has been titled and held empty, so their first picture really is of
+        nothing yet and the comparison against it is sound. Only the PuTTY
+        panes, whose window is drawn by the client itself, pass `wrote`.
+        """
+        from netroach import console_capture
+
+        frames = [b"one", b"two", b"two"]
+        calls = []
+
+        with (
+            patch.object(
+                console_capture, "capture_window_png", lambda _h: frames[min(len(calls), 2)]
+            ),
+            patch.object(console_capture, "_changed_pixels", lambda a, b: 0 if a == b else 9_999),
+            patch.object(console_capture.time, "sleep", lambda _s: calls.append(1)),
+        ):
+            # No `wrote`: the frame comparison decides, exactly as it always has.
+            self.assertEqual(
+                console_capture._capture_when_settled(1, deadline=time.monotonic() + 30),
+                b"two",
+            )
+
+            # With `wrote`, the frame comparison no longer says what was written;
+            # a terminal this test calls silent is waited on, not returned.
+            calls.clear()
+            self.assertIsNone(
+                console_capture._capture_when_settled(
+                    1,
+                    deadline=time.monotonic() + 0.2,
+                    unwritten_is_evidence=False,
+                    wrote=lambda _png: False,
+                )
+            )
+
+    def test_a_session_putty_says_it_cannot_open_is_neither_waited_on_nor_stored(self):
+        """The error dialog is the only thing that tells the two blanks apart.
+
+        PuTTY leaves its empty terminal standing behind the dialog, and that
+        terminal is pixel for pixel the one a connected session shows when the
+        target says nothing - which is a finding, and is photographed as one.
+        Storing the failed one says a client sat connected to a port it never
+        reached.
+
+        It costs time too, which is how it was reported. With nothing ever
+        written to the terminal there is nothing to settle, so the capture ran
+        to its whole deadline: measured against a port that answers with
+        something other than SSH, 2.2 seconds and as much as 13.7, per port,
+        before the fallback client had even started. The dialog is up within a
+        fraction of a second; asking for it costs one window enumeration per
+        poll and ends the wait at 0.4.
+        """
+        from netroach import console_capture
+
+        for titles, failed in (
+            (["127.0.0.1 - PuTTY", "PuTTY Fatal Error"], True),
+            (["127.0.0.1 - PuTTY", "PuTTY Error"], True),
+            # The host-key prompt is not a failure; it is answered and the
+            # session goes on.
+            (["127.0.0.1 - PuTTY", console_capture.PUTTY_SECURITY_ALERT_TITLE], False),
+            (["127.0.0.1 - PuTTY"], False),
+        ):
+            with self.subTest(titles=titles):
+                with patch.object(
+                    console_capture,
+                    "_find_windows_by_title",
+                    lambda _u32, _needle, titles=titles: list(enumerate(titles, 1)),
+                ):
+                    self.assertEqual(
+                        console_capture._putty_reported_a_failure(object(), exclude=()),
+                        failed,
+                    )
+
+        # A dialog the operator already had open is not this capture's.
+        with patch.object(
+            console_capture,
+            "_find_windows_by_title",
+            lambda _u32, _needle: [(7, "PuTTY Fatal Error")],
+        ):
+            self.assertFalse(
+                console_capture._putty_reported_a_failure(object(), exclude={7})
+            )
+
+    def test_the_settling_wait_ends_when_the_client_gives_up_but_not_after_it_wrote(self):
+        """Abandoning is for the blank window only.
+
+        A target that answered and then dropped the session has already been
+        photographed, and that picture is the evidence for it - the dialog
+        PuTTY raises on the way out must not throw it away.
+        """
+        from netroach import console_capture
+
+        blank = b"blank"
+        written = b"written"
+
+        def run(frames, *, changed):
+            polls = []
+            with (
+                patch.object(
+                    console_capture, "capture_window_png", lambda _h: frames[len(polls)]
+                ),
+                patch.object(
+                    console_capture,
+                    "_changed_pixels",
+                    lambda a, b: changed(a, b),
+                ),
+                patch.object(console_capture, "has_content", lambda _png: True),
+                patch.object(console_capture.time, "sleep", lambda _s: polls.append(1)),
+            ):
+                return console_capture._capture_when_settled(
+                    1,
+                    deadline=time.monotonic() + 30,
+                    unwritten_is_evidence=True,
+                    abandoned=lambda: True,
+                ), len(polls)
+
+        # Nothing was ever written: give up at the first poll, store nothing.
+        result, polls = run(
+            [blank, blank, blank], changed=lambda _a, _b: 0
+        )
+        self.assertIsNone(result)
+        self.assertEqual(polls, 1, "it does not wait the deadline out")
+
+        # The target wrote and then stopped: that picture is kept.
+        result, _ = run([blank, written, written], changed=lambda a, b: 0 if a == b else 9_999)
+        self.assertEqual(result, written)
+
     def test_putty_approves_the_host_key_for_this_connection_only(self):
         from netroach.console_capture import _click_putty_connect_once
 
@@ -809,6 +983,8 @@ class SshCaptureTests(unittest.TestCase):
             patch.object(console_capture, "_find_window_by_title", side_effect=[77, None]),
             patch.object(console_capture, "_click_putty_connect_once", return_value=True) as approve,
             patch.object(console_capture, "_find_putty_terminal_window", return_value=88),
+            patch.object(console_capture, "_putty_reported_a_failure", return_value=False),
+            patch.object(console_capture, "_terminal_area", return_value=(8, 31, 745, 292)),
             patch.object(console_capture, "_capture_when_settled", return_value=b"login prompt") as capture,
             patch.object(console_capture, "_terminate_tree") as terminate,
             patch.object(console_capture.time, "sleep"),
@@ -820,6 +996,12 @@ class SshCaptureTests(unittest.TestCase):
         self.assertEqual(result, b"login prompt")
         approve.assert_called_once_with(user32, 77)
         capture.assert_called_once()
+        # The settling wait is given a way to hear PuTTY give up; the dialog
+        # usually arrives after the terminal, not before it.
+        self.assertTrue(callable(capture.call_args.kwargs["abandoned"]))
+        # And it judges the terminal rather than a picture of a window PuTTY
+        # had not finished drawing when it was found.
+        self.assertTrue(callable(capture.call_args.kwargs["wrote"]))
         terminate.assert_called_once_with(process)
         self.assertEqual(user32.positions[0][0], 88)
 
