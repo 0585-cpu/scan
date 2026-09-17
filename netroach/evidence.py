@@ -302,6 +302,13 @@ SCREENSHOT_RETRY_DELAY_S = 0.4
 WEB_SETTLE_POLL_S = 0.4
 WEB_SETTLE_STILL_PIXELS = 400
 
+# The settle loop above is for a page finishing its drawing, which takes a
+# moment. A page that never stops - an animated logo, a live graph on a
+# canvas, a marquee - never agrees with itself and would otherwise spend the
+# port's whole remaining budget polling it, minutes on a wide scan. It is
+# photographed as it is after this long instead.
+WEB_SETTLE_MAX_S = 4.0
+
 # How long the page is given to go quiet on the network before its picture is
 # taken. A management page that draws itself after fetching its data, or loads
 # its login form after the shell, is a spinner until that request returns - and
@@ -366,7 +373,8 @@ def _screenshot_with_one_retry(page: Any, remaining_ms: Callable[[], float] | No
 def _screenshot_when_settled(page: Any, left_ms: Callable[[], float]) -> bytes:
     """Photograph the page once two takes in a row agree, or when time runs out."""
     previous = _screenshot_with_one_retry(page, left_ms)
-    while left_ms() > 0:
+    settle_deadline = time.monotonic() + WEB_SETTLE_MAX_S
+    while left_ms() > 0 and time.monotonic() < settle_deadline:
         time.sleep(WEB_SETTLE_POLL_S)
         current = _screenshot_with_one_retry(page, left_ms)
         if _changed_pixels(current, previous) <= WEB_SETTLE_STILL_PIXELS:

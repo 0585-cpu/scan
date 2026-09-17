@@ -450,7 +450,10 @@
       color: var(--muted);
     }
     .recapture-hint { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
-    .recapture-hint a { color: var(--accent); cursor: pointer; text-decoration: underline; margin-left: 6px; }
+    .recapture-hint .link-button {
+      background: none; border: 0; padding: 0; font: inherit;
+      color: var(--accent); cursor: pointer; text-decoration: underline; margin-left: 6px;
+    }
     .preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
     .preset-row button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
     .preset-row button.active {
@@ -2189,6 +2192,9 @@
       scanResultState: '',
       recaptureWatch: null,
       recapturingScanId: null,
+      // Which scan's recapture just finished (or failed), so the idle hint
+      // does not overwrite that outcome line on the very next render.
+      recaptureOutcomeFor: null,
       scanResultPage: 1,
       scanResultPageSize: 50,
       scanResultSearchTimer: null,
@@ -2632,8 +2638,10 @@
       const form = $('scanForm');
       return ADVANCED_FIELDS.reduce((count, name) => {
         const node = form.elements[name];
-        // A control the app locked (Connect-only when there is no Npcap) is not an operator's change.
-        if (!node || node.disabled) return count;
+        // A control the app locked (Connect-only when there is no Npcap) or fills
+        // for the operator (scope, read-only while scope_from_targets is ticked)
+        // is not an operator's change either.
+        if (!node || node.disabled || node.readOnly) return count;
         const changed = node.type === 'checkbox' ? node.checked !== node.defaultChecked : node.value !== node.defaultValue;
         return changed ? count + 1 : count;
       }, 0);
@@ -3199,6 +3207,7 @@ ${health.db}` : '데이터베이스 없음';
       state.scanResultHost = '';
       state.scanResultState = '';
       state.scanResultPage = 1;
+      state.recaptureOutcomeFor = null;
       $('scanResultSearch').value = '';
       updateScanLinks();
       renderSelectedScan();
@@ -3268,6 +3277,16 @@ ${health.db}` : '데이터베이스 없음';
       if (state.recapturingScanId) return;           // the watch owns the line while a run is on
       const job = selectedScanJob();
       if (!job) { node.textContent = ''; return; }
+      // A recapture just ended on this scan - its outcome line stands until
+      // the next recapture or a different scan is selected, not overwritten
+      // by this idle hint on the very next render.
+      if (job.id === state.recaptureOutcomeFor) return;
+      // Evidence is taken at the end of a scan, so there is nothing to count
+      // or press until then - and no reason to poll for it meanwhile.
+      if (['queued', 'running', 'recovering', 'cancel_requested'].includes(job.status)) {
+        node.textContent = '';
+        return;
+      }
       const scanId = job.id;
       const requestId = ++state.recaptureHintRequest;
       let rows = state.scanResultPayload?.results || [];
@@ -3293,8 +3312,9 @@ ${health.db}` : '데이터베이스 없음';
       const lead = missing
         ? `증적 재수집: 증적 없는 ${missing.toLocaleString()}개 포트만, 이 스캔의 설정으로.`
         : (total ? '증적이 모두 있습니다.' : '');
+      node.style.color = '';
       node.innerHTML = lead
-        ? `${escapeHtml(lead)}<a id="scanRecaptureAll" role="button" tabindex="0">전부 다시 찍기</a>`
+        ? `${escapeHtml(lead)}<button type="button" id="scanRecaptureAll" class="link-button">전부 다시 찍기</button>`
         : '';
       if ($('scanRecaptureAll')) $('scanRecaptureAll').addEventListener('click', () => recaptureEvidence(false));
     }
@@ -3309,6 +3329,7 @@ ${health.db}` : '데이터베이스 없음';
       const job = selectedScanJob();
       if (!job) return;
       button.disabled = true;
+      state.recaptureOutcomeFor = null;
       setStatus('scanRecaptureStatus', '증적 수집을 시작하는 중...');
       try {
         // The scan's own settings, not the form's: what it ran with is what
@@ -3378,6 +3399,7 @@ ${health.db}` : '데이터베이스 없음';
             state.recaptureWatch = null;
             state.recapturingScanId = null;
             updateScanActionState();
+            state.recaptureOutcomeFor = scanId;
             setStatus('scanRecaptureStatus', `증적 재수집 실패${whose}: ${progress.error}`, true);
             await refreshScans();
             return;
@@ -3398,6 +3420,7 @@ ${health.db}` : '데이터베이스 없음';
           state.recaptureWatch = null;
           state.recapturingScanId = null;
           updateScanActionState();
+          state.recaptureOutcomeFor = scanId;
           setStatus('scanRecaptureStatus', progress.cancelled
             ? `증적 재수집 중지${whose} · ${done.toLocaleString()} / ${total.toLocaleString()}건까지 수집`
             : `증적 재수집 완료${whose} · ${done.toLocaleString()} / ${total.toLocaleString()}건`);
@@ -3407,6 +3430,7 @@ ${health.db}` : '데이터베이스 없음';
           state.recaptureWatch = null;
           state.recapturingScanId = null;
           updateScanActionState();
+          state.recaptureOutcomeFor = scanId;
           setStatus('scanRecaptureStatus', error.message, true);
         }
       };

@@ -755,6 +755,9 @@ class DashboardHostViewTests(unittest.TestCase):
         # A control the app locked - Connect-only when there is no Npcap - is not
         # something the operator changed, and a fresh form must not say it was.
         self.assertIn("node.disabled", badge)
+        # Nor is a control the app fills for the operator - scope, read-only
+        # while scope_from_targets is ticked - a change of theirs either.
+        self.assertIn("node.readOnly", badge)
 
     def test_a_scan_that_recorded_more_than_it_planned_says_so(self):
         """Folded counts can double; a fifteen-million total cannot be eyeballed."""
@@ -844,6 +847,30 @@ class DashboardHostViewTests(unittest.TestCase):
         # And picking that scan again resumes the count rather than showing a
         # stale line from whatever ran last.
         self.assertIn("resumeRecaptureWatch(scanId)", html.split("async function selectScan(", 1)[1])
+
+    def test_a_recapture_outcome_is_not_overwritten_by_the_idle_hint(self):
+        """watchRecaptureProgress writes the final 실패/완료/중지 line, then its
+        own refreshScans()/refreshScanResults() call renderRecaptureHint(),
+        which used to rewrite that line with the idle hint (or leave a
+        failure's red colour on it) in the same tick."""
+        html = dashboard_html()
+
+        watch = html.split("async function watchRecaptureProgress(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("state.recaptureOutcomeFor", watch)
+
+        hint = html.split("async function renderRecaptureHint(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("state.recaptureOutcomeFor", hint)
+        self.assertIn("node.style.color = ''", hint)
+
+    def test_the_ports_hint_does_not_poll_five_hundred_rows_during_a_running_scan(self):
+        """The hint's own fetch is for the count beside a button that stays
+        disabled until the scan ends - nothing to count or press before then,
+        and no reason to hit /results?state=open on every poll of a running
+        scan."""
+        html = dashboard_html()
+
+        hint = html.split("async function renderRecaptureHint(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("['queued', 'running', 'recovering', 'cancel_requested'].includes(job.status)", hint)
 
     def test_a_rescan_keeps_the_protocol_the_ports_were_found_on(self):
         """UDP ports re-scanned over TCP find nothing and say nothing."""

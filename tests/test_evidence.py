@@ -1,6 +1,7 @@
 import io
 import time
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -22,6 +23,12 @@ from netroach.evidence import (
     web_result_url,
     web_screenshot_candidates,
 )
+
+# Captured before any test patches it, so ScreenshotRetryTests._capture can
+# tell "a test already patched time.sleep for its own fake clock" apart from
+# "nobody touched it" - time.sleep and evidence.time.sleep are the same
+# module attribute, so comparing against the live name is always equal.
+_REAL_TIME_SLEEP = time.sleep
 
 
 class EvidenceTests(unittest.TestCase):
@@ -307,10 +314,19 @@ class ScreenshotRetryTests(unittest.TestCase):
     """
 
     def _capture(self, page):
+        from netroach import evidence as evidence_module
         from netroach.evidence import capture_web_screenshots
 
         stored = []
-        with patch("playwright.sync_api.sync_playwright", return_value=FakePlaywright(page)):
+        # Every capture now settles (WEB_SETTLE_POLL_S ticks), so a real sleep
+        # costs real seconds per test - unless a test already patched
+        # time.sleep itself, for its own fake clock.
+        sleep_patch = (
+            nullcontext()
+            if evidence_module.time.sleep is not _REAL_TIME_SLEEP
+            else patch.object(evidence_module.time, "sleep", lambda _s: None)
+        )
+        with patch("playwright.sync_api.sync_playwright", return_value=FakePlaywright(page)), sleep_patch:
             summary = capture_web_screenshots(
                 [{"host": "127.0.0.1", "port": 80, "protocol": "tcp", "state": "open", "service_name": "http"}],
                 store=lambda *args: stored.append(args),
@@ -584,8 +600,13 @@ class ScreenshotRetryTests(unittest.TestCase):
 
         self.assertEqual(summary.captured, 1, "out of time is still a picture, as before")
         self.assertEqual(stored[0][1], frames[page.screenshot_calls - 1], "the last one seen")
-        # Default timeout 8000ms x budget factor 2 = 16s; polled every 0.4s.
-        self.assertLessEqual(page.screenshot_calls, 16_000 / 400 + 2)
+        # A page that never settles is capped at WEB_SETTLE_MAX_S (4s), not the
+        # port's whole 16s budget (default timeout 8000ms x budget factor 2).
+        # Polled every 0.4s: about 10 takes after the first.
+        self.assertLessEqual(
+            page.screenshot_calls, evidence_module.WEB_SETTLE_MAX_S / evidence_module.WEB_SETTLE_POLL_S + 2
+        )
+        self.assertLess(page.screenshot_calls, 16_000 / 400, "stopped well short of the port's whole budget")
 
     def test_the_page_is_given_time_to_go_quiet_on_the_network_first(self):
         """A CSS spinner is frozen by the stilling that precedes the picture, so
