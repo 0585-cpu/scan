@@ -184,15 +184,32 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn("browser unavailable", summary.errors)
 
 
+# A 2x2 PNG - real enough for _changed_pixels to decode, distinct from any
+# frame a test supplies on purpose.
+_FAKE_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x02\x00\x00\x00\x02\x08\x02"
+    b"\x00\x00\x00\xfd\xd4\x9as\x00\x00\x00\x12IDATx\x9cc\xe4\x12\x91c```b\x00\x03"
+    b"\x00\x02\xe6\x00@\x14B\xce\x0f\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
 class FakePage:
-    def __init__(self, screenshot_failures: int, goto_failures: int = 0):
+    def __init__(
+        self,
+        screenshot_failures: int,
+        goto_failures: int = 0,
+        frames: list[bytes] | None = None,
+    ):
         self.screenshot_failures = screenshot_failures
         self.goto_failures = goto_failures
+        self.frames = list(frames or [])
         self.url = "http://127.0.0.1/"
         self.goto_calls = 0
         self.screenshot_calls = 0
         self.timeouts: list[float] = []
         self.evaluated: list[str] = []
+        self.load_states: list[str] = []
+        self.load_state_calls_before_screenshot = -1
 
     def set_default_timeout(self, timeout_ms):
         self.timeouts.append(float(timeout_ms))
@@ -207,6 +224,10 @@ class FakePage:
     def wait_for_timeout(self, _ms):
         pass
 
+    def wait_for_load_state(self, state, timeout=None):
+        self.load_state_calls_before_screenshot = self.screenshot_calls
+        self.load_states.append(state)
+
     def add_style_tag(self, **_kwargs):
         raise AssertionError("add_style_tag never returns on a page with no head")
 
@@ -218,7 +239,13 @@ class FakePage:
         self.screenshot_calls += 1
         if self.screenshot_calls <= self.screenshot_failures:
             raise RuntimeError("Protocol error (Page.captureScreenshot): Unable to capture screenshot")
-        return b"\x89PNG\r\n\x1a\nimage"
+        if self.frames:
+            index = min(self.screenshot_calls - self.screenshot_failures, len(self.frames)) - 1
+            return self.frames[index]
+        # A real, decodable PNG: the settle loop now runs _changed_pixels on
+        # this even for tests that never asked to look at pixels, and a
+        # decoder cannot compare bytes that were never an image.
+        return _FAKE_PNG
 
 
 class FakeContext:
@@ -446,7 +473,9 @@ class ScreenshotRetryTests(unittest.TestCase):
 
         self.assertEqual(summary.captured, 1)
         self.assertEqual(summary.failed, 0)
-        self.assertEqual(page.screenshot_calls, 2)
+        # 1 failed + 1 retried = the first settled take, then one more 0.4s
+        # later that matches it before it is accepted.
+        self.assertEqual(page.screenshot_calls, 3)
         self.assertEqual(len(stored), 1)
 
     def test_a_redirected_page_records_the_url_that_was_photographed(self):
@@ -496,8 +525,11 @@ class ScreenshotRetryTests(unittest.TestCase):
                 summary, stored = self._capture(page)
 
                 self.assertEqual(summary.captured, 1)
-                self.assertEqual(page.screenshot_calls, 1)
+                # The settle loop now runs here too: one shot, then one more
+                # 0.4s later that matches it, before it is accepted.
+                self.assertEqual(page.screenshot_calls, 2)
                 self.assertEqual(page.evaluated, [], "nothing of the target's to still")
+                self.assertEqual(page.load_states, [], "Chromium's error page has no network")
                 # The address kept is the one asked for, not about:blank.
                 self.assertEqual(stored[0][3], "http://127.0.0.1/")
 
@@ -507,6 +539,80 @@ class ScreenshotRetryTests(unittest.TestCase):
         summary, stored = self._capture(page)
         self.assertEqual(summary.failed, 1)
         self.assertEqual(stored, [])
+
+    def test_the_page_is_photographed_once_it_stops_changing(self):
+        """domcontentloaded is when the HTML arrived, not when the page is drawn.
+
+        A management page that draws itself with script, or loads its login
+        form after the shell, is a spinner at that moment - and the spinner
+        was the evidence. The console panes already wait for their window to
+        stop changing; the browser pane now does the same, within the port's
+        budget.
+        """
+        from netroach import evidence as evidence_module
+
+        loading, half, done = b"\x89PNG-loading", b"\x89PNG-half", b"\x89PNG-done"
+        page = FakePage(screenshot_failures=0, frames=[loading, half, done, done, done])
+        with (
+            patch.object(evidence_module, "_capture_browser_window", return_value=None),
+            patch.object(evidence_module, "_changed_pixels", lambda a, b: 0 if a == b else 9_999),
+            patch.object(evidence_module.time, "sleep", lambda _s: None),
+        ):
+            summary, stored = self._capture(page)
+
+        self.assertEqual(summary.captured, 1)
+        self.assertEqual(stored[0][1], done, "the first frame that matched the one before it")
+        self.assertEqual(page.screenshot_calls, 4, "loading, half, done, done - then it stopped")
+
+    def test_a_page_that_never_settles_is_photographed_when_the_budget_runs_out(self):
+        from netroach import evidence as evidence_module
+
+        frames = [f"\x89PNG-{index}".encode() for index in range(50)]
+        page = FakePage(screenshot_failures=0, frames=frames)
+        clock = SimpleNamespace(now=0.0)
+
+        def sleep(seconds):
+            clock.now += seconds
+
+        with (
+            patch.object(evidence_module, "_capture_browser_window", return_value=None),
+            patch.object(evidence_module, "_changed_pixels", lambda a, b: 0 if a == b else 9_999),
+            patch.object(evidence_module.time, "sleep", sleep),
+            patch.object(evidence_module.time, "monotonic", lambda: clock.now),
+        ):
+            summary, stored = self._capture(page)
+
+        self.assertEqual(summary.captured, 1, "out of time is still a picture, as before")
+        self.assertEqual(stored[0][1], frames[page.screenshot_calls - 1], "the last one seen")
+        # Default timeout 8000ms x budget factor 2 = 16s; polled every 0.4s.
+        self.assertLessEqual(page.screenshot_calls, 16_000 / 400 + 2)
+
+    def test_the_page_is_given_time_to_go_quiet_on_the_network_first(self):
+        """A CSS spinner is frozen by the stilling that precedes the picture, so
+        two takes of it agree at once; what tells a loading page from a loaded
+        one is the request it is waiting on."""
+        page = FakePage(screenshot_failures=0)
+
+        summary, _ = self._capture(page)
+
+        self.assertEqual(summary.captured, 1)
+        self.assertEqual(page.load_states, ["networkidle"])
+        self.assertEqual(page.load_state_calls_before_screenshot, 0)
+
+    def test_a_page_that_never_goes_quiet_is_still_photographed(self):
+        """Best effort: a page that polls forever never reports idle, and the
+        wait for it must not become the wait the settle loop already has."""
+
+        class NeverIdle(FakePage):
+            def wait_for_load_state(self, state, timeout=None):
+                self.load_states.append(state)
+                raise RuntimeError("Timeout 3000ms exceeded")
+
+        page = NeverIdle(screenshot_failures=0)
+
+        summary, _ = self._capture(page)
+
+        self.assertEqual(summary.captured, 1)
 
     def test_navigation_failures_are_not_retried(self):
         page = FakePage(screenshot_failures=0, goto_failures=5)

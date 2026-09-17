@@ -21,6 +21,7 @@ from .console_capture import (
     SWP_NOACTIVATE,
     SWP_NOSIZE,
     SWP_NOZORDER,
+    _changed_pixels,
     capture_console_session,
     capture_window_png,
     console_capture_supported,
@@ -290,6 +291,27 @@ def web_result_url(result: Mapping[str, Any]) -> str:
 
 SCREENSHOT_RETRY_DELAY_S = 0.4
 
+# How often the page is photographed while waiting for it to stop changing,
+# and how many pixels may still differ between two takes for it to count as
+# stopped - the console panes' figure, a cursor's worth. domcontentloaded is
+# when the HTML arrived, not when the page is drawn: a management page that
+# draws itself with script, or loads its login form after the shell, is a
+# spinner at that moment, and the spinner was the picture. Bounded by the
+# port's budget like everything else here; out of time keeps the last take,
+# which is what a single take gave before.
+WEB_SETTLE_POLL_S = 0.4
+WEB_SETTLE_STILL_PIXELS = 400
+
+# How long the page is given to go quiet on the network before its picture is
+# taken. A management page that draws itself after fetching its data, or loads
+# its login form after the shell, is a spinner until that request returns - and
+# the stilling of animations that precedes the picture freezes a CSS spinner
+# into something the settle loop cannot tell from a finished page. Bounded, and
+# best effort: a page that polls never goes idle and is photographed anyway
+# once this runs out. A page that swaps static text on a bare timer, with no
+# request behind it, stays out of reach of both checks.
+WEB_NETWORK_IDLE_MS = 3_000
+
 # Navigations Chromium reports as failed while drawing a page about them. The
 # server answered - with an error status and no body, or with a TLS the
 # browser will not speak - and the tab shows its own page naming which:
@@ -339,6 +361,18 @@ def _screenshot_with_one_retry(page: Any, remaining_ms: Callable[[], float] | No
             raise
         time.sleep(SCREENSHOT_RETRY_DELAY_S)
         return bytes(page.screenshot(type="png", full_page=False))
+
+
+def _screenshot_when_settled(page: Any, left_ms: Callable[[], float]) -> bytes:
+    """Photograph the page once two takes in a row agree, or when time runs out."""
+    previous = _screenshot_with_one_retry(page, left_ms)
+    while left_ms() > 0:
+        time.sleep(WEB_SETTLE_POLL_S)
+        current = _screenshot_with_one_retry(page, left_ms)
+        if _changed_pixels(current, previous) <= WEB_SETTLE_STILL_PIXELS:
+            return current
+        previous = current
+    return previous
 
 
 # Injected rather than added with add_style_tag, which appends the element to
@@ -550,6 +584,12 @@ def capture_web_screenshots(
                             # needs no script context; give the swap a moment.
                             page.wait_for_timeout(ERROR_PAGE_SETTLE_MS)
                         else:
+                            try:
+                                page.wait_for_load_state(
+                                    "networkidle", timeout=max(1, min(WEB_NETWORK_IDLE_MS, left_ms()))
+                                )
+                            except Exception:  # noqa: BLE001 - a page that never goes quiet is still photographed.
+                                pass
                             _still_the_animations(page)
                         page.set_default_timeout(left_ms() or 1)
                         # The window carries what the page cannot: the address
@@ -557,9 +597,14 @@ def capture_web_screenshots(
                         # the padlock, the "not secure" on a plaintext management
                         # page, the warning on a certificate that does not match.
                         # The page alone is the fallback, not the goal.
+                        # Wait for the page to stop changing before either
+                        # picture is taken; the window capture is the goal and
+                        # the page screenshot the fallback, and both must be
+                        # of a page that has finished drawing.
+                        settled = _screenshot_when_settled(page, left_ms)
                         image = _capture_browser_window(page, opened_before)
                         if image is None:
-                            image = _screenshot_with_one_retry(page, left_ms)
+                            image = settled
                         filename_host = re.sub(r"[^A-Za-z0-9_.-]+", "_", host)
                         store(result, image, f"{filename_host}_{result['port']}.png", reached, capture_agent)
                         captured += 1
