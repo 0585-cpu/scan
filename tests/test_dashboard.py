@@ -601,9 +601,13 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertNotIn("form-actions-secondary", html)
 
         toolbar = html.split('class="toolbar result-toolbar"', 1)[1].split("band-head", 1)[0]
-        for control in ("scanRecaptureEvidence", "scanRecaptureAll", "scanStopRecapture",
+        for control in ("scanRecaptureEvidence", "scanStopRecapture",
                         "scanRescanOpen", "scanRecaptureStatus", "scanCancel", "scanDelete"):
             self.assertIn(f'id="{control}"', toolbar)
+
+        # The all-ports link lives where it is built, not in the static toolbar.
+        hint = html.split("async function renderRecaptureHint(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn('id="scanRecaptureAll"', hint)
 
     def test_a_checkbox_explanation_sits_under_its_label(self):
         """Side by side in a 380px column, the two wrapped into fragments."""
@@ -639,9 +643,10 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("screenshot_timeout_ms", body)
         self.assertNotIn("form.get(", body)
         self.assertIn("$('scanRecaptureEvidence').addEventListener('click', () => recaptureEvidence(true))", html)
-        self.assertIn("$('scanRecaptureAll').addEventListener('click'", html)
-        self.assertIn("function unphotographedOpenCount(", html)
-        self.assertIn("function renderRecaptureHint(", html)
+        self.assertIn("function unphotographedOpenRows(", html)
+        self.assertIn("async function renderRecaptureHint(", html)
+        hint = html.split("async function renderRecaptureHint(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("recaptureEvidence(false)", hint)
 
     def test_rescanning_open_ports_fills_the_form_rather_than_starting(self):
         """The authorization tick and the workload warning belong to every
@@ -653,7 +658,7 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("open-targets", body)
         self.assertIn("$('scanTargets').value", body)
         self.assertNotIn("/v1/scans'", body)
-        self.assertIn("scrollIntoView", body)
+        self.assertIn("$('scanForm').scrollIntoView", body)
 
     def test_service_detection_warns_about_automatic_evidence_cost(self):
         """Service detection owns the evidence side effects, so the warning

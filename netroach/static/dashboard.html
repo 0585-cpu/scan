@@ -451,7 +451,6 @@
     }
     .recapture-hint { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
     .recapture-hint a { color: var(--accent); cursor: pointer; text-decoration: underline; margin-left: 6px; }
-    .recapture-hint.error { color: var(--danger); }
     .preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
     .preset-row button { min-height: 28px; padding: 4px 8px; font-size: 12px; }
     .preset-row button.active {
@@ -1765,7 +1764,7 @@
                   <button class="danger" type="button" id="scanDelete" disabled>삭제</button>
                 </div>
               </div>
-              <p class="recapture-hint" id="scanRecaptureStatus" role="status"><a id="scanRecaptureAll" hidden></a></p>
+              <p class="recapture-hint" id="scanRecaptureStatus" role="status"></p>
               <div class="band-head">
                 <h3>결과</h3>
                 <div class="band-head-tools">
@@ -3258,27 +3257,40 @@ ${health.db}` : '데이터베이스 없음';
       setScanLinkState('scanExportReport', true, `/v1/scans/${scan}/export?format=report-xlsx&open_only=true`);
     }
 
-    // Open results with no automatic evidence, counted from what the result
-    // view already holds. Manual attachments do not count: the recapture
-    // photographs beside them, as the backend's own rule does.
+    // Open results with no automatic evidence. Manual attachments do not
+    // count: the recapture photographs beside them, as the backend's own
+    // rule does.
     const AUTOMATIC_EVIDENCE = new Set(['web_screenshot', 'protocol_snapshot', 'terminal_transcript']);
 
-    function unphotographedOpenCount() {
-      const rows = state.scanResultPayload?.results || [];
+    function unphotographedOpenRows(rows) {
       return rows.filter((row) =>
         ['open', 'open|filtered'].includes(row.state)
         && !(row.evidence_files || []).some((file) => AUTOMATIC_EVIDENCE.has(file.type))
-      ).length;
+      );
     }
 
-    function renderRecaptureHint() {
+    async function renderRecaptureHint() {
       const node = $('scanRecaptureStatus');
       if (state.recapturingScanId) return;           // the watch owns the line while a run is on
-      node.classList.remove('error');
       const job = selectedScanJob();
       if (!job) { node.textContent = ''; return; }
-      const missing = unphotographedOpenCount();
-      const total = Number(state.scanResultPayload?.total || 0);
+      const scanId = job.id;
+      let rows = state.scanResultPayload?.results || [];
+      let total = Number(state.scanResultPayload?.total || 0);
+      if (state.resultTab !== 'hosts') {
+        // The ports tab holds one page, filtered; the count has to see every
+        // open port. Same request the hosts tab makes.
+        try {
+          const payload = await api(`/v1/scans/${encodeURIComponent(scanId)}/results?state=open&limit=${HOST_VIEW_RESULT_LIMIT}&offset=0`);
+          if (scanId !== state.scanId) return;
+          rows = payload.results || [];
+          total = Number(payload.total || 0);
+        } catch (_) {
+          rows = [];
+          total = 0;
+        }
+      }
+      const missing = unphotographedOpenRows(rows).length;
       const lead = missing
         ? `증적 재수집: 증적 없는 ${missing.toLocaleString()}개 포트만, 이 스캔의 설정으로.`
         : (total ? '증적이 모두 있습니다.' : '');
@@ -3341,6 +3353,7 @@ ${health.db}` : '데이터베이스 없음';
         // The run can finish between the last poll and the click. That is not
         // a failure, and the raw message said nothing an operator could use.
         state.recapturingScanId = null;
+        renderRecaptureHint();
         updateScanActionState();
         setStatus('scanRecaptureStatus', '이미 끝난 재수집입니다.');
       }
@@ -3365,7 +3378,6 @@ ${health.db}` : '데이터베이스 없음';
           if (progress.error) {
             state.recaptureWatch = null;
             state.recapturingScanId = null;
-            renderRecaptureHint();
             updateScanActionState();
             setStatus('scanRecaptureStatus', `증적 재수집 실패${whose}: ${progress.error}`, true);
             await refreshScans();
@@ -3386,7 +3398,6 @@ ${health.db}` : '데이터베이스 없음';
           }
           state.recaptureWatch = null;
           state.recapturingScanId = null;
-          renderRecaptureHint();
           updateScanActionState();
           setStatus('scanRecaptureStatus', progress.cancelled
             ? `증적 재수집 중지${whose} · ${done.toLocaleString()} / ${total.toLocaleString()}건까지 수집`
@@ -3396,7 +3407,6 @@ ${health.db}` : '데이터베이스 없음';
         } catch (error) {
           state.recaptureWatch = null;
           state.recapturingScanId = null;
-          renderRecaptureHint();
           updateScanActionState();
           setStatus('scanRecaptureStatus', error.message, true);
         }
