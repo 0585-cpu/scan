@@ -745,6 +745,17 @@ class DashboardHostViewTests(unittest.TestCase):
         # The start button follows the advanced panel, not the other way round.
         self.assertLess(form.index('id="scanAdvanced"'), form.index('id="scanSubmit"'))
 
+    def test_a_control_the_app_locked_is_not_counted_as_an_advanced_change(self):
+        """Without Npcap the form checks and disables Connect-only for the
+        operator; counting that as their change showed "고급 1" on a fresh
+        form, on exactly the machines most likely to be a first run."""
+        html = dashboard_html()
+
+        badge = html.split("function advancedDiffCount(", 1)[1].split(chr(10) + "    }", 1)[0]
+        # A control the app locked - Connect-only when there is no Npcap - is not
+        # something the operator changed, and a fresh form must not say it was.
+        self.assertIn("node.disabled", badge)
+
     def test_a_scan_that_recorded_more_than_it_planned_says_so(self):
         """Folded counts can double; a fifteen-million total cannot be eyeballed."""
         html = dashboard_html()

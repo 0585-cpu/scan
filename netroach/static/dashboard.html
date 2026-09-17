@@ -2621,7 +2621,9 @@
     // is whatever the freshly loaded form carries for that field - each
     // input's .defaultValue/.defaultChecked already holds that (the DOM sets
     // it from the markup's value=/checked attribute and it survives later
-    // .value/.checked writes), so there is nothing to snapshot separately.
+    // .value/.checked writes), so there is nothing to snapshot separately -
+    // except a field the app itself disables and sets, which is not a
+    // snapshot mismatch to report as the operator's doing.
     const ADVANCED_FIELDS = ['timeout_ms', 'concurrency', 'rate_limit_per_sec', 'service_probe', 'host_discovery',
       'udp_service_probe', 'tcp_connect_only', 'scope_from_targets', 'scope', 'top_ports', 'exclude',
       'udp_retries', 'syn_retries', 'max_attempts', 'confirm_large_scan'];
@@ -2630,7 +2632,8 @@
       const form = $('scanForm');
       return ADVANCED_FIELDS.reduce((count, name) => {
         const node = form.elements[name];
-        if (!node) return count;
+        // A control the app locked (Connect-only when there is no Npcap) is not an operator's change.
+        if (!node || node.disabled) return count;
         const changed = node.type === 'checkbox' ? node.checked !== node.defaultChecked : node.value !== node.defaultValue;
         return changed ? count + 1 : count;
       }, 0);
