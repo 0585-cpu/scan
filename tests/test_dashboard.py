@@ -647,6 +647,10 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("async function renderRecaptureHint(", html)
         hint = html.split("async function renderRecaptureHint(", 1)[1].split(chr(10) + "    }", 1)[0]
         self.assertIn("recaptureEvidence(false)", hint)
+        # A recapture that starts while the hint's own fetch is in flight owns
+        # the line; a newer hint call (or a scan switch) beats a stale one.
+        self.assertIn("if (scanId !== state.scanId || state.recapturingScanId) return;", hint)
+        self.assertIn("state.recaptureHintRequest", hint)
 
     def test_rescanning_open_ports_fills_the_form_rather_than_starting(self):
         """The authorization tick and the workload warning belong to every

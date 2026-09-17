@@ -2190,6 +2190,7 @@
       scanResultSearchTimer: null,
       scanResultPayload: {results: [], total: 0, hosts: []},
       scanResultsRequest: 0,
+      recaptureHintRequest: 0,
       scanProgressRequest: 0,
       resultTab: 'hosts',
       autoScroll: true,
@@ -3275,6 +3276,7 @@ ${health.db}` : '데이터베이스 없음';
       const job = selectedScanJob();
       if (!job) { node.textContent = ''; return; }
       const scanId = job.id;
+      const requestId = ++state.recaptureHintRequest;
       let rows = state.scanResultPayload?.results || [];
       let total = Number(state.scanResultPayload?.total || 0);
       if (state.resultTab !== 'hosts') {
@@ -3282,7 +3284,11 @@ ${health.db}` : '데이터베이스 없음';
         // open port. Same request the hosts tab makes.
         try {
           const payload = await api(`/v1/scans/${encodeURIComponent(scanId)}/results?state=open&limit=${HOST_VIEW_RESULT_LIMIT}&offset=0`);
-          if (scanId !== state.scanId) return;
+          // A recapture can start while this was in flight - that line owns
+          // the status node now. And a newer hint call (or a scan switch)
+          // can have landed first; only the latest write should stick.
+          if (scanId !== state.scanId || state.recapturingScanId) return;
+          if (requestId !== state.recaptureHintRequest) return;
           rows = payload.results || [];
           total = Number(payload.total || 0);
         } catch (_) {
