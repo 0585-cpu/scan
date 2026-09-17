@@ -588,15 +588,22 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("JSON.stringify({path})", body)
         self.assertIn("netroach-artifacts", html)
 
-    def test_the_two_result_actions_sit_with_the_settings_they_read(self):
-        """One takes the evidence settings from this form, the other fills its
-        target and port fields - neither belongs in the result pane's toolbar."""
+    def test_the_actions_on_a_finished_scan_sit_with_its_results(self):
+        """Recapture and rescan act on the scan the toolbar describes, not on
+        the form - and a recapture that read the form's evidence settings
+        had to be understood before it could be pressed. Now it reads the
+        scan's own."""
         html = dashboard_html()
 
         form = html.split('<form id="scanForm">', 1)[1].split("</form>", 1)[0]
-        self.assertIn('id="scanRecaptureEvidence"', form)
-        self.assertIn('id="scanRescanOpen"', form)
-        self.assertIn('id="scanSecondaryStatus"', form)
+        self.assertNotIn('id="scanRecaptureEvidence"', form)
+        self.assertNotIn('id="scanRescanOpen"', form)
+        self.assertNotIn("form-actions-secondary", html)
+
+        toolbar = html.split('class="toolbar result-toolbar"', 1)[1].split("band-head", 1)[0]
+        for control in ("scanRecaptureEvidence", "scanRecaptureAll", "scanStopRecapture",
+                        "scanRescanOpen", "scanRecaptureStatus", "scanCancel", "scanDelete"):
+            self.assertIn(f'id="{control}"', toolbar)
 
     def test_a_checkbox_explanation_sits_under_its_label(self):
         """Side by side in a 380px column, the two wrapped into fragments."""
@@ -618,19 +625,23 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("progress.error", body)
         self.assertIn("watchRecaptureProgress(scanId)", html)
 
-    def test_evidence_can_be_recaptured_without_scanning_again(self):
-        """A scan whose capture limit was too low has the ports already; the
-        limit cost the pictures, not the findings."""
+    def test_a_recapture_fills_the_gaps_with_the_scans_own_settings(self):
+        """The button fills the ports that have no picture and leaves the rest;
+        photographing every open port again is the link beside it. Both send
+        the settings the scan itself ran with, not whatever the form holds."""
         html = dashboard_html()
 
-        self.assertIn('id="scanRecaptureEvidence"', html)
-        self.assertIn("/evidence/recapture", html)
         body = html.split("async function recaptureEvidence(", 1)[1].split(chr(10) + "    }", 1)[0]
-        self.assertIn("screenshot_max", body)
+        self.assertIn("missing_only: missingOnly", body)
+        self.assertIn("screenshot_max: null", body)
+        self.assertIn("job.params", body)
         self.assertIn("capture_console", body)
-        # It replaces the scan's evidence rather than topping it up, which the
-        # operator has to know before pressing it.
-        self.assertIn("교체", body)
+        self.assertIn("screenshot_timeout_ms", body)
+        self.assertNotIn("form.get(", body)
+        self.assertIn("$('scanRecaptureEvidence').addEventListener('click', () => recaptureEvidence(true))", html)
+        self.assertIn("$('scanRecaptureAll').addEventListener('click'", html)
+        self.assertIn("function unphotographedOpenCount(", html)
+        self.assertIn("function renderRecaptureHint(", html)
 
     def test_rescanning_open_ports_fills_the_form_rather_than_starting(self):
         """The authorization tick and the workload warning belong to every
@@ -642,6 +653,7 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("open-targets", body)
         self.assertIn("$('scanTargets').value", body)
         self.assertNotIn("/v1/scans'", body)
+        self.assertIn("scrollIntoView", body)
 
     def test_service_detection_warns_about_automatic_evidence_cost(self):
         """Service detection owns the evidence side effects, so the warning
@@ -686,9 +698,6 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertEqual(html.count("screenshot_max: screenshotLimit(form)"), 2)
         self.assertIn('name="screenshot_all"', html)
         self.assertIn("if (form.get('screenshot_all') === 'on') return null;", html)
-        # The recapture alone can be told to fill only the gaps.
-        self.assertIn('id="scanRecaptureMissingOnly"', html)
-        self.assertIn("missing_only: $('scanRecaptureMissingOnly').checked", html)
 
     def test_a_scan_that_recorded_more_than_it_planned_says_so(self):
         """Folded counts can double; a fifteen-million total cannot be eyeballed."""
@@ -840,7 +849,7 @@ class DashboardHostViewTests(unittest.TestCase):
         html = dashboard_html()
 
         self.assertIn('id="scanStopRecapture"', html)
-        self.assertIn("$('scanRecaptureEvidence').addEventListener('click', recaptureEvidence)", html)
+        self.assertIn("$('scanRecaptureEvidence').addEventListener('click', () => recaptureEvidence(true))", html)
         self.assertIn("$('scanStopRecapture').addEventListener('click', cancelRecapture)", html)
         # The start button never becomes a stop.
         self.assertNotIn("'증적 재수집 중지' : '증적 재수집'", html)
