@@ -290,6 +290,33 @@ def web_result_url(result: Mapping[str, Any]) -> str:
 
 SCREENSHOT_RETRY_DELAY_S = 0.4
 
+# Navigations Chromium reports as failed while drawing a page about them. The
+# server answered - with an error status and no body, or with a TLS the
+# browser will not speak - and the tab shows its own page naming which:
+# "HTTP ERROR 403", "uses an unsupported protocol". That is what an operator
+# opening the address would see, so it is the evidence. Measured on a
+# management port answering 403 with nothing after it: without this the web
+# pass raised, the port fell to the console capture, and the picture of a web
+# service was a netstat line. A refused or reset connection is left out: its
+# page says only that the site cannot be reached, and the console capture
+# carries more about that.
+_RENDERED_NAVIGATION_ERRORS = (
+    "ERR_HTTP_RESPONSE_CODE_FAILURE",
+    "ERR_SSL_VERSION_OR_CIPHER_MISMATCH",
+    "ERR_SSL_PROTOCOL_ERROR",
+)
+
+
+# How long Chromium's error page is given to be swapped in after the
+# navigation call has already returned. Measured: an evaluate issued at once
+# found the context being destroyed; the page's text was readable a print
+# statement later.
+ERROR_PAGE_SETTLE_MS = 300
+
+
+def _navigation_still_drew_a_page(exc: BaseException) -> bool:
+    return any(code in str(exc) for code in _RENDERED_NAVIGATION_ERRORS)
+
 
 def _screenshot_with_one_retry(page: Any, remaining_ms: Callable[[], float] | None = None) -> bytes:
     """Take the screenshot, allowing the renderer one more chance.
@@ -501,9 +528,29 @@ def capture_web_screenshots(
                             else None
                         )
                         page = context.new_page()
-                        page.goto(url, wait_until="domcontentloaded", timeout=min(timeout_ms, left_ms()) or 1)
+                        reached = url
+                        drew_its_own_page = False
+                        try:
+                            page.goto(url, wait_until="domcontentloaded", timeout=min(timeout_ms, left_ms()) or 1)
+                        except Exception as exc:  # noqa: BLE001 - narrowed on the message below.
+                            if not _navigation_still_drew_a_page(exc):
+                                raise
+                            # The address stays the one asked for: Chromium
+                            # reports its error page as about:blank.
+                            drew_its_own_page = True
+                        else:
+                            reached = page.url
                         page.set_default_timeout(left_ms() or 1)
-                        _still_the_animations(page)
+                        if drew_its_own_page:
+                            # Chromium's page, not the target's: nothing on it
+                            # to still, and it is still being swapped in when
+                            # the navigation call returns - an evaluate here
+                            # lands in a context that is being torn down.
+                            # The screenshot goes through the compositor, which
+                            # needs no script context; give the swap a moment.
+                            page.wait_for_timeout(ERROR_PAGE_SETTLE_MS)
+                        else:
+                            _still_the_animations(page)
                         page.set_default_timeout(left_ms() or 1)
                         # The window carries what the page cannot: the address
                         # arrived at, and the browser's own judgement beside it -
@@ -514,7 +561,7 @@ def capture_web_screenshots(
                         if image is None:
                             image = _screenshot_with_one_retry(page, left_ms)
                         filename_host = re.sub(r"[^A-Za-z0-9_.-]+", "_", host)
-                        store(result, image, f"{filename_host}_{result['port']}.png", page.url, capture_agent)
+                        store(result, image, f"{filename_host}_{result['port']}.png", reached, capture_agent)
                         captured += 1
                     except Exception as exc:  # noqa: BLE001 - one failed web service must not stop other captures.
                         errors.append(f"{url}: {str(exc)[:240]}")

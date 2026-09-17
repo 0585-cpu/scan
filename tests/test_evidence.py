@@ -197,10 +197,15 @@ class FakePage:
     def set_default_timeout(self, timeout_ms):
         self.timeouts.append(float(timeout_ms))
 
+    goto_error = "net::ERR_CONNECTION_REFUSED"
+
     def goto(self, *_args, **_kwargs):
         self.goto_calls += 1
         if self.goto_calls <= self.goto_failures:
-            raise RuntimeError("net::ERR_CONNECTION_REFUSED")
+            raise RuntimeError(self.goto_error)
+
+    def wait_for_timeout(self, _ms):
+        pass
 
     def add_style_tag(self, **_kwargs):
         raise AssertionError("add_style_tag never returns on a page with no head")
@@ -462,6 +467,46 @@ class ScreenshotRetryTests(unittest.TestCase):
         self.assertEqual(summary.failed, 1)
         self.assertEqual(page.screenshot_calls, 2)
         self.assertIn("captureScreenshot", summary.errors[0])
+
+    def test_a_page_chromium_drew_about_the_failure_is_still_the_evidence(self):
+        """An error status with no body is a failed navigation to Chromium.
+
+        Playwright raises on it, and the port fell to the console capture -
+        so a management port answering 403 with nothing after it, which is
+        a web service and a finding, was photographed as a netstat line.
+        Found in a real assessment's capture errors: net::ERR_HTTP_RESPONSE_
+        CODE_FAILURE beside ERR_SSL_VERSION_OR_CIPHER_MISMATCH and
+        ERR_SSL_PROTOCOL_ERROR on the same hosts. For all three Chromium draws
+        its own page naming the problem - "HTTP ERROR 403", "unsupported
+        protocol" - which is what an operator opening the address sees.
+
+        That page is Chromium's, not the target's: there is nothing on it to
+        still, and an evaluate issued the moment the navigation call returns
+        lands in a context being torn down (measured). The screenshot goes
+        through the compositor and needs no script context.
+        """
+        from netroach.evidence import _RENDERED_NAVIGATION_ERRORS
+
+        for code in _RENDERED_NAVIGATION_ERRORS:
+            with self.subTest(code=code):
+                page = FakePage(screenshot_failures=0, goto_failures=1)
+                page.goto_error = f"Page.goto: net::{code} at http://127.0.0.1/"
+                page.url = "about:blank"  # what Chromium reports for its error page
+
+                summary, stored = self._capture(page)
+
+                self.assertEqual(summary.captured, 1)
+                self.assertEqual(page.screenshot_calls, 1)
+                self.assertEqual(page.evaluated, [], "nothing of the target's to still")
+                # The address kept is the one asked for, not about:blank.
+                self.assertEqual(stored[0][3], "http://127.0.0.1/")
+
+        # A refused connection draws a page too, but one that says only that
+        # the site cannot be reached; the console capture carries more.
+        page = FakePage(screenshot_failures=0, goto_failures=1)
+        summary, stored = self._capture(page)
+        self.assertEqual(summary.failed, 1)
+        self.assertEqual(stored, [])
 
     def test_navigation_failures_are_not_retried(self):
         page = FakePage(screenshot_failures=0, goto_failures=5)
