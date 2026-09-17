@@ -2424,6 +2424,89 @@ class RescanAndRecaptureTests(unittest.TestCase):
             )
             self.assertEqual(names, ["by-hand.png", "new.png"])
 
+    def _recapture_and_wait(self, client, scan_id, body):
+        from netroach.evidence import ScreenshotCaptureSummary
+
+        photographed = []
+
+        def fake_capture(results, *, store, timeout_ms, maximum, capture_console, should_stop=None, on_examined=None):
+            for result in list(results):
+                photographed.append((result["host"], result["port"]))
+                store(result, PNG_HEADER, "new.png", None, "web_screenshot", "test")
+            return ScreenshotCaptureSummary(candidates=len(photographed), captured=len(photographed), failed=0)
+
+        with patch("netroach.api.capture_automatic_evidence", side_effect=fake_capture):
+            response = client.post(f"/v1/scans/{scan_id}/evidence/recapture", json=body)
+            for thread in threading.enumerate():
+                if thread.name.startswith("netroach-evidence-"):
+                    thread.join(timeout=30)
+        return response.json(), sorted(photographed)
+
+    def test_a_recapture_can_be_asked_to_fill_only_the_gaps(self):
+        """A recapture replaces every open port's picture, by default.
+
+        That is right when what is there was taken with the wrong settings.
+        It is wrong for a bundle merged from elsewhere or a pass that was
+        stopped, where what is there is fine and only the gaps want filling
+        - and where "every open port" is twelve thousand pictures for the
+        sake of six. `missing_only` photographs the ports that have no
+        automatic evidence and leaves the others exactly as they were.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            client, repo, scan_id = self._client_with_open_results(tmp)
+            repo.add_result_evidence(
+                scan_id, host="10.0.0.2", port=80, data=PNG_HEADER,
+                file_name="already.png", evidence_type="web_screenshot",
+            )
+
+            payload, photographed = self._recapture_and_wait(
+                client, scan_id, {"missing_only": True}
+            )
+
+            self.assertEqual(payload["pending"], 1, "one open port has no picture")
+            self.assertTrue(payload["missing_only"])
+            self.assertEqual(photographed, [("10.0.0.1", 443)])
+            kept = [item["file_name"] for item in repo.list_result_evidence(scan_id, host="10.0.0.2", port=80)]
+            self.assertEqual(kept, ["already.png"], "the port that had a picture keeps it")
+
+            # Nothing left to fill: the second run has nothing to do.
+            payload, photographed = self._recapture_and_wait(
+                client, scan_id, {"missing_only": True}
+            )
+            self.assertEqual(payload["status"], "nothing to capture")
+            self.assertEqual(photographed, [])
+
+    def test_a_recapture_with_no_limit_takes_every_open_port(self):
+        """`screenshot_max` null means all of them, past the per-host share too.
+
+        The share exists to divide a budget fairly between hosts; with no
+        budget there is nothing to divide, so a host with more open ports
+        than the share is photographed in full.
+        """
+        from netroach.evidence import EVIDENCE_PER_HOST
+        from netroach.models import PortResult
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client, repo, scan_id = self._client_with_open_results(tmp)
+            crowded = EVIDENCE_PER_HOST + 5
+            repo.add_port_results([
+                PortResult(scan_id=scan_id, host="10.0.0.9", port=port, protocol="tcp",
+                           state="open", latency_ms=1.0)
+                for port in range(1000, 1000 + crowded)
+            ])
+
+            payload, photographed = self._recapture_and_wait(
+                client, scan_id, {"screenshot_max": None}
+            )
+
+            self.assertEqual(payload["pending"], crowded + 2)
+            self.assertEqual(payload["limit"], crowded + 2, "the limit is the count itself")
+            self.assertEqual(len(photographed), crowded + 2)
+            self.assertEqual(
+                sum(1 for host, _ in photographed if host == "10.0.0.9"), crowded,
+                "the crowded host is not cut to its share",
+            )
+
     def test_a_running_scan_is_not_recaptured_underneath_itself(self):
         with tempfile.TemporaryDirectory() as tmp:
             client, repo, scan_id = self._client_with_open_results(tmp)

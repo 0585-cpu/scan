@@ -176,7 +176,8 @@ class ScanCreateRequest(BaseModel):
     # A scan of a busy range finds thousands of open ports, and a hundred was
     # not a considered ceiling - it was small enough to look like a typo cap.
     # Each capture costs a page load, so the number is the operator's to weigh.
-    screenshot_max: int = Field(default=DEFAULT_SCREENSHOT_MAX, ge=1, le=10000)
+    # None asks for every open port rather than a number of them.
+    screenshot_max: int | None = Field(default=DEFAULT_SCREENSHOT_MAX, ge=1, le=10000)
     # Off by default: it needs a desktop to photograph, and it spends about a
     # second and a half per port where the drawing spends milliseconds.
     capture_console: bool = False
@@ -243,8 +244,12 @@ class DatabaseMergeRequest(BaseModel):
 
 class EvidenceRecaptureRequest(BaseModel):
     screenshot_timeout_ms: int = Field(default=DEFAULT_SCREENSHOT_TIMEOUT_MS, ge=100, le=120_000)
-    screenshot_max: int = Field(default=DEFAULT_SCREENSHOT_MAX, ge=1, le=10000)
+    # None asks for every open port rather than a number of them.
+    screenshot_max: int | None = Field(default=DEFAULT_SCREENSHOT_MAX, ge=1, le=10000)
     capture_console: bool = False
+    # Fill the ports that have no picture and leave the rest alone, instead of
+    # photographing every open port again.
+    missing_only: bool = False
 
 
 class OastSessionCreateRequest(BaseModel):
@@ -689,9 +694,16 @@ def create_app(
             raise _not_found("scan not found")
         if job["status"] in {"queued", "running", "recovering", "cancel_requested"}:
             raise _bad_request(ValueError("the scan is still running"))
-        # Everything open, not only what is missing a picture: a recapture
-        # replaces the scan's evidence rather than topping it up.
-        pending = repo.count_open_results(scan_id)
+        # By default everything open, not only what is missing a picture: a
+        # recapture replaces the scan's evidence rather than topping it up.
+        # `missing_only` is the other need - a bundle merged from elsewhere, or
+        # a pass that was stopped - where what is there is right and only the
+        # gaps want filling.
+        pending = (
+            repo.count_automatic_evidence_candidates(scan_id)
+            if request.missing_only
+            else repo.count_open_results(scan_id)
+        )
         if not pending:
             return {"status": "nothing to capture", "pending": 0}
         # One at a time across the whole application, not one per scan. A
@@ -707,7 +719,7 @@ def create_app(
                     ValueError(f"evidence is already being captured for scan {busy[:8]}")
                 )
             recapture_running.add(scan_id)
-        planned = min(pending, request.screenshot_max)
+        planned = pending if request.screenshot_max is None else min(pending, request.screenshot_max)
         state: dict[str, object] = {
             "running": True,
             "total": planned,
@@ -768,6 +780,7 @@ def create_app(
                 "screenshot_timeout_ms": request.screenshot_timeout_ms,
                 "screenshot_max": request.screenshot_max,
                 "capture_console": request.capture_console,
+                "missing_only": request.missing_only,
                 "on_finished": finished,
                 "on_captured": captured_one,
                 "on_error": failed,
@@ -783,11 +796,17 @@ def create_app(
         )
         thread.start()
         logger.info(
-            "recapture %s started: %d open ports, limit %d, console=%s, timeout %dms",
-            scan_id[:8], pending, request.screenshot_max,
+            "recapture %s started: %d %s ports, limit %s, console=%s, timeout %dms",
+            scan_id[:8], pending, "unphotographed" if request.missing_only else "open",
+            "none" if request.screenshot_max is None else request.screenshot_max,
             request.capture_console, request.screenshot_timeout_ms,
         )
-        return {"status": "started", "pending": pending, "limit": request.screenshot_max}
+        return {
+            "status": "started",
+            "pending": pending,
+            "limit": planned,
+            "missing_only": request.missing_only,
+        }
 
     @app.delete("/v1/scans/{scan_id}/evidence/recapture")
     def cancel_recapture(scan_id: str) -> dict[str, object]:
@@ -1108,8 +1127,9 @@ def _run_evidence_recapture(
     scan_id: str,
     *,
     screenshot_timeout_ms: int,
-    screenshot_max: int,
+    screenshot_max: int | None,
     capture_console: bool,
+    missing_only: bool = False,
     on_finished: Callable[[], None] | None = None,
     on_captured: Callable[[], None] | None = None,
     on_error: Callable[[str], None] | None = None,
@@ -1131,6 +1151,7 @@ def _run_evidence_recapture(
             screenshot_timeout_ms=screenshot_timeout_ms,
             screenshot_max=screenshot_max,
             capture_console=capture_console,
+            missing_only=missing_only,
             on_captured=on_captured,
             should_stop=should_stop,
             on_examined=on_examined,
@@ -1186,8 +1207,9 @@ def _capture_stored_evidence(
     scan_id: str,
     *,
     screenshot_timeout_ms: int,
-    screenshot_max: int,
+    screenshot_max: int | None,
     capture_console: bool,
+    missing_only: bool = False,
     on_captured: Callable[[], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
     on_examined: Callable[[Mapping[str, Any]], None] | None = None,
@@ -1195,15 +1217,20 @@ def _capture_stored_evidence(
     # A recapture redoes the scan's evidence rather than filling its gaps: the
     # reason to run one is that what is there was taken with the wrong
     # settings, so a port that already has a picture needs a new one most.
+    # `missing_only` is the other case, where what is there is right.
     candidates = repo.get_automatic_evidence_candidates(
-        scan_id, limit=screenshot_max, include_captured=True
+        scan_id, limit=screenshot_max, include_captured=not missing_only
     )
     # Always counted rather than inferred from the candidate list. "Fewer than
     # the limit means that was all of them" stopped being true once a host's
     # own share could cut the list: a recapture can come back short of the
     # total and still have left ports out, and reporting those as eligible=
     # captured is the one reading that hides partial coverage.
-    eligible = repo.count_open_results(scan_id)
+    eligible = (
+        repo.count_automatic_evidence_candidates(scan_id)
+        if missing_only
+        else repo.count_open_results(scan_id)
+    )
     if not candidates:
         return
 
@@ -1298,7 +1325,7 @@ def _run_scan_job(
     settings: EngineSettings,
     capture_screenshots: bool = False,
     screenshot_timeout_ms: int = DEFAULT_SCREENSHOT_TIMEOUT_MS,
-    screenshot_max: int = DEFAULT_SCREENSHOT_MAX,
+    screenshot_max: int | None = DEFAULT_SCREENSHOT_MAX,
     capture_console: bool = False,
     recovery_token: str | None = None,
 ) -> None:
@@ -1673,7 +1700,12 @@ def _start_scan_recovery(db_path) -> list[threading.Thread]:
                     settings,
                     bool(params.get("capture_screenshots", False)),
                     int(params.get("screenshot_timeout_ms", DEFAULT_SCREENSHOT_TIMEOUT_MS)),
-                    int(params.get("screenshot_max", DEFAULT_SCREENSHOT_MAX)),
+                    # Null in the stored parameters means every open port.
+                    (
+                        None
+                        if params.get("screenshot_max", DEFAULT_SCREENSHOT_MAX) is None
+                        else int(params.get("screenshot_max", DEFAULT_SCREENSHOT_MAX))
+                    ),
                     bool(params.get("capture_console", False)),
                     recovery_token,
                 ),

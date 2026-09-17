@@ -1154,6 +1154,23 @@ class CollapsedStateTests(unittest.TestCase):
                 repo.count_results_by_state(scan_id), {"closed": 2000, "filtered": 3}
             )
 
+    def test_no_limit_means_every_open_port_with_no_per_host_share(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "netroach.db")
+            scan_id = repo.create_scan_job(targets="10.0.0.1", ports="1-100", scope=[], params={})
+            repo.add_port_results([
+                PortResult(scan_id=scan_id, host="10.0.0.1", port=port, protocol="tcp",
+                           state="open", latency_ms=1.0)
+                for port in range(1, 31)
+            ])
+
+            capped = repo.get_automatic_evidence_candidates(scan_id, limit=100, per_host=10)
+            self.assertEqual(len(capped), 10, "a budget is shared out per host")
+
+            everything = repo.get_automatic_evidence_candidates(scan_id, limit=None, per_host=10)
+            self.assertEqual(len(everything), 30, "no budget, no share: all of them")
+            self.assertEqual([row["port"] for row in everything], list(range(1, 31)))
+
     def test_a_wide_scan_does_not_keep_a_few_rows_per_host(self):
         """The allowance is per host, so its cost is the host count.
 

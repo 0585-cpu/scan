@@ -1696,7 +1696,8 @@
                       <div class="field">
                         <label for="scanScreenshotMax">증적 수집 개수</label>
                         <input id="scanScreenshotMax" name="screenshot_max" type="number" min="1" max="10000" value="20">
-                        <span class="helper">열린 포트가 이보다 많으면 나머지는 수집하지 않습니다.</span>
+                        <label class="check-row"><input id="scanScreenshotAll" name="screenshot_all" type="checkbox">열린 포트 전부 수집</label>
+                        <span class="helper" id="scanScreenshotMaxHelper">열린 포트가 이보다 많으면 나머지는 수집하지 않습니다.</span>
                       </div>
                       <div class="field full">
                         <label class="check-row"><input id="scanConfirmLargeScan" name="confirm_large_scan" type="checkbox">최대 시도 수를 초과하는 스캔을 승인합니다</label>
@@ -1716,6 +1717,7 @@
                   <div class="form-actions-secondary">
                     <span class="toolbar-label">선택한 스캔으로</span>
                     <button type="button" id="scanRecaptureEvidence" disabled title="스캔하지 않고 열린 포트의 증적을 위 설정으로 다시 수집합니다. 기존 증적은 교체되고, 직접 첨부한 파일은 유지됩니다">증적 재수집</button>
+                    <label class="check-row" title="이미 증적이 있는 포트는 건드리지 않고, 증적이 없는 포트만 수집합니다"><input id="scanRecaptureMissingOnly" type="checkbox">증적 없는 포트만</label>
                     <button type="button" id="scanStopRecapture" class="danger" hidden title="진행 중인 포트까지 마치고 멈춥니다">재수집 중지</button>
                     <button type="button" id="scanRescanOpen" disabled title="이 스캔이 찾은 열린 포트를 위 대상·포트 칸에 채웁니다">열린 포트 재스캔</button>
                     <span class="status" id="scanSecondaryStatus" role="status"></span>
@@ -2624,8 +2626,24 @@
     // input's .defaultValue/.defaultChecked already holds that (the DOM sets
     // it from the markup's value=/checked attribute and it survives later
     // .value/.checked writes), so there is nothing to snapshot separately.
-    const ADVANCED_FIELDS = ['top_ports', 'exclude', 'timeout_ms', 'concurrency', 'rate_limit_per_sec', 'udp_retries', 'max_attempts', 'screenshot_max', 'confirm_large_scan'];
+    const ADVANCED_FIELDS = ['top_ports', 'exclude', 'timeout_ms', 'concurrency', 'rate_limit_per_sec', 'udp_retries', 'max_attempts', 'screenshot_max', 'screenshot_all', 'confirm_large_scan'];
 
+    // How many ports to photograph: a number, or null for all of them. Every
+    // capture costs a page load or a console window - measured, one to five
+    // seconds a port - so "all" on a wide scan is hours, and the switch says
+    // so where it is ticked rather than after the fact.
+    function screenshotLimit(form) {
+      if (form.get('screenshot_all') === 'on') return null;
+      return Number(form.get('screenshot_max') || 20);
+    }
+
+    function syncScreenshotAll() {
+      const all = $('scanScreenshotAll').checked;
+      $('scanScreenshotMax').disabled = all;
+      $('scanScreenshotMaxHelper').textContent = all
+        ? '열린 포트마다 증적을 수집합니다. 포트당 1~5초가 걸리므로 열린 포트가 많으면 몇 시간이 될 수 있습니다.'
+        : '열린 포트가 이보다 많으면 나머지는 수집하지 않습니다.';
+    }
     function advancedDiffCount() {
       const form = $('scanForm');
       return ADVANCED_FIELDS.reduce((count, name) => {
@@ -3261,16 +3279,22 @@ ${health.db}` : '데이터베이스 없음';
         const payload = await api(`/v1/scans/${encodeURIComponent(scanId)}/evidence/recapture`, {
           method: 'POST',
           body: JSON.stringify({
-            screenshot_max: Number(form.get('screenshot_max') || 20),
-            capture_console: form.get('service_probe') === 'on'
+            screenshot_max: screenshotLimit(form),
+            capture_console: form.get('service_probe') === 'on',
+            missing_only: $('scanRecaptureMissingOnly').checked
           })
         });
+        const missingOnly = $('scanRecaptureMissingOnly').checked;
         if (!payload.pending) {
-          setStatus('scanSecondaryStatus', '열린 포트가 없습니다.');
+          setStatus('scanSecondaryStatus', missingOnly ? '증적이 없는 열린 포트가 없습니다.' : '열린 포트가 없습니다.');
           return;
         }
-        setStatus('scanSecondaryStatus',
-          `증적 재수집 시작 · 열린 포트 ${Number(payload.pending).toLocaleString()}개 중 최대 ${Number(payload.limit).toLocaleString()}개. 기존 증적은 교체됩니다.`);
+        const pending = Number(payload.pending).toLocaleString();
+        const limit = Number(payload.limit).toLocaleString();
+        const scope = missingOnly ? `증적 없는 포트 ${pending}개` : `열린 포트 ${pending}개`;
+        const reach = payload.limit >= payload.pending ? '전부' : `중 최대 ${limit}개`;
+        const effect = missingOnly ? '기존 증적은 그대로 둡니다.' : '기존 증적은 교체됩니다.';
+        setStatus('scanSecondaryStatus', `증적 재수집 시작 · ${scope} ${reach}. ${effect}`);
         state.recapturingScanId = scanId;
         watchRecaptureProgress(scanId);
       } catch (error) {
@@ -4387,7 +4411,7 @@ ${health.db}` : '데이터베이스 없음';
         service_probe: tcp ? tcpServiceProbe : form.get('udp_service_probe') === 'on',
         capture_screenshots: tcpServiceProbe,
         capture_console: tcpServiceProbe,
-        screenshot_max: Number(form.get('screenshot_max') || 20),
+        screenshot_max: screenshotLimit(form),
         max_attempts: Number(form.get('max_attempts') || 1000000),
         confirm_large_scan: form.get('confirm_large_scan') === 'on'
       };
@@ -4575,6 +4599,8 @@ ${health.db}` : '데이터베이스 없음';
     $('diagnosticsRefresh').addEventListener('click', refreshHealth);
     $('mergeDbRun').addEventListener('click', mergeDatabase);
     $('scanRecaptureEvidence').addEventListener('click', recaptureEvidence);
+    $('scanScreenshotAll').addEventListener('change', syncScreenshotAll);
+    syncScreenshotAll();
     $('scanStopRecapture').addEventListener('click', cancelRecapture);
     $('scanRescanOpen').addEventListener('click', fillFormWithOpenTargets);
     $('packetTemplate').addEventListener('change', updatePacketFields);
@@ -4625,7 +4651,7 @@ ${health.db}` : '데이터베이스 없음';
       }
       renderScanEstimate();
     });
-    ['scanPorts', 'scanTopPorts', 'scanProfile', 'scanProtocol', 'scanScope', 'scanExclude', 'scanTimeout', 'scanConcurrency', 'scanRate', 'scanUdpRetries', 'scanConnectOnly', 'scanSynRetries', 'scanMaxAttempts', 'scanConfirmLargeScan'].forEach((id) => {
+    ['scanPorts', 'scanTopPorts', 'scanProfile', 'scanProtocol', 'scanScope', 'scanExclude', 'scanTimeout', 'scanConcurrency', 'scanRate', 'scanUdpRetries', 'scanConnectOnly', 'scanSynRetries', 'scanMaxAttempts', 'scanScreenshotMax', 'scanScreenshotAll', 'scanConfirmLargeScan'].forEach((id) => {
       $(id).addEventListener('input', renderScanEstimate);
       $(id).addEventListener('change', renderScanEstimate);
     });
@@ -4638,6 +4664,8 @@ ${health.db}` : '데이터베이스 없음';
     $('scanReset').addEventListener('click', () => {
       $('scanForm').reset();
       updateTcpScanAvailability();
+      // A form reset unticks the box without firing its change event.
+      syncScreenshotAll();
       $('scanAdvanced').open = false;
       setStatus('scanStatus', '');
       setStatus('scanProfileStatus', 'TXT는 쉼표로 구분한 포트, 범위, # 주석을 지원합니다.');

@@ -681,7 +681,14 @@ class DashboardHostViewTests(unittest.TestCase):
 
         self.assertIn('name="screenshot_max"', html)
         self.assertIn("'screenshot_max'", html)
-        self.assertIn("screenshot_max: Number(form.get('screenshot_max')", html)
+        # Both the scan and the recapture read the limit the same way, and
+        # both can be told to take every open port instead of a number.
+        self.assertEqual(html.count("screenshot_max: screenshotLimit(form)"), 2)
+        self.assertIn('name="screenshot_all"', html)
+        self.assertIn("if (form.get('screenshot_all') === 'on') return null;", html)
+        # The recapture alone can be told to fill only the gaps.
+        self.assertIn('id="scanRecaptureMissingOnly"', html)
+        self.assertIn("missing_only: $('scanRecaptureMissingOnly').checked", html)
 
     def test_a_scan_that_recorded_more_than_it_planned_says_so(self):
         """Folded counts can double; a fifteen-million total cannot be eyeballed."""

@@ -1493,11 +1493,15 @@ class SQLiteRepository:
         self,
         scan_id: str,
         *,
-        limit: int,
+        limit: int | None,
         per_host: int = EVIDENCE_PER_HOST,
         include_captured: bool = False,
     ) -> list[dict[str, Any]]:
         """Open results evidence can be captured for.
+
+        `limit=None` asks for every one of them. The per-host share exists to
+        divide a budget fairly, so with no budget there is nothing to divide
+        and it is not applied either.
 
         `per_host` is how many of one host's ports may take from the budget.
         Without it the list was ordered by host and cut at `limit` alone, so a
@@ -1526,9 +1530,11 @@ class SQLiteRepository:
         than filling its gaps, because the reason to run one is usually that
         what is there was taken with the wrong settings.
         """
-        if limit < 1 or per_host < 1:
+        if limit is not None and (limit < 1 or per_host < 1):
             return []
         captured_filter = "" if include_captured else _EVIDENCE_NOT_CAPTURED_SQL
+        budget = "WHERE host_rank <= ?" if limit is not None else ""
+        cap = "LIMIT ?" if limit is not None else ""
         query = f"""
             SELECT scan_id, host, port, protocol, state, latency_ms,
                    service_name, service_confidence, banner, evidence, error,
@@ -1541,12 +1547,13 @@ class SQLiteRepository:
                 WHERE scan_id=? AND state IN ('open', 'open|filtered')
                   {captured_filter}
             )
-            WHERE host_rank <= ?
+            {budget}
             ORDER BY host, port
-            LIMIT ?
+            {cap}
         """
+        params: tuple[object, ...] = (scan_id,) if limit is None else (scan_id, per_host, limit)
         with self.session() as conn:
-            rows = conn.execute(query, (scan_id, per_host, limit)).fetchall()
+            rows = conn.execute(query, params).fetchall()
             results = [_port_result_row_to_dict(row) for row in rows]
             self._attach_evidence_files(conn, results, scan_id)
         return results
