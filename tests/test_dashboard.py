@@ -879,6 +879,23 @@ class DashboardHostViewTests(unittest.TestCase):
         # And the operator can see why those two are open.
         self.assertIn("응답 없음", html)
 
+    def test_the_result_view_keeps_its_own_timings_for_the_diagnostics_tab(self):
+        """Reported four times, never reproduced: the result view gets slower
+        the longer the app runs. The three numbers that settle which side it
+        is on are kept where the operator can read them when it happens."""
+        html = dashboard_html()
+
+        self.assertIn('id="diagnosticsTimings"', html)
+        self.assertIn("function recordResultTiming(", html)
+        self.assertIn("function renderResultTimings(", html)
+        body = html.split("async function refreshScanResults(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("performance.now()", body)
+        self.assertIn("recordResultTiming(", body)
+        # The server's own number comes off the response header, not a guess.
+        self.assertIn("serverTiming", html)
+        self.assertIn("state.perf", html)
+        self.assertIn("RESULT_TIMINGS_KEPT = 30", html)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2131,6 +2131,13 @@
             <div class="kv" id="diagnosticsTable"></div>
           </section>
           <section class="band">
+            <div class="band-head"><h3>결과 조회 시간</h3></div>
+            <div class="band-body">
+              <p class="hint">스캔을 누를 때마다 결과를 불러오는 데 걸린 시간입니다. 느려졌다고 느껴질 때 어느 숫자가 커졌는지 보십시오 — 서버면 DB 쪽, 전송이면 응답 크기, 렌더면 화면 쪽입니다.</p>
+              <div id="diagnosticsTimings"></div>
+            </div>
+          </section>
+          <section class="band">
             <div class="band-head"><h3>다른 기기의 결과 불러오기</h3></div>
             <div class="band-body">
               <p class="hint">다른 기기의 <code>netroach.db</code> 경로를 입력하세요. 증적 이미지는
@@ -2214,7 +2221,8 @@
       oastSessions: [],
       oastId: null,
       runningProgress: null,
-      stripClosedFor: null
+      stripClosedFor: null,
+      perf: []
     };
 
     const $ = (id) => document.getElementById(id);
@@ -3700,7 +3708,10 @@ ${health.db}` : '데이터베이스 없음';
       // over every row of the scan; bulk states are a count now, so there is
       // no longer a pile of rows for it to walk.
       try {
-        const payload = await api(`/v1/scans/${encodeURIComponent(scanId)}/results?${params}`);
+        const path = `/v1/scans/${encodeURIComponent(scanId)}/results?${params}`;
+        const fetchedAt = performance.now();
+        const payload = await api(path);
+        const transfer = performance.now() - fetchedAt;
         // Selection, filters and pages can change while an older request is pending.
         if (requestId !== state.scanResultsRequest || scanId !== state.scanId) return;
         const hosts = Array.isArray(payload.hosts) ? payload.hosts : [];
@@ -3719,7 +3730,16 @@ ${health.db}` : '데이터베이스 없음';
           }
         }
         state.scanResultPayload = payload;
+        const renderedAt = performance.now();
         renderScanResults();
+        recordResultTiming({
+          at: new Date().toTimeString().slice(0, 8),
+          scan: shortId(scanId),
+          server: serverTimingFor(path),
+          transfer: Math.round(transfer),
+          render: Math.round(performance.now() - renderedAt),
+          rows: Array.isArray(payload.results) ? payload.results.length : 0,
+        });
         updateScanLinks();
       } catch (err) {
         if (requestId !== state.scanResultsRequest || scanId !== state.scanId) return;
@@ -4318,9 +4338,48 @@ ${health.db}` : '데이터베이스 없음';
         <pre class="json-block">${prettyJson(plugins)}</pre>`;
     }
 
+    // The result view getting slower over a session has been reported four
+    // times and never reproduced on a fresh backend. These are the three
+    // numbers that settle which side it is on, kept for when it happens:
+    // the server's own time from its Server-Timing header, the transfer
+    // around it, and the render after it.
+    const RESULT_TIMINGS_KEPT = 30;
+
+    function recordResultTiming(entry) {
+      state.perf.unshift(entry);
+      if (state.perf.length > RESULT_TIMINGS_KEPT) state.perf.length = RESULT_TIMINGS_KEPT;
+      console.debug('[netroach] results', entry);
+      if (state.view === 'diagnostics') renderResultTimings();
+    }
+
+    // Same-origin responses expose their Server-Timing header on the
+    // resource entry; this reads the one for the request just made.
+    function serverTimingFor(path) {
+      const entries = performance.getEntriesByType('resource');
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const entry = entries[index];
+        if (!entry.name.includes(path)) continue;
+        const app = (entry.serverTiming || []).find((item) => item.name === 'app');
+        return app ? Math.round(app.duration) : null;
+      }
+      return null;
+    }
+
+    function renderResultTimings() {
+      const rows = state.perf.map((item) => `<tr>
+        <td>${escapeHtml(item.at)}</td><td>${escapeHtml(item.scan)}</td>
+        <td>${item.server === null ? '–' : item.server.toLocaleString()}</td>
+        <td>${item.transfer.toLocaleString()}</td><td>${item.render.toLocaleString()}</td>
+        <td>${item.rows.toLocaleString()}</td></tr>`).join('');
+      $('diagnosticsTimings').innerHTML = rows
+        ? `<table class="cd-jobs-table"><thead><tr><th>시각</th><th>스캔</th><th>서버 ms</th><th>전송 ms</th><th>렌더 ms</th><th>행</th></tr></thead><tbody>${rows}</tbody></table>`
+        : '<p class="hint">스캔을 선택하면 결과 조회에 걸린 시간이 여기 쌓입니다.</p>';
+    }
+
     function renderDiagnostics() {
       const diagnostics = state.health?.diagnostics || {};
       $('diagnosticsTable').innerHTML = kvRows(diagnostics);
+      renderResultTimings();
     }
 
     function kvRows(values) {
