@@ -19,3 +19,12 @@ desktop/src-tauri/resources/playwright/*
 desktop/src-tauri/resources/installers/*
 !desktop/src-tauri/resources/installers/.gitkeep
 .lockenv/
+# Scan data and captures never belong in the repository: a database holds a
+# client's hosts, an artifact directory holds their screens, a capture holds
+# whatever was on the wire.
+*.db
+*.db-wal
+*.db-shm
+*-artifacts/
+*.pcap
+*.pcapng
