@@ -4356,13 +4356,21 @@ ${health.db}` : '데이터베이스 없음';
     // resource entry; this reads the one for the request just made.
     function serverTimingFor(path) {
       const entries = performance.getEntriesByType('resource');
+      let result = null;
       for (let index = entries.length - 1; index >= 0; index -= 1) {
         const entry = entries[index];
         if (!entry.name.includes(path)) continue;
         const app = (entry.serverTiming || []).find((item) => item.name === 'app');
-        return app ? Math.round(app.duration) : null;
+        result = app ? Math.round(app.duration) : null;
+        break;
       }
-      return null;
+      // The resource buffer is the browser's own, capped (250 entries in
+      // Chromium), and stops recording rather than evicting once full -
+      // every evidence thumbnail takes a slot too, so it fills within a
+      // handful of scan selections. Nothing else on the page reads it, so
+      // clear it after each read to keep the next request findable.
+      performance.clearResourceTimings();
+      return result;
     }
 
     function renderResultTimings() {

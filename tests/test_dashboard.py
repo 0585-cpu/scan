@@ -895,6 +895,10 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("serverTiming", html)
         self.assertIn("state.perf", html)
         self.assertIn("RESULT_TIMINGS_KEPT = 30", html)
+        timing_fn = html.split("function serverTimingFor(", 1)[1].split(chr(10) + "    }", 1)[0]
+        # The browser's resource buffer is capped and stops recording when full;
+        # read once, then clear it, or the server column goes blank after a while.
+        self.assertIn("performance.clearResourceTimings()", timing_fn)
 
 
 if __name__ == "__main__":
