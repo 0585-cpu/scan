@@ -737,7 +737,7 @@ class DashboardHostViewTests(unittest.TestCase):
             self.assertNotIn(f'id="{control}"', before_advanced, f"{control} belongs in advanced")
             self.assertIn(f'id="{control}"', advanced, control)
 
-        titles = [t for t in ("속도", "탐지", "승인 범위", "그 밖")]
+        titles = ("속도", "탐지", "승인 범위", "그 밖")
         positions = [advanced.index(f'class="advanced-group-title">{t}<') for t in titles]
         self.assertEqual(positions, sorted(positions), "speed, detection, scope, the rest - in that order")
         # Speed's three fields come before the first detection switch.

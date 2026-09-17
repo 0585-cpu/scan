@@ -158,6 +158,12 @@ class DashboardBrowserTests(unittest.TestCase):
             route.fulfill(status=500, json={"detail": "delayed failure"}) if fail else route.fulfill(**reply)
         self.held.clear()
 
+    def open_advanced(self):
+        """Detection and Connect-only now live behind 고급 설정, closed by
+        default; a test that reaches them has to open the panel first, the
+        way an operator would, rather than finding a hidden control."""
+        self.page.evaluate("document.getElementById('scanAdvanced').open = true")
+
     def test_job_picker_is_above_results_and_scrolls_independently(self):
         self.page.wait_for_timeout(180)
         form = self.page.locator(".command-pane").bounding_box()
@@ -196,6 +202,7 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertEqual(self.errors, [])
 
     def test_submit_maps_scan_modes_and_requires_authorization(self):
+        self.open_advanced()
         self.page.locator("#scanTargets").fill("127.0.0.1")
         self.page.locator("#scanPorts").fill("18080")
         self.assertTrue(self.page.locator("#scanSubmit").is_disabled())
@@ -233,6 +240,7 @@ class DashboardBrowserTests(unittest.TestCase):
         Telling that operator they need a build that includes Npcap sends them
         after the one part that is already correct.
         """
+        self.open_advanced()
         cases = [
             (False, "Npcap이 필요한데 이 PC에서 찾지 못했습니다", "포함한 빌드"),
             (True, "이 빌드는 SYN 스캔을 지원하지 않아", "설치 파일로 설치"),
@@ -254,6 +262,7 @@ class DashboardBrowserTests(unittest.TestCase):
                 self.assertTrue(self.page.locator("#scanConnectOnly").is_disabled())
 
     def test_scan_help_descriptions_open_from_their_question_mark(self):
+        self.open_advanced()
         cases = [
             ("#scanServiceProbeHelpTrigger", "#scanServiceProbeHelp", "SYN-open 포트만"),
             ("#scanConnectOnlyHelpTrigger", "#scanConnectOnlyHelp", "Npcap 기반 SYN 스캔"),
@@ -282,6 +291,7 @@ class DashboardBrowserTests(unittest.TestCase):
         )
 
     def test_scan_help_descriptions_open_for_keyboard_focus(self):
+        self.open_advanced()
         cases = [
             ("#scanServiceProbeHelpTrigger", "#scanServiceProbeHelp"),
             ("#scanConnectOnlyHelpTrigger", "#scanConnectOnlyHelp"),
@@ -297,6 +307,7 @@ class DashboardBrowserTests(unittest.TestCase):
                 self.assertEqual(trigger.get_attribute("type"), "button")
 
     def test_scan_help_tooltips_stay_inside_a_phone_viewport(self):
+        self.open_advanced()
         self.page.set_viewport_size({"width": 390, "height": 844})
 
         for trigger_selector, tooltip_selector in [
