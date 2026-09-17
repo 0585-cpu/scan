@@ -295,6 +295,17 @@ def create_app(
 
     app = FastAPI(title="Netroach Local API", version=__version__, lifespan=lifespan)
 
+    # A result view that gets slower over a session has been reported four
+    # times and never reproduced on a fresh backend. The number that says
+    # which side it is on - the server's own time, against what the browser
+    # measures around it - has to be on every response when it happens.
+    @app.middleware("http")
+    async def say_how_long_it_took(request: Request, call_next):
+        began = time.perf_counter()
+        response = await call_next(request)
+        response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - began) * 1000:.1f}"
+        return response
+
     if api_token:
         _install_token_guard(app, api_token)
 

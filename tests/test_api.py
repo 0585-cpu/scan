@@ -2517,6 +2517,19 @@ class RescanAndRecaptureTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 400)
 
+    def test_every_response_says_how_long_the_server_took(self):
+        """A result view that gets slower over a session has been reported
+        four times and never reproduced. The number that settles which side
+        it is on has to be there when it happens, not asked for afterwards."""
+        with tempfile.TemporaryDirectory() as tmp:
+            client, _repo, scan_id = self._client_with_open_results(tmp)
+            for path in ("/v1/health", "/v1/scans", f"/v1/scans/{scan_id}/results"):
+                with self.subTest(path=path):
+                    response = client.get(path)
+                    self.assertEqual(response.status_code, 200)
+                    timing = response.headers.get("server-timing", "")
+                    self.assertRegex(timing, r"^app;dur=\d+(\.\d)?$")
+
 
 class PendingScanWorkTests(unittest.TestCase):
     """What a resumed scan decides is still left to probe."""
