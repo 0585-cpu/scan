@@ -697,16 +697,53 @@ class DashboardHostViewTests(unittest.TestCase):
         self.assertIn("not_attempted", body)
         self.assertIn("evidenceCoverageWarning()", html)
 
-    def test_the_evidence_limit_is_reachable_from_the_form(self):
+    def test_evidence_is_every_open_port_and_the_form_has_no_count_for_it(self):
+        """The count and its "all of them" switch were two more things to
+        understand on a form that already asked too much of a first run.
+        In an assessment the evidence is every open port; the request says
+        so and the form no longer asks."""
         html = dashboard_html()
 
-        self.assertIn('name="screenshot_max"', html)
-        self.assertIn("'screenshot_max'", html)
-        # Both the scan and the recapture read the limit the same way, and
-        # both can be told to take every open port instead of a number.
-        self.assertEqual(html.count("screenshot_max: screenshotLimit(form)"), 2)
-        self.assertIn('name="screenshot_all"', html)
-        self.assertIn("if (form.get('screenshot_all') === 'on') return null;", html)
+        self.assertNotIn('name="screenshot_max"', html)
+        self.assertNotIn('id="scanScreenshotAll"', html)
+        self.assertNotIn("function screenshotLimit(", html)
+        # Both requests the dashboard makes say every open port.
+        create = html.split("capture_screenshots: tcpServiceProbe", 1)[1].split("};", 1)[0]
+        self.assertIn("screenshot_max: null", create)
+        recapture = html.split("async function recaptureEvidence(", 1)[1].split(chr(10) + "    }", 1)[0]
+        self.assertIn("screenshot_max: null", recapture)
+        # Where the cost of that is said: on the switch that turns evidence on.
+        service_help = html.split('id="scanServiceProbeHelp"', 1)[1].split("</span>", 1)[0]
+        self.assertIn("열린 포트마다", service_help)
+        self.assertIn("1~5초", service_help)
+
+    def test_the_first_screen_is_five_things_and_the_rest_is_advanced_in_the_order_it_is_used(self):
+        """Target, ports and protocol, the authorisation tick, start. Every
+        other control sits behind "고급 설정", speed first because speed is
+        what an assessor actually adjusts; detection, scope and the rest
+        after it, each under its own heading."""
+        html = dashboard_html()
+
+        form = html.split('<form id="scanForm">', 1)[1].split("</form>", 1)[0]
+        before_advanced = form.split('id="scanAdvanced"', 1)[0]
+        advanced = form.split('id="scanAdvanced"', 1)[1]
+
+        for control in ("scanPresetChips", "scanTargets", "scanPorts", "scanProtocol", "scanAuthorized"):
+            self.assertIn(f'id="{control}"', before_advanced, control)
+        for control in ("scanServiceProbe", "scanHostDiscovery", "scanUdpServiceProbe", "scanConnectOnly",
+                        "scanScopeFromTargets", "scanScope", "scanTimeout", "scanConcurrency", "scanRate",
+                        "scanTopPorts", "scanExclude", "scanUdpRetries", "scanSynRetries",
+                        "scanMaxAttempts", "scanConfirmLargeScan"):
+            self.assertNotIn(f'id="{control}"', before_advanced, f"{control} belongs in advanced")
+            self.assertIn(f'id="{control}"', advanced, control)
+
+        titles = [t for t in ("속도", "탐지", "승인 범위", "그 밖")]
+        positions = [advanced.index(f'class="advanced-group-title">{t}<') for t in titles]
+        self.assertEqual(positions, sorted(positions), "speed, detection, scope, the rest - in that order")
+        # Speed's three fields come before the first detection switch.
+        self.assertLess(advanced.index('id="scanRate"'), advanced.index('id="scanServiceProbe"'))
+        # The start button follows the advanced panel, not the other way round.
+        self.assertLess(form.index('id="scanAdvanced"'), form.index('id="scanSubmit"'))
 
     def test_a_scan_that_recorded_more_than_it_planned_says_so(self):
         """Folded counts can double; a fifteen-million total cannot be eyeballed."""
